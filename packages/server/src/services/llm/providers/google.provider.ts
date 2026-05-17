@@ -29,6 +29,20 @@ interface GoogleServiceAccountKey {
 
 const GOOGLE_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 const serviceAccountTokenCache = new Map<string, { accessToken: string; expiresAtMs: number }>();
+const LINKAPI_CONSOLE_HOSTS = new Set(["linkapi.ai", "www.linkapi.ai", "home.linkapi.ai"]);
+
+function normalizeGoogleBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  try {
+    const url = new URL(trimmed);
+    if (LINKAPI_CONSOLE_HOSTS.has(url.hostname.toLowerCase())) {
+      url.hostname = "api.linkapi.ai";
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return trimmed;
+  }
+}
 
 function base64UrlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -179,7 +193,7 @@ export class GoogleProvider extends BaseLLMProvider {
 
     // Ensure the base URL includes the /v1beta path segment required by the Gemini API.
     // Proxies like api.linkapi.ai need this appended (SillyTavern does it automatically).
-    let base = this.baseUrl.replace(/\/+$/, "");
+    let base = normalizeGoogleBaseUrl(this.baseUrl);
     if (this.providerKind === "google" && !/\/v\d/.test(base)) base += "/v1beta";
 
     // When thinking is enabled, force non-streaming (generateContent) because
