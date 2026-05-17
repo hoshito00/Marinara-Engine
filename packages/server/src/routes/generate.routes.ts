@@ -3886,6 +3886,8 @@ export async function generateRoutes(app: FastifyInstance) {
             tone: (setupConfig?.tone as string) || "balanced",
             rating: (setupConfig?.rating as "sfw" | "nsfw") || "sfw",
             campaignPlan: gameBlueprint?.campaignPlan ?? null,
+            canGenerateBackgrounds: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
+            artStylePrompt: (setupConfig?.artStylePrompt as string) || undefined,
             gameTime,
             weatherContext,
             playerNotes,
@@ -4042,6 +4044,8 @@ export async function generateRoutes(app: FastifyInstance) {
               characterSprites: gmCtx.characterSprites,
               language: gmCtx.language,
               rating: gmCtx.rating,
+              canGenerateBackgrounds: gmCtx.canGenerateBackgrounds,
+              artStylePrompt: gmCtx.artStylePrompt,
               addressMode,
               playerDiceRollSubmitted,
               playerInventory: (() => {
