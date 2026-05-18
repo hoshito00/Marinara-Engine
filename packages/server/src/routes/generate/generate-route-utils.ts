@@ -117,6 +117,14 @@ export function buildUserMessageRegenerationPrompt(message: { content?: unknown;
   };
 }
 
+export function buildUserMessageRegenerationPromptFromSource(source: SimpleMessage): SimpleMessage {
+  return {
+    role: "user",
+    content: buildUserMessageRegenerationInstruction({ content: source.content }),
+    ...(source.images?.length ? { images: source.images } : {}),
+  };
+}
+
 /**
  * Build the context-facing version of a user message being regenerated.
  * This preserves the original user text and attachments for prompt shaping

@@ -5,6 +5,7 @@ import {
   appendGenerationTailMessages,
   buildUserMessageRegenerationInstruction,
   buildUserMessageRegenerationPrompt,
+  buildUserMessageRegenerationPromptFromSource,
   buildUserMessageRegenerationSourceMessage,
 } from "../packages/server/src/routes/generate/generate-route-utils.ts";
 
@@ -123,6 +124,28 @@ describe("user message regeneration instruction", () => {
     });
 
     assert.deepEqual(source.images, [imageDataUrl]);
+  });
+
+  it("builds the final regeneration prompt from the transformed source message", () => {
+    const source = buildUserMessageRegenerationSourceMessage({
+      content: "raw persona name",
+      extra: {
+        attachments: [
+          {
+            type: "image/png",
+            filename: "image.png",
+            data: "data:image/png;base64,aW1hZ2U=",
+          },
+        ],
+      },
+    });
+    source.content = source.content.replace("raw persona name", "resolved persona name");
+
+    const prompt = buildUserMessageRegenerationPromptFromSource(source);
+
+    assert.match(prompt.content, /<original_user_message>\nresolved persona name\n<\/original_user_message>/);
+    assert.doesNotMatch(prompt.content, /raw persona name/);
+    assert.deepEqual(prompt.images, ["data:image/png;base64,aW1hZ2U="]);
   });
 
   it("ignores malformed attachment metadata in the regeneration source message", () => {
