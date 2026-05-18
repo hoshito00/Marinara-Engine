@@ -2979,7 +2979,8 @@ function CombatantCard({
       {dialogueLines && dialogueLines.length > 0 && onDismissDialogue && (
         <div
           className={cn(
-            "pointer-events-auto absolute bottom-full left-1/2 z-40 mb-2 flex -translate-x-1/2 flex-col items-center gap-1",
+            "pointer-events-auto absolute left-1/2 z-40 flex -translate-x-1/2 flex-col items-center gap-1",
+            side === "enemy" ? "top-full mt-2" : "bottom-full mb-2",
             "w-[var(--combat-dialogue-width)]",
           )}
         >
