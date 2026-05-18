@@ -6,7 +6,7 @@ import {
 } from "@marinara-engine/shared";
 import { wrapContent } from "../../services/prompt/format-engine.js";
 
-export type SimpleMessage = { role: "system" | "user" | "assistant"; content: string };
+export type SimpleMessage = { role: "system" | "user" | "assistant"; content: string; images?: string[] };
 export type StoredGenerationParameters = Partial<GenerationParameters>;
 export type PromptAttachment = {
   type?: string | null;
@@ -83,20 +83,33 @@ export function isMessageHiddenFromAI(message: { extra?: unknown }): boolean {
 
 /**
  * Build the instruction used when regenerating a user-authored message as a swipe.
- * The original user text is trimmed and wrapped in <original_user_message> tags
- * so downstream generation can return only replacement user-message text.
+ * The original user text and readable attachments are wrapped in
+ * <original_user_message> tags so downstream generation can return only
+ * replacement user-message text.
  */
-export function buildUserMessageRegenerationInstruction(message: { content?: unknown }): string {
+export function buildUserMessageRegenerationInstruction(message: { content?: unknown; extra?: unknown }): string {
   const original = typeof message.content === "string" ? message.content.trim() : "";
+  const attachments = parseExtra(message.extra).attachments as PromptAttachment[] | undefined;
+  const originalWithAttachments = appendReadableAttachmentsToContent(original, attachments);
   return [
     "Regenerate the user's previous message as an alternate swipe.",
     "Write only the replacement user message text.",
     "Do not answer as the assistant, continue the assistant side, or describe what the assistant does next.",
     "",
     "<original_user_message>",
-    original,
+    originalWithAttachments,
     "</original_user_message>",
   ].join("\n");
+}
+
+export function buildUserMessageRegenerationPrompt(message: { content?: unknown; extra?: unknown }): SimpleMessage {
+  const attachments = parseExtra(message.extra).attachments as PromptAttachment[] | undefined;
+  const images = extractImageAttachmentDataUrls(attachments);
+  return {
+    role: "user",
+    content: buildUserMessageRegenerationInstruction(message),
+    ...(images.length ? { images } : {}),
+  };
 }
 
 export function appendGenerationTailMessages(
@@ -106,7 +119,7 @@ export function appendGenerationTailMessages(
     followUpIteration: number;
     impersonate: boolean;
     isGoogleProvider: boolean;
-    regenerateUserMessageInstruction: string | null;
+    regenerateUserMessage: SimpleMessage | null;
   },
 ): { assistantPrefillInjected: boolean; googleUserRegenerationInjected: boolean } {
   if (options.followUpIteration !== 0) {
@@ -114,7 +127,7 @@ export function appendGenerationTailMessages(
   }
 
   const shouldAppendGoogleUserRegeneration =
-    !options.impersonate && options.isGoogleProvider && !!options.regenerateUserMessageInstruction;
+    !options.impersonate && options.isGoogleProvider && !!options.regenerateUserMessage;
   const assistantPrefill = options.assistantPrefill.trim();
 
   if (assistantPrefill) {
@@ -122,7 +135,7 @@ export function appendGenerationTailMessages(
   }
 
   if (shouldAppendGoogleUserRegeneration) {
-    messages.push({ role: "user", content: options.regenerateUserMessageInstruction! });
+    messages.push(options.regenerateUserMessage!);
   }
 
   return {

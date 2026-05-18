@@ -144,7 +144,7 @@ import {
   appendGenerationTailMessages,
   findLastIndex,
   appendReadableAttachmentsToContent,
-  buildUserMessageRegenerationInstruction,
+  buildUserMessageRegenerationPrompt,
   extractImageAttachmentDataUrls,
   injectIntoOutputFormatOrLastUser,
   isMessageHiddenFromAI,
@@ -1114,7 +1114,7 @@ export async function generateRoutes(app: FastifyInstance) {
         : scopedMessages;
       let lorebookKeeperMessages = chatMessages;
       let regenMsg;
-      let regenerateUserMessageInstruction: string | null = null;
+      let regenerateUserMessage: SimpleMessage | null = null;
 
       // ── Regeneration as swipe: exclude the target message from context ──
       if (input.regenerateMessageId) {
@@ -1124,7 +1124,7 @@ export async function generateRoutes(app: FastifyInstance) {
           return;
         }
         if (regenMsg.role === "user") {
-          regenerateUserMessageInstruction = buildUserMessageRegenerationInstruction(regenMsg);
+          regenerateUserMessage = buildUserMessageRegenerationPrompt(regenMsg);
         }
         chatMessages = chatMessages.filter((m: any) => m.id !== input.regenerateMessageId);
         lorebookKeeperMessages = lorebookKeeperMessages.filter((m: any) => m.id !== input.regenerateMessageId);
@@ -5947,7 +5947,7 @@ export async function generateRoutes(app: FastifyInstance) {
           followUpIteration,
           impersonate: input.impersonate,
           isGoogleProvider,
-          regenerateUserMessageInstruction,
+          regenerateUserMessage,
         });
         if (tailMessages.assistantPrefillInjected) {
           const prefillPosition = tailMessages.googleUserRegenerationInjected
