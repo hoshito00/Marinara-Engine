@@ -37,6 +37,21 @@ function resolveGid(group) {
   return parseNameServiceFile("/etc/group", group, 2);
 }
 
+function resolveHomeDir(user) {
+  let rows;
+  try {
+    rows = readFileSync("/etc/passwd", "utf8").split("\n");
+  } catch {
+    return null;
+  }
+
+  for (const row of rows) {
+    const fields = row.split(":");
+    if (fields[0] === user || fields[2] === user) return fields[5] || null;
+  }
+  return null;
+}
+
 function resolveStoragePath(value) {
   if (!value) return null;
   return isAbsolute(value) ? value : resolve(process.cwd(), value);
@@ -104,6 +119,7 @@ function run() {
     const group = process.env.MARINARA_DOCKER_GROUP ?? user;
     const uid = resolveUid(user);
     const gid = resolveGid(group);
+    const homeDir = resolveHomeDir(user);
 
     if (uid == null || gid == null) {
       log(`Could not resolve runtime user "${user}:${group}"; continuing as root.`);
@@ -114,6 +130,9 @@ function run() {
         log(`Could not repair data directory ownership: ${error instanceof Error ? error.message : String(error)}`);
       }
       dropPrivileges(uid, gid);
+      if (homeDir) {
+        process.env.HOME = homeDir;
+      }
     }
   }
 

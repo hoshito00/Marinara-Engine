@@ -102,6 +102,11 @@ If you'd prefer to avoid the paste-back step on a LAN install, the cleanest fix 
 If a Docker or Podman container fails with permission errors on the data volume:
 
 - **Named volumes after updating:** The official images repair `/app/data` ownership at startup, then drop back to the non-root runtime user. Pull the latest image and restart with `docker compose pull && docker compose up -d`.
+
+If Claude (Subscription) returns an empty response in Docker:
+
+- Run Claude login as the container runtime user so the server and CLI read the same credentials, for example `docker exec -u node -e HOME=/home/node -it marinara-engine-marinara-1 claude login`.
+- Pull the latest image and restart. The official entrypoint now resets `HOME` to the non-root runtime user's home after dropping privileges, so server-side Claude Agent SDK calls look in the same place as `docker exec -u node`.
 - **Bind mounts:** Make the host directory writable by UID/GID `1000`, or use a named volume. If your filesystem blocks container `chown`, fix ownership on the host instead.
 - **SELinux (Fedora, RHEL):** Add the `:Z` suffix to the volume mount — e.g., `-v marinara-data:/app/data:Z`.
 - **Rootless Podman:** Make sure the host directory is owned by your user, or use a named volume instead of a bind mount.
