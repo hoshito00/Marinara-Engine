@@ -3,6 +3,8 @@ export type LlamaStartupPlan = {
   label: string;
 };
 
+const LLAMA_SERVER_PARALLEL_SLOTS = 2;
+
 export function buildLlamaArgs(options: {
   modelPath: string;
   gpuLayers: number;
@@ -10,15 +12,17 @@ export function buildLlamaArgs(options: {
   contextSize: number;
   runtimeVariant: string;
 }): string[] {
+  // llama-server divides --ctx-size across --parallel slots; Marinara's setting is the per-request budget.
+  const totalContextSize = options.contextSize * LLAMA_SERVER_PARALLEL_SLOTS;
   const args = [
     "-m",
     options.modelPath,
     "--host",
     "127.0.0.1",
     "--parallel",
-    "2",
+    String(LLAMA_SERVER_PARALLEL_SLOTS),
     "--ctx-size",
-    String(options.contextSize),
+    String(totalContextSize),
     "--port",
     String(options.port),
   ];
