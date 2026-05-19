@@ -328,10 +328,19 @@ export interface SplitResult {
  * - Empty or system-only: JSONL = [] (system messages ride `systemPrompt`,
  *   not the JSONL); prompt source = synthetic "[Start]" user turn.
  *
- * No "drop trailing assistants" logic — Marinara's regen flows trim the
- * to-be-regenerated assistant upstream in generate.routes.ts before reaching
- * the provider, so a trailing assistant arriving here is intentional
- * (assistantPrefill, packages/shared/src/types/prompt.ts:177).
+ * No "drop trailing assistants" logic. Load-bearing upstream contract:
+ * Marinara's regen flow (generate.routes.ts) removes the to-be-regenerated
+ * assistant turn from `finalMessages` BEFORE calling provider.chat(). Any
+ * trailing assistant reaching this function is therefore intentional —
+ * specifically the `assistantPrefill` feature (see
+ * packages/shared/src/types/prompt.ts:177 and generate.routes.ts:5953,
+ * where the prefill is pushed as the final assistant message).
+ *
+ * If that upstream contract ever changes — i.e. regen starts leaving the
+ * to-be-regenerated assistant in the messages array — the
+ * "trailing-assistant-continue" branch will silently fire on plain regens,
+ * which would inject a synthetic "(continue)" prompt instead of regenerating
+ * cleanly. Either fix it here, or add a regression test at the route layer.
  */
 export function splitHistoryForResume(messages: readonly ChatMessage[]): SplitResult {
   // Find last non-system index (system messages are transparent for this split).
@@ -445,13 +454,20 @@ export function currentToSdkUserMessage(message: ChatMessage): SdkUserMessageFor
 
 /**
  * Read the @anthropic-ai/claude-agent-sdk version once at module load and
- * cache. Used to stamp `version` on synthetic JSONL entries so the SDK can
- * validate the file format. Falls back to "unknown" on any failure — the SDK
- * accepts that during resume (validated against live sessions).
+ * cache. Stamped on synthetic JSONL entries as `version`.
+ *
+ * INTENT: telemetry / forensic stamp only. The "unknown" fallback is
+ * intentionally NOT a safety gate — the SDK accepts arbitrary version
+ * strings on resume (validated against live sessions), and refusing to
+ * resume just because we couldn't read our own package.json would punish
+ * users for our packaging glitches. If a future change needs a real safety
+ * check ("written by SDK vX, refuse if installed is incompatible"), it
+ * should be a separate explicit comparison — not a degradation of this
+ * fallback.
  *
  * Assumption: the SDK's `main` entry lives at the package root next to its
- * `package.json` (true for v0.2.x). If a future version moves the entry into
- * a subdir, this falls back cleanly to "unknown".
+ * `package.json` (true for v0.2.x). If a future version moves the entry
+ * into a subdir, this falls back cleanly to "unknown".
  */
 function detectSdkVersion(): string {
   try {

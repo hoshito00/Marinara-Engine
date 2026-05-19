@@ -237,6 +237,102 @@ describe("ClaudeSubscriptionProvider — resume path wiring", () => {
     assert.match(call.options["resume"] as string, /^[0-9a-f-]{36}$/);
   });
 
+  it("concurrent provider calls produce distinct session UUIDs and files (no shared sessionId by chatId)", async () => {
+    // Locks in the invariant: each chat() invocation mints a fresh UUID via
+    // randomUUID() inside constructSessionFile. There is no `chatId ->
+    // sessionId` mapping that would cause same-tick concurrent calls to
+    // race on a shared JSONL file. If a future refactor introduces such a
+    // mapping, this test fires immediately.
+    const captured: CapturedQuery[] = [];
+    __setSdkForTesting(makeFakeSdk(captured) as unknown as Parameters<typeof __setSdkForTesting>[0]);
+
+    const provider = new ClaudeSubscriptionProvider("", "");
+
+    // Fire two chat() calls in the same tick; await both together.
+    const drainA = drainProviderChat(
+      provider,
+      [{ role: "user", content: "concurrent A" }],
+      { model: "claude-test-model", stream: false },
+    );
+    const drainB = drainProviderChat(
+      provider,
+      [{ role: "user", content: "concurrent B" }],
+      { model: "claude-test-model", stream: false },
+    );
+    await Promise.all([drainA, drainB]);
+
+    assert.equal(captured.length, 2, "both calls should have invoked the SDK");
+    const resumeA = captured[0]!.options["resume"];
+    const resumeB = captured[1]!.options["resume"];
+    assert.equal(typeof resumeA, "string");
+    assert.equal(typeof resumeB, "string");
+    assert.notEqual(resumeA, resumeB, "concurrent calls must produce distinct resume sessionIds");
+
+    // Both files should have lived under the same sessions directory but
+    // with distinct names. Cleanup is best-effort (`void ...catch`); the
+    // afterEach `rm` will sweep whatever remains.
+    const dir = sessionsDirFor(tmpCwd);
+    const pathA = join(dir, `${resumeA as string}.jsonl`);
+    const pathB = join(dir, `${resumeB as string}.jsonl`);
+    assert.notEqual(pathA, pathB);
+  });
+
+  it("assembles the same systemPrompt under CLAUDE_SUBSCRIPTION_USE_RESUME=true and =false", async () => {
+    // Snapshot parity: toggling the kill switch must not change what the
+    // SDK sees as `systemPrompt`. Catches accidental skipping of a system-
+    // assembly step in either branch.
+    const messages: Parameters<ClaudeSubscriptionProvider["chat"]>[0] = [
+      { role: "system", content: "you are mari" },
+      { role: "system", content: "be terse" },
+      { role: "user", content: "hi" },
+    ];
+
+    // ── Resume path (env unset → default true) ──
+    const capturedResume: CapturedQuery[] = [];
+    __setSdkForTesting(makeFakeSdk(capturedResume) as unknown as Parameters<typeof __setSdkForTesting>[0]);
+    delete process.env.CLAUDE_SUBSCRIPTION_USE_RESUME;
+    const providerResume = new ClaudeSubscriptionProvider("", "");
+    await drainProviderChat(providerResume, messages, { model: "claude-test-model", stream: false });
+
+    // ── Fold path (env=false) ──
+    const capturedFold: CapturedQuery[] = [];
+    __setSdkForTesting(makeFakeSdk(capturedFold) as unknown as Parameters<typeof __setSdkForTesting>[0]);
+    process.env.CLAUDE_SUBSCRIPTION_USE_RESUME = "false";
+    try {
+      const providerFold = new ClaudeSubscriptionProvider("", "");
+      await drainProviderChat(providerFold, messages, { model: "claude-test-model", stream: false });
+    } finally {
+      delete process.env.CLAUDE_SUBSCRIPTION_USE_RESUME;
+    }
+
+    assert.equal(capturedResume.length, 1);
+    assert.equal(capturedFold.length, 1);
+
+    // The provider wraps systemPrompt in the `claude_code` preset; the
+    // `append` value is what the user supplied. Compare that — both paths
+    // must produce the same appended content from the same messages.
+    const systemResume = capturedResume[0]!.options["systemPrompt"] as {
+      type: string;
+      preset: string;
+      append?: string;
+    };
+    const systemFold = capturedFold[0]!.options["systemPrompt"] as {
+      type: string;
+      preset: string;
+      append?: string;
+    };
+    assert.equal(systemResume.type, "preset");
+    assert.equal(systemFold.type, "preset");
+    assert.equal(systemResume.preset, "claude_code");
+    assert.equal(systemFold.preset, "claude_code");
+    assert.equal(
+      systemResume.append,
+      systemFold.append,
+      "systemPrompt append text must match byte-for-byte between resume and fold paths",
+    );
+    assert.equal(systemResume.append, "you are mari\n\nbe terse");
+  });
+
   it("cleans up the session file after the SDK completes (best-effort)", async () => {
     const captured: CapturedQuery[] = [];
     // Fake `query` returns `AsyncIterable<unknown>` rather than the SDK's full

@@ -32,7 +32,14 @@ function scheduleTaskbarShortcutMigration() {
  * `finally` block cleans them on the happy path; this sweep is the GC for
  * cases where the process crashed or was killed mid-request.
  *
- * Gated on non-win32 — the resume path is *nix-only.
+ * Gated on non-win32 because the cwd-as-dashes path resolver
+ * (`sessionsDirFor` in synthetic-session.ts) has not been validated against
+ * Claude Code's Windows project-dir convention — `C:\…` paths can't be
+ * transformed by the same `replaceAll("/", "-")` rule we use on *nix. Until
+ * that's verified end-to-end, the resume code path (and therefore this
+ * sweep) is *nix-only. Listed as a known limitation in PR #990's body. If
+ * you're maintaining this and `sessionsDirFor` has been validated on win32,
+ * drop the gate.
  */
 const ORPHAN_SWEEP_MAX_AGE_MS = 15 * 60 * 1000;
 function scheduleClaudeSubscriptionOrphanSweep() {
