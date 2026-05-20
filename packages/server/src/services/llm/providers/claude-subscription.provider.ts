@@ -233,22 +233,39 @@ export class ClaudeSubscriptionProvider extends BaseLLMProvider {
       try {
         const split = splitHistoryForResume(contextFit.messages);
         systemPrompt = extractSystemPrompt(contextFit.messages);
-        const cwd = process.cwd();
-        const { sessionId, path } = await constructSessionFile(split.history, {
-          model: options.model,
-          cwd,
-          sdkVersion: SDK_VERSION,
-        });
-        sessionPath = path;
-        resumeSessionId = sessionId;
-        resumeCwd = cwd;
-        promptArg = singleMessageIterable(currentToSdkUserMessage(split.current));
-        logger.debug(
-          "[claude-subscription] resume path: shape=%s sessionId=%s path=%s",
-          split.shape,
-          sessionId,
-          path,
-        );
+
+        if (split.history.length === 0) {
+          // No prior history to resume from (single-turn request, connection
+          // ping, or system-only context). Skip the JSONL+resume path —
+          // writing an empty file makes the SDK throw
+          // "No conversation found with session ID: ..." because its
+          // session loader treats `messages.length === 0` as a missing
+          // session. Mirror the proxy's behavior (chat-completions.ts L134)
+          // and send `current` directly via the AsyncIterable prompt.
+          promptArg = singleMessageIterable(currentToSdkUserMessage(split.current));
+          logger.debug(
+            "[claude-subscription] resume path: shape=%s history=empty (direct prompt, no resume)",
+            split.shape,
+          );
+        } else {
+          const cwd = process.cwd();
+          const { sessionId, path } = await constructSessionFile(split.history, {
+            model: options.model,
+            cwd,
+            sdkVersion: SDK_VERSION,
+          });
+          sessionPath = path;
+          resumeSessionId = sessionId;
+          resumeCwd = cwd;
+          promptArg = singleMessageIterable(currentToSdkUserMessage(split.current));
+          logger.debug(
+            "[claude-subscription] resume path: shape=%s sessionId=%s path=%s historyLen=%d",
+            split.shape,
+            sessionId,
+            path,
+            split.history.length,
+          );
+        }
       } catch (err) {
         if (isWriteFailure(err)) {
           markResumeUnavailable("session-file write failed", err);
@@ -284,37 +301,53 @@ export class ClaudeSubscriptionProvider extends BaseLLMProvider {
     const modelLower = options.model.toLowerCase();
     const isAdaptiveOnly = /claude-opus-4-(?:[7-9]|\d{2,})/.test(modelLower);
 
-    // The SDK strips the model's version awareness if we pass a plain string
-    // `systemPrompt`. Without the Claude Code preset every model — Opus, Sonnet,
-    // Haiku — falsely answers "Sonnet" when asked which it is, because it has
-    // no framing for its own identity and falls back to the most-mentioned
-    // variant in its training data. Wrapping the caller's system content as
-    // the `append` of the `claude_code` preset preserves identity *and* the
-    // user's framing (character card / preset). This matches the `claude` CLI
-    // default and is what the SillyTavern subscription bridge uses too.
-    const presetSystemPrompt: NonNullable<Parameters<SdkModule["query"]>[0]["options"]>["systemPrompt"] = systemPrompt
-      ? { type: "preset", preset: "claude_code", append: systemPrompt }
-      : { type: "preset", preset: "claude_code" };
+    // Outbound-context strip strategy: this provider is a text-chat surface
+    // (roleplay / character DM), not an agent runner. The SDK's default
+    // posture leaks several things the user never asked for into every
+    // request — match the `claude-openai-proxy` strip set:
+    //
+    //   • Use a plain-string `systemPrompt` (the caller's content as-is)
+    //     instead of wrapping it under the `claude_code` preset. The preset
+    //     injects ~thousands of tokens of Claude-Code-agent framing
+    //     ("You are Claude Code, Anthropic's CLI...") which is wrong for
+    //     a character-chat. Side effect: when asked "which model are you?"
+    //     the model may fall back to its training-data prior (typically
+    //     "Sonnet") instead of self-identifying accurately — acceptable for
+    //     this provider's use case since the user-supplied persona prompt
+    //     dominates identity.
+    //   • `settingSources: []` — prevents the SDK from auto-loading
+    //     `~/.claude/settings.json` + the project's `CLAUDE.md` + any
+    //     workspace `.claude/settings.json` into the request context.
+    //   • `skills: []` — prevents auto-load of skill metadata (~3000 tokens
+    //     of installed-skill descriptions, hooks, etc.).
+    //   • `allowDangerouslySkipPermissions: true` — explicit; matches the
+    //     `permissionMode: "bypassPermissions"` intent and skips additional
+    //     permission resolution framing.
+    //   • `maxTurns: 1` — single assistant turn per call; we drive any
+    //     multi-turn agent loop ourselves at the route layer.
+    //
+    // Wire-level artifacts the SDK still injects (`<system-reminder>`
+    // userEmail/currentDate, metadata account/device UUIDs, the SDK
+    // preamble system block) need a loopback passthrough to strip; that's
+    // tracked as future work.
 
     const sdkOptions: Parameters<SdkModule["query"]>[0]["options"] = {
       abortController,
       model: options.model,
-      systemPrompt: presetSystemPrompt,
       includePartialMessages: options.stream ?? true,
-      // Disable agent tooling — Marinara has its own tool/agent pipeline and
-      // we only want plain text completions out of this provider. With tools
-      // empty, no agentic loop runs, so we leave maxTurns unset; setting it
-      // to 1 caused the SDK to bail with `error_max_turns` because thinking
-      // and other internal steps consume turn budget alongside the assistant
-      // response.
       tools: [],
+      skills: [],
+      maxTurns: 1,
       permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      settingSources: [],
       // Always pass `settings.fastMode` explicitly so the SDK can't fall back
       // on a persisted CLI value that would silently downgrade the model. The
       // value comes from the connection-level toggle — default `false` so
       // unconfigured connections keep the requested model.
       settings: { fastMode: this.fastMode },
     };
+    if (systemPrompt !== undefined) sdkOptions.systemPrompt = systemPrompt;
 
     if (options.enableThinking) {
       sdkOptions.thinking = { type: "adaptive" };

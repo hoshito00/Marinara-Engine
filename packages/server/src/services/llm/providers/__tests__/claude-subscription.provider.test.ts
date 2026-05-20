@@ -211,15 +211,18 @@ describe("ClaudeSubscriptionProvider — resume path wiring", () => {
 
   it("connection-level customParameters cannot override the reserved resume/cwd keys", async () => {
     const captured: CapturedQuery[] = [];
-    // Fake `query` returns `AsyncIterable<unknown>` rather than the SDK's full
-    // `Query` interface (with `close()` etc.). The provider only iterates, so
-    // the runtime shape is sufficient; cast through `unknown` at the seam.
     __setSdkForTesting(makeFakeSdk(captured) as unknown as Parameters<typeof __setSdkForTesting>[0]);
 
     const provider = new ClaudeSubscriptionProvider("", "");
+    // Multi-turn history so the resume path actually engages (single-turn
+    // requests skip resume entirely — see the dedicated test below).
     await drainProviderChat(
       provider,
-      [{ role: "user", content: "hi" }],
+      [
+        { role: "user", content: "first" },
+        { role: "assistant", content: "reply" },
+        { role: "user", content: "second" },
+      ],
       {
         model: "claude-test-model",
         stream: false,
@@ -237,6 +240,34 @@ describe("ClaudeSubscriptionProvider — resume path wiring", () => {
     assert.match(call.options["resume"] as string, /^[0-9a-f-]{36}$/);
   });
 
+  it("skips the resume path entirely for single-turn requests (empty history)", async () => {
+    // Regression for the "No conversation found" failure we hit in dev:
+    // writing an empty JSONL and passing it to resume makes the SDK reject
+    // it. Matches the proxy's behavior (chat-completions.ts L134): construct
+    // a session file ONLY when there's prior history to resume from.
+    const captured: CapturedQuery[] = [];
+    __setSdkForTesting(makeFakeSdk(captured) as unknown as Parameters<typeof __setSdkForTesting>[0]);
+
+    const provider = new ClaudeSubscriptionProvider("", "");
+    await drainProviderChat(
+      provider,
+      [{ role: "user", content: "single turn message" }],
+      { model: "claude-test-model", stream: false },
+    );
+
+    const call = captured[0]!;
+    assert.equal(call.options["resume"], undefined, "resume must NOT be set for single-turn requests");
+    assert.equal(call.options["cwd"], undefined, "cwd must NOT be set when resume is absent");
+
+    // The current message still flows via the AsyncIterable prompt so images
+    // and multimodal content on the first turn still work.
+    const promptMessages = await collectIterable(call.prompt as AsyncIterable<unknown>);
+    assert.equal(promptMessages.length, 1);
+    const userMsg = promptMessages[0] as { type: string; message: { content: unknown } };
+    assert.equal(userMsg.type, "user");
+    assert.equal(userMsg.message.content, "single turn message");
+  });
+
   it("concurrent provider calls produce distinct session UUIDs and files (no shared sessionId by chatId)", async () => {
     // Locks in the invariant: each chat() invocation mints a fresh UUID via
     // randomUUID() inside constructSessionFile. There is no `chatId ->
@@ -249,14 +280,19 @@ describe("ClaudeSubscriptionProvider — resume path wiring", () => {
     const provider = new ClaudeSubscriptionProvider("", "");
 
     // Fire two chat() calls in the same tick; await both together.
+    // Multi-turn so resume actually engages (see single-turn skip test).
+    const baseHistory = [
+      { role: "user" as const, content: "prior turn" },
+      { role: "assistant" as const, content: "prior reply" },
+    ];
     const drainA = drainProviderChat(
       provider,
-      [{ role: "user", content: "concurrent A" }],
+      [...baseHistory, { role: "user", content: "concurrent A" }],
       { model: "claude-test-model", stream: false },
     );
     const drainB = drainProviderChat(
       provider,
-      [{ role: "user", content: "concurrent B" }],
+      [...baseHistory, { role: "user", content: "concurrent B" }],
       { model: "claude-test-model", stream: false },
     );
     await Promise.all([drainA, drainB]);
@@ -308,46 +344,77 @@ describe("ClaudeSubscriptionProvider — resume path wiring", () => {
     assert.equal(capturedResume.length, 1);
     assert.equal(capturedFold.length, 1);
 
-    // The provider wraps systemPrompt in the `claude_code` preset; the
-    // `append` value is what the user supplied. Compare that — both paths
-    // must produce the same appended content from the same messages.
-    const systemResume = capturedResume[0]!.options["systemPrompt"] as {
-      type: string;
-      preset: string;
-      append?: string;
-    };
-    const systemFold = capturedFold[0]!.options["systemPrompt"] as {
-      type: string;
-      preset: string;
-      append?: string;
-    };
-    assert.equal(systemResume.type, "preset");
-    assert.equal(systemFold.type, "preset");
-    assert.equal(systemResume.preset, "claude_code");
-    assert.equal(systemFold.preset, "claude_code");
+    // After the strip work (proxy parity): systemPrompt is now a plain
+    // string of the caller's content — no `claude_code` preset wrap.
+    // Both paths (resume + fold) must produce the same string from the
+    // same input messages.
+    const systemResume = capturedResume[0]!.options["systemPrompt"];
+    const systemFold = capturedFold[0]!.options["systemPrompt"];
+    assert.equal(typeof systemResume, "string");
+    assert.equal(typeof systemFold, "string");
     assert.equal(
-      systemResume.append,
-      systemFold.append,
-      "systemPrompt append text must match byte-for-byte between resume and fold paths",
+      systemResume,
+      systemFold,
+      "systemPrompt must match byte-for-byte between resume and fold paths",
     );
-    assert.equal(systemResume.append, "you are mari\n\nbe terse");
+    assert.equal(systemResume, "you are mari\n\nbe terse");
   });
 
-  it("cleans up the session file after the SDK completes (best-effort)", async () => {
+  it("strips SDK auto-context: no claude_code preset, empty skills/settingSources, maxTurns=1", async () => {
+    // Locks in the outbound-context strip set. Each of these defaults
+    // would leak something the user never asked for:
+    //   - `claude_code` preset → Claude Code's agent framing prefix
+    //   - non-empty/unset skills → auto-loaded skill metadata
+    //   - non-empty/unset settingSources → ~/.claude/settings.json + project CLAUDE.md
+    //   - maxTurns unset → SDK might try multi-turn loops internally
+    //   - allowDangerouslySkipPermissions false → permission framing
     const captured: CapturedQuery[] = [];
-    // Fake `query` returns `AsyncIterable<unknown>` rather than the SDK's full
-    // `Query` interface (with `close()` etc.). The provider only iterates, so
-    // the runtime shape is sufficient; cast through `unknown` at the seam.
     __setSdkForTesting(makeFakeSdk(captured) as unknown as Parameters<typeof __setSdkForTesting>[0]);
 
     const provider = new ClaudeSubscriptionProvider("", "");
     await drainProviderChat(
       provider,
-      [{ role: "user", content: "test cleanup" }],
+      [
+        { role: "system", content: "be Mari" },
+        { role: "user", content: "hello" },
+      ],
+      { model: "claude-test-model", stream: false },
+    );
+
+    const opts = captured[0]!.options;
+    assert.equal(typeof opts["systemPrompt"], "string", "systemPrompt must be a plain string, not a preset object");
+    assert.notEqual(
+      typeof opts["systemPrompt"],
+      "object",
+      "systemPrompt as `{type:'preset',...}` would re-introduce the claude_code preset leak",
+    );
+    assert.deepEqual(opts["skills"], [], "skills must be explicitly empty");
+    assert.deepEqual(opts["settingSources"], [], "settingSources must be explicitly empty so CLAUDE.md doesn't auto-load");
+    assert.equal(opts["maxTurns"], 1, "maxTurns must be 1 — Marinara drives multi-turn at the route layer");
+    assert.equal(opts["allowDangerouslySkipPermissions"], true, "explicit bypass to skip permission framing");
+    assert.equal(opts["permissionMode"], "bypassPermissions");
+    assert.deepEqual(opts["tools"], []);
+  });
+
+  it("cleans up the session file after the SDK completes (best-effort)", async () => {
+    const captured: CapturedQuery[] = [];
+    __setSdkForTesting(makeFakeSdk(captured) as unknown as Parameters<typeof __setSdkForTesting>[0]);
+
+    const provider = new ClaudeSubscriptionProvider("", "");
+    // Multi-turn so a session file actually gets written (single-turn skips
+    // the resume path entirely; cleanup of a never-written file is vacuous).
+    await drainProviderChat(
+      provider,
+      [
+        { role: "user", content: "prior" },
+        { role: "assistant", content: "prior reply" },
+        { role: "user", content: "test cleanup" },
+      ],
       { model: "claude-test-model", stream: false },
     );
 
     const sessionId = captured[0]!.options["resume"] as string;
+    assert.match(sessionId, /^[0-9a-f-]{36}$/, "resume must be set so we're actually exercising cleanup");
     const sessionPath = join(sessionsDirFor(tmpCwd), `${sessionId}.jsonl`);
     // Cleanup is fire-and-forget (`void cleanupSessionFile(...).catch(...)`)
     // so we yield to the microtask queue once before checking.

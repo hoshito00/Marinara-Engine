@@ -343,16 +343,15 @@ export interface SplitResult {
  * cleanly. Either fix it here, or add a regression test at the route layer.
  */
 export function splitHistoryForResume(messages: readonly ChatMessage[]): SplitResult {
-  // Find last non-system index (system messages are transparent for this split).
-  let lastIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role !== "system") {
-      lastIdx = i;
-      break;
-    }
-  }
+  // Strip system messages up front. They never go in the JSONL (they ride
+  // the SDK's `systemPrompt` option instead) so they must not count toward
+  // `history.length` — otherwise the provider's "empty history → skip
+  // resume" gate misfires for the common `[system, user]` shape (persona /
+  // character prompt followed by the user's first message), producing an
+  // empty JSONL that the SDK rejects with "No conversation found."
+  const nonSystem = messages.filter((m) => m.role !== "system");
 
-  if (lastIdx === -1) {
+  if (nonSystem.length === 0) {
     return {
       history: [],
       current: { role: "user", content: SYNTHETIC_START },
@@ -360,18 +359,18 @@ export function splitHistoryForResume(messages: readonly ChatMessage[]): SplitRe
     };
   }
 
-  const trailing = messages[lastIdx]!;
+  const trailing = nonSystem[nonSystem.length - 1]!;
 
   if (trailing.role === "assistant") {
     return {
-      history: messages.slice(0, lastIdx + 1) as ChatMessage[],
+      history: nonSystem,
       current: { role: "user", content: SYNTHETIC_CONTINUE },
       shape: "trailing-assistant-continue",
     };
   }
 
   return {
-    history: messages.slice(0, lastIdx) as ChatMessage[],
+    history: nonSystem.slice(0, nonSystem.length - 1),
     current: trailing,
     shape: trailing.role === "tool" ? "trailing-tool" : "trailing-user",
   };

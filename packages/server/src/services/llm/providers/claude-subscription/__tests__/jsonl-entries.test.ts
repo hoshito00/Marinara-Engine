@@ -331,8 +331,12 @@ describe("splitHistoryForResume", () => {
     ];
     const split = splitHistoryForResume(history);
     assert.equal(split.shape, "trailing-user");
-    assert.equal(split.history.length, 3);
-    assert.equal(split.history[2]!.role, "assistant");
+    // System is stripped from history (rides systemPrompt instead); after
+    // stripping there are 3 non-system messages, the trailing one is
+    // `current`, so history holds the 2 prior turns.
+    assert.equal(split.history.length, 2);
+    assert.equal(split.history[0]!.role, "user");
+    assert.equal(split.history[1]!.role, "assistant");
     assert.equal(split.current.role, "user");
     assert.equal(split.current.content, "3");
   });
@@ -382,6 +386,42 @@ describe("splitHistoryForResume", () => {
     assert.equal(split.shape, "synthetic-start");
     assert.equal(split.history.length, 0);
     assert.equal(split.current.role, "user");
+  });
+
+  it("returns empty history for [system, user] (system filtered, user becomes current)", () => {
+    // Regression: the previous implementation kept system messages in
+    // `history`, so [system, user] gave history.length=1, the provider's
+    // "empty → skip resume" gate didn't fire, an empty JSONL was written
+    // (assembleEntries filters system anyway), and the SDK rejected it with
+    // "No conversation found." This is the common Marinara case — persona /
+    // character prompt followed by the user's first message.
+    const history: ChatMessage[] = [
+      { role: "system", content: "you are Mari" },
+      { role: "user", content: "hello" },
+    ];
+    const split = splitHistoryForResume(history);
+    assert.equal(split.shape, "trailing-user");
+    assert.equal(split.history.length, 0, "system messages must not count toward history length");
+    assert.equal(split.current.role, "user");
+    assert.equal(split.current.content, "hello");
+  });
+
+  it("filters interleaved system messages out of history", () => {
+    // [system, user, assistant, system, user] → history = [user, assistant],
+    // current = trailing user.
+    const history: ChatMessage[] = [
+      { role: "system", content: "s1" },
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "a1" },
+      { role: "system", content: "s2" },
+      { role: "user", content: "u2" },
+    ];
+    const split = splitHistoryForResume(history);
+    assert.equal(split.shape, "trailing-user");
+    assert.equal(split.history.length, 2);
+    assert.equal(split.history[0]!.role, "user");
+    assert.equal(split.history[1]!.role, "assistant");
+    assert.equal(split.current.content, "u2");
   });
 
   it("treats system messages as transparent for the trailing-message determination", () => {
