@@ -45,7 +45,7 @@ export interface MarkerContext {
   wrapFormat: WrapFormat;
   /** When false, agent_data markers expand to empty strings */
   enableAgents: boolean;
-  /** Per-chat list of active agent type IDs (empty = use global enabled state) */
+  /** Per-chat list of active agent type IDs (empty = no active agents, marker expansion suppressed) */
   activeAgentIds: string[];
   /** Per-chat list of manually activated lorebook IDs from chat settings */
   activeLorebookIds: string[];
