@@ -1717,6 +1717,10 @@ export function AgentEditor() {
               <div className="space-y-4">
                 <button
                   type="button"
+                  aria-pressed={localUseChatActiveLorebooks}
+                  aria-label={`Use this chat's active lorebooks: ${
+                    localUseChatActiveLorebooks ? "on" : "off"
+                  }`}
                   onClick={() => {
                     setLocalUseChatActiveLorebooks((value) => !value);
                     markDirty();
