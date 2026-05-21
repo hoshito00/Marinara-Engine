@@ -180,7 +180,7 @@ export function ModelDownloadModal({ open, onClose }: Props) {
   const [temperatureInput, setTemperatureInput] = useState(String(config.temperature));
   const [topPInput, setTopPInput] = useState(String(config.topP));
   const [topKInput, setTopKInput] = useState(String(config.topK));
-  const modalContentRef = useRef<HTMLDivElement>(null);
+  const modalScrollRef = useRef<HTMLDivElement>(null);
   const previousScrollLayoutRef = useRef({ isBlockingSetup: false, showRuntimeSettings: false });
 
   const activeBackend = runtime.backend ?? config.backend;
@@ -300,8 +300,7 @@ export function ModelDownloadModal({ open, onClose }: Props) {
     const setupVisibilityChanged = isBlockingSetup !== previous.isBlockingSetup;
     if (!runtimeSettingsOpened && !setupVisibilityChanged) return;
 
-    const scrollContainer = modalContentRef.current?.closest<HTMLElement>(".overflow-y-auto");
-    scrollContainer?.scrollTo({ top: 0 });
+    modalScrollRef.current?.scrollTo({ top: 0 });
   }, [isBlockingSetup, open, showRuntimeSettings]);
 
   const handleSkip = () => {
@@ -429,8 +428,14 @@ export function ModelDownloadModal({ open, onClose }: Props) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Local AI Model" width="max-w-2xl">
-      <div ref={modalContentRef} className="flex flex-col gap-5">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Local AI Model"
+      width="max-w-2xl"
+      contentRef={modalScrollRef}
+    >
+      <div className="flex flex-col gap-5">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-500/10">
             <BrainCircuit size="1.25rem" className="text-purple-400" />
