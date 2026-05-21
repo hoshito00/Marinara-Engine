@@ -150,6 +150,17 @@ export function useUploadAvatar() {
   });
 }
 
+export function useRemoveAvatar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/characters/${id}/avatar`),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: characterKeys.list() });
+      qc.invalidateQueries({ queryKey: characterKeys.detail(id) });
+    },
+  });
+}
+
 export function useDeleteCharacter() {
   const qc = useQueryClient();
   return useMutation({

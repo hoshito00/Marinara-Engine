@@ -182,11 +182,11 @@ export function createCharactersStorage(db: DB) {
       return this.getById(id);
     },
 
-    async updateAvatar(id: string, avatarPath: string) {
+    async updateAvatar(id: string, avatarPath: string | null) {
       const existing = await this.getById(id);
       if (!existing) return null;
       if (existing.avatarPath !== avatarPath) {
-        await this.createVersionSnapshot(id, { source: "manual", reason: "Avatar update" });
+        await this.createVersionSnapshot(id, { source: "manual", reason: avatarPath ? "Avatar update" : "Avatar removed" });
       }
       await db.update(characters).set({ avatarPath, updatedAt: now() }).where(eq(characters.id, id));
       return this.getById(id);
