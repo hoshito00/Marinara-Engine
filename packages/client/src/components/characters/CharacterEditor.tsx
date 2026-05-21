@@ -11,6 +11,7 @@ import {
   useCharacter,
   useUpdateCharacter,
   useUploadAvatar,
+  useRemoveAvatar,
   useDeleteCharacter,
   useDuplicateCharacter,
   useCreatePersona,
@@ -164,6 +165,7 @@ export function CharacterEditor() {
   const { data: rawCharacter, isLoading } = useCharacter(characterId);
   const updateCharacter = useUpdateCharacter();
   const uploadAvatar = useUploadAvatar();
+  const removeAvatar = useRemoveAvatar();
   const deleteCharacter = useDeleteCharacter();
   const duplicateCharacter = useDuplicateCharacter();
   const createPersona = useCreatePersona();
@@ -438,6 +440,35 @@ export function CharacterEditor() {
       uploadAvatar,
     ],
   );
+
+  const handleAvatarRemove = useCallback(async () => {
+    if (!characterId || !avatarPreview) return;
+    if (saving) {
+      toast.error("Wait for the current save to finish before removing the avatar.");
+      return;
+    }
+    if (avatarUploadInFlightRef.current) {
+      toast.error("Wait for the current avatar upload to finish before removing the avatar.");
+      return;
+    }
+
+    const confirmed = await showConfirmDialog({
+      title: "Remove Avatar",
+      message: `Remove the avatar from ${formData?.name || "this character"}? This clears the character card's avatar without deleting the character.`,
+      confirmLabel: "Remove",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+
+    try {
+      await removeAvatar.mutateAsync(characterId);
+      setAvatarPreview(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      toast.success("Avatar removed.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to remove avatar.");
+    }
+  }, [avatarPreview, characterId, formData?.name, removeAvatar, saving]);
 
   const handleDelete = async () => {
     if (!characterId) return;
@@ -897,6 +928,8 @@ export function CharacterEditor() {
                 removeTag={removeTag}
                 removeAllTags={removeAllTags}
                 avatarPreview={avatarPreview}
+                onRemoveAvatar={handleAvatarRemove}
+                removingAvatar={removeAvatar.isPending}
               />
             )}
             {activeTab === "description" && (
@@ -1221,6 +1254,8 @@ function MetadataTab({
   removeTag,
   removeAllTags,
   avatarPreview,
+  onRemoveAvatar,
+  removingAvatar,
 }: {
   characterId: string | null;
   formData: CharacterData;
@@ -1233,6 +1268,8 @@ function MetadataTab({
   removeTag: (tag: string) => void;
   removeAllTags: () => void;
   avatarPreview: string | null;
+  onRemoveAvatar: () => void;
+  removingAvatar: boolean;
 }) {
   // Read existing crop in either current or legacy shape; the widget handles both
   // and writes back the current shape on first interaction.
@@ -1249,6 +1286,8 @@ function MetadataTab({
           alt={formData.name}
           crop={savedCrop}
           onChange={(next) => updateExtension("avatarCrop", next)}
+          onRemove={onRemoveAvatar}
+          removing={removingAvatar}
         />
       )}
 

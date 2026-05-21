@@ -12,7 +12,7 @@
 // container's full area. Square-in-source-pixels crops survive any source aspect
 // ratio without distortion.
 import { useEffect, useRef, useState } from "react";
-import { Crop, Maximize2, RotateCcw, X } from "lucide-react";
+import { Crop, Maximize2, RotateCcw, Trash2, X } from "lucide-react";
 import { type AvatarCrop, type LegacyAvatarCrop, getAvatarCropStyle, isLegacyAvatarCrop } from "../../lib/utils";
 
 interface CropPx {
@@ -33,13 +33,15 @@ export interface AvatarCropWidgetProps {
   /** Fired on every change (drag, corner resize, reset). Always emits the
    *  current AvatarCrop shape. */
   onChange: (next: AvatarCrop) => void;
+  onRemove?: () => void;
+  removing?: boolean;
 }
 
 const MIN_CROP_PX = 24;
 const MAX_DISPLAY_W = 360;
 const MAX_DISPLAY_H = 360;
 
-export function AvatarCropWidget({ src, alt, crop, onChange }: AvatarCropWidgetProps) {
+export function AvatarCropWidget({ src, alt, crop, onChange, onRemove, removing = false }: AvatarCropWidgetProps) {
   const imgRef = useRef<HTMLImageElement>(null);
   const [imgRect, setImgRect] = useState<{ w: number; h: number } | null>(null);
   const [cropPx, setCropPx] = useState<CropPx | null>(null);
@@ -233,6 +235,17 @@ export function AvatarCropWidget({ src, alt, crop, onChange }: AvatarCropWidgetP
           >
             <RotateCcw size="0.625rem" /> Reset
           </button>
+          {onRemove && (
+            <button
+              type="button"
+              onClick={onRemove}
+              disabled={removing}
+              className="inline-flex items-center gap-1 rounded-lg bg-[var(--destructive)]/10 px-2 py-1 text-[0.625rem] font-medium text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/15 disabled:opacity-45"
+              title="Remove avatar"
+            >
+              <Trash2 size="0.625rem" /> {removing ? "Removing..." : "Remove"}
+            </button>
+          )}
         </div>
       </div>
       <p className="text-[0.625rem] text-[var(--muted-foreground)]">

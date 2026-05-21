@@ -699,6 +699,15 @@ export async function charactersRoutes(app: FastifyInstance) {
     return storage.updateAvatar(id, avatarPath);
   });
 
+  app.delete<{ Params: { id: string } }>("/:id/avatar", async (req, reply) => {
+    const { id } = req.params;
+    const char = await storage.getById(id);
+    if (!char) return reply.status(404).send({ error: "Character not found" });
+
+    const updated = await storage.updateAvatar(id, null);
+    return updated ?? reply.status(404).send({ error: "Character not found" });
+  });
+
   // ── Personas ──
 
   app.get("/personas/list", async () => {
