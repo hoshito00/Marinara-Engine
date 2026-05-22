@@ -214,10 +214,12 @@ export function SpriteOverlay({
 
   if (visibleChars.length === 0) return null;
 
+  const stageZIndexClass = editing ? "z-[35]" : fullBodyOnly ? "z-[5]" : "z-[5] md:z-[15]";
+
   return (
     <div
       ref={stageRef}
-      className={`pointer-events-none absolute inset-0 overflow-hidden ${fullBodyOnly ? "z-[5]" : "z-[15]"}`}
+      className={`pointer-events-none absolute inset-0 overflow-hidden ${stageZIndexClass}`}
     >
       {visibleChars.map((charId, index) => (
         <CharacterSprite
