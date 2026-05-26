@@ -1739,6 +1739,7 @@ export const ChatMessage = memo(function ChatMessage({
                 isConversationStart && "ring-amber-400/30",
                 isHiddenFromAI && "ring-amber-300/35 saturate-75",
                 editing && "w-full",
+                showRoleplayAvatarPanel && "min-h-[calc(11rem*var(--roleplay-avatar-scale))]",
               )}
               style={{
                 ...messageTextStyle,
