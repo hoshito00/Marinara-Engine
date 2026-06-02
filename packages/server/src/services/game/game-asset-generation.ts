@@ -16,8 +16,9 @@ import { generateImage, type ImageGenResult } from "../image/image-generation.js
 import { buildAssetManifest, GAME_ASSETS_DIR } from "./asset-manifest.service.js";
 import type { PromptOverridesStorage } from "../storage/prompt-overrides.storage.js";
 import { loadPrompt, GAME_NPC_PORTRAIT, GAME_BACKGROUND, GAME_SCENE_ILLUSTRATION } from "../prompt-overrides/index.js";
-import type { ImageGenerationDefaultsProfile } from "@marinara-engine/shared";
+import { type ImageGenerationDefaultsProfile, type ImageStyleProfileSettings } from "@marinara-engine/shared";
 import type { ImageGenerationSize } from "../image/image-generation-settings.js";
+import { compileImagePrompt } from "../image/image-prompt-compiler.js";
 
 const NPC_AVATAR_DIR = join(DATA_DIR, "avatars", "npc");
 const CHAT_BACKGROUND_DIR = join(DATA_DIR, "backgrounds");
@@ -268,11 +269,14 @@ export interface NpcPortraitRequest {
   imgEndpointId?: string | null;
   imgComfyWorkflow?: string | undefined;
   imgDefaults?: ImageGenerationDefaultsProfile | null;
+  styleProfiles?: ImageStyleProfileSettings;
+  styleProfileId?: string | null;
   debugLog?: (message: string, ...args: any[]) => void;
   /** Storage for user-supplied prompt overrides. Optional — falls back to default builder when omitted. */
   promptOverridesStorage?: PromptOverridesStorage;
   size?: ImageGenerationSize;
   promptOverride?: string;
+  negativePromptOverride?: string;
   /** When true, overwrite an existing generated NPC portrait instead of reusing it. */
   force?: boolean;
 }
@@ -283,7 +287,37 @@ export async function buildNpcPortraitImagePrompt(req: NpcPortraitRequest): Prom
   const rawPrompt = req.promptOverridesStorage
     ? await loadPrompt(req.promptOverridesStorage, GAME_NPC_PORTRAIT, vars)
     : GAME_NPC_PORTRAIT.defaultBuilder(vars);
-  return rawPrompt.slice(0, 1400);
+  return compileGameImagePrompt(req, "portrait", rawPrompt, 1400).prompt;
+}
+
+function compileGameImagePrompt(
+  req: Pick<
+    NpcPortraitRequest | BackgroundGenRequest | SceneIllustrationGenRequest,
+    "styleProfiles" | "styleProfileId" | "imgDefaults" | "artStyle"
+  >,
+  kind: "portrait" | "background" | "illustration",
+  prompt: string,
+  maxLength: number,
+  hardNegative?: string,
+  negativePrompt?: string | null,
+) {
+  if (!req.styleProfiles) {
+    return { prompt: prompt.slice(0, maxLength), negativePrompt: [negativePrompt, hardNegative].filter(Boolean).join(", ") };
+  }
+  const compiled = compileImagePrompt({
+    kind,
+    prompt,
+    negativePrompt,
+    hardNegative,
+    styleProfiles: req.styleProfiles,
+    styleProfileId: req.styleProfileId,
+    imageDefaults: req.imgDefaults,
+    generatedStyle: req.artStyle,
+  });
+  return {
+    prompt: compiled.prompt.slice(0, maxLength),
+    negativePrompt: compiled.negativePrompt,
+  };
 }
 
 /**
@@ -302,7 +336,18 @@ export async function generateNpcPortrait(req: NpcPortraitRequest): Promise<stri
     return `/api/avatars/npc/${req.chatId}/${slug}.png`;
   }
 
-  const prompt = await buildNpcPortraitImagePrompt(req);
+  const rawPrompt = req.promptOverride?.trim()
+    ? req.promptOverride.trim().slice(0, 1400)
+    : await buildNpcPortraitImagePrompt({ ...req, styleProfiles: undefined });
+  const compiled = compileGameImagePrompt(
+    req,
+    "portrait",
+    rawPrompt,
+    1400,
+    GAME_PORTRAIT_NEGATIVE_PROMPT,
+    req.negativePromptOverride,
+  );
+  const prompt = compiled.prompt;
   const size = resolvedSize(req.size, DEFAULT_GAME_PORTRAIT_SIZE);
   req.debugLog?.(
     "[debug/game/image-generation] NPC portrait request name=%s model=%s source=%s size=%dx%d prompt:\n%s",
@@ -322,7 +367,7 @@ export async function generateNpcPortrait(req: NpcPortraitRequest): Promise<stri
       req.imgSource || req.imgService || "",
       {
         prompt,
-        negativePrompt: GAME_PORTRAIT_NEGATIVE_PROMPT,
+        negativePrompt: compiled.negativePrompt || GAME_PORTRAIT_NEGATIVE_PROMPT,
         model: req.imgModel,
         width: size.width,
         height: size.height,
@@ -381,11 +426,14 @@ export interface BackgroundGenRequest {
   imgEndpointId?: string | null;
   imgComfyWorkflow?: string | undefined;
   imgDefaults?: ImageGenerationDefaultsProfile | null;
+  styleProfiles?: ImageStyleProfileSettings;
+  styleProfileId?: string | null;
   debugLog?: (message: string, ...args: any[]) => void;
   /** Storage for user-supplied prompt overrides. Optional — falls back to default builder when omitted. */
   promptOverridesStorage?: PromptOverridesStorage;
   size?: ImageGenerationSize;
   promptOverride?: string;
+  negativePromptOverride?: string;
 }
 
 export interface ChatBackgroundGenRequest extends BackgroundGenRequest {
@@ -414,11 +462,14 @@ export interface SceneIllustrationGenRequest {
   imgEndpointId?: string | null;
   imgComfyWorkflow?: string | undefined;
   imgDefaults?: ImageGenerationDefaultsProfile | null;
+  styleProfiles?: ImageStyleProfileSettings;
+  styleProfileId?: string | null;
   debugLog?: (message: string, ...args: any[]) => void;
   /** Storage for user-supplied prompt overrides. Optional — falls back to default builder when omitted. */
   promptOverridesStorage?: PromptOverridesStorage;
   size?: ImageGenerationSize;
   promptOverride?: string;
+  negativePromptOverride?: string;
 }
 
 export async function buildBackgroundImagePrompt(req: BackgroundGenRequest): Promise<string> {
@@ -431,7 +482,7 @@ export async function buildBackgroundImagePrompt(req: BackgroundGenRequest): Pro
   const rawBackgroundPrompt = req.promptOverridesStorage
     ? await loadPrompt(req.promptOverridesStorage, GAME_BACKGROUND, backgroundVars)
     : GAME_BACKGROUND.defaultBuilder(backgroundVars);
-  return rawBackgroundPrompt.slice(0, 1000);
+  return compileGameImagePrompt(req, "background", rawBackgroundPrompt, 1000).prompt;
 }
 
 export async function buildSceneIllustrationImagePrompt(req: SceneIllustrationGenRequest): Promise<string> {
@@ -460,7 +511,7 @@ export async function buildSceneIllustrationImagePrompt(req: SceneIllustrationGe
     imagePromptInstructionsLine && !rawIllustrationPrompt.includes(imagePromptInstructionsLine)
       ? `${rawIllustrationPrompt}\n${imagePromptInstructionsLine}`
       : rawIllustrationPrompt;
-  return finalPrompt.slice(0, 2200);
+  return compileGameImagePrompt(req, "illustration", finalPrompt, 2200).prompt;
 }
 
 /**
@@ -482,7 +533,18 @@ export async function generateBackground(req: BackgroundGenRequest): Promise<str
     return tag;
   }
 
-  const prompt = await buildBackgroundImagePrompt(req);
+  const rawPrompt = req.promptOverride?.trim()
+    ? req.promptOverride.trim().slice(0, 1000)
+    : await buildBackgroundImagePrompt({ ...req, styleProfiles: undefined });
+  const compiled = compileGameImagePrompt(
+    req,
+    "background",
+    rawPrompt,
+    1000,
+    GAME_BACKGROUND_NEGATIVE_PROMPT,
+    req.negativePromptOverride,
+  );
+  const prompt = compiled.prompt;
   const size = resolvedSize(req.size, DEFAULT_GAME_BACKGROUND_SIZE);
   req.debugLog?.(
     "[debug/game/image-generation] background request slug=%s model=%s source=%s targetSize=%dx%d prompt:\n%s",
@@ -502,7 +564,7 @@ export async function generateBackground(req: BackgroundGenRequest): Promise<str
       req.imgSource || req.imgService || "",
       {
         prompt,
-        negativePrompt: GAME_BACKGROUND_NEGATIVE_PROMPT,
+        negativePrompt: compiled.negativePrompt || GAME_BACKGROUND_NEGATIVE_PROMPT,
         model: req.imgModel,
         width: size.width,
         height: size.height,
@@ -549,7 +611,18 @@ export async function generateChatBackground(req: ChatBackgroundGenRequest): Pro
   const existingPath = existingGeneratedBackgroundPath(CHAT_BACKGROUND_DIR, slug);
   if (existingPath) return basename(existingPath);
 
-  const prompt = await buildBackgroundImagePrompt(req);
+  const rawPrompt = req.promptOverride?.trim()
+    ? req.promptOverride.trim().slice(0, 1000)
+    : await buildBackgroundImagePrompt({ ...req, styleProfiles: undefined });
+  const compiled = compileGameImagePrompt(
+    req,
+    "background",
+    rawPrompt,
+    1000,
+    GAME_BACKGROUND_NEGATIVE_PROMPT,
+    req.negativePromptOverride,
+  );
+  const prompt = compiled.prompt;
   const size = resolvedSize(req.size, DEFAULT_GAME_BACKGROUND_SIZE);
   req.debugLog?.(
     "[debug/background-agent/image-generation] request slug=%s model=%s source=%s targetSize=%dx%d prompt:\n%s",
@@ -569,7 +642,7 @@ export async function generateChatBackground(req: ChatBackgroundGenRequest): Pro
       req.imgSource || req.imgService || "",
       {
         prompt,
-        negativePrompt: GAME_BACKGROUND_NEGATIVE_PROMPT,
+        negativePrompt: compiled.negativePrompt || GAME_BACKGROUND_NEGATIVE_PROMPT,
         model: req.imgModel,
         width: size.width,
         height: size.height,
@@ -612,7 +685,18 @@ export async function generateSceneIllustration(req: SceneIllustrationGenRequest
   const targetDir = join(GAME_ASSETS_DIR, "backgrounds", "illustrations");
   const tag = `backgrounds:illustrations:${slug}`;
 
-  const prompt = await buildSceneIllustrationImagePrompt(req);
+  const rawPrompt = req.promptOverride?.trim()
+    ? req.promptOverride.trim().slice(0, 2200)
+    : await buildSceneIllustrationImagePrompt({ ...req, styleProfiles: undefined });
+  const compiled = compileGameImagePrompt(
+    req,
+    "illustration",
+    rawPrompt,
+    2200,
+    GAME_ILLUSTRATION_NEGATIVE_PROMPT,
+    req.negativePromptOverride,
+  );
+  const prompt = compiled.prompt;
   const size = resolvedSize(req.size, DEFAULT_GAME_BACKGROUND_SIZE);
   req.debugLog?.(
     "[debug/game/image-generation] scene illustration request slug=%s model=%s source=%s targetSize=%dx%d refs=%d prompt:\n%s",
@@ -633,7 +717,7 @@ export async function generateSceneIllustration(req: SceneIllustrationGenRequest
       req.imgSource || req.imgService || "",
       {
         prompt,
-        negativePrompt: GAME_ILLUSTRATION_NEGATIVE_PROMPT,
+        negativePrompt: compiled.negativePrompt || GAME_ILLUSTRATION_NEGATIVE_PROMPT,
         model: req.imgModel,
         width: size.width,
         height: size.height,

@@ -180,6 +180,8 @@ export interface GameSetupConfig {
   imageConnectionId?: string;
   /** Unified art style prompt applied to all generated images (auto-generated at setup) */
   artStylePrompt?: string;
+  /** Optional image style profile applied to generated images in this game. */
+  imageStyleProfileId?: string | null;
   /** Lorebook IDs to activate for this game */
   activeLorebookIds?: string[];
   /** Enable custom HUD widgets (model designs them at game start and updates during play) */

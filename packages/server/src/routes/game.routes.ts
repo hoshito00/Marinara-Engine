@@ -95,6 +95,7 @@ import {
 } from "../services/game/journal.service.js";
 import { dedupeSessionSummaryLists } from "../services/game/session-summary-normalization.js";
 import {
+  compileImagePrompt,
   generationParametersSchema,
   resolveMacros,
   scoreMusic,
@@ -505,6 +506,7 @@ const gameSetupConfigSchema = z.object({
   enableSpriteGeneration: z.boolean().optional(),
   imageConnectionId: z.string().optional(),
   artStylePrompt: z.string().max(500).optional(),
+  imageStyleProfileId: z.string().nullable().optional(),
   activeLorebookIds: z.array(z.string()).optional(),
   enableCustomWidgets: z.boolean().optional(),
   enableSpotifyDj: z.boolean().optional(),
@@ -6338,11 +6340,17 @@ export async function gameRoutes(app: FastifyInstance) {
             const imgComfyWorkflow = imgConn.comfyuiWorkflow || undefined;
             const imgEndpointId = imgConn.imageEndpointId || undefined;
             const imgDefaults = resolveConnectionImageDefaults(imgConn);
+            const imageSettings = await loadImageGenerationUserSettings(app.db);
+            const styleProfiles = imageSettings.styleProfiles;
 
             const setupCfg = meta.gameSetupConfig as Record<string, unknown> | null;
             const genre = (setupCfg?.genre as string) || "";
             const setting = (setupCfg?.setting as string) || "";
             const artStyle = (setupCfg?.artStylePrompt as string) || "";
+            const styleProfileId =
+              ((setupCfg?.imageStyleProfileId as string | undefined) ??
+                (meta.imageStyleProfileId as string | undefined)) ||
+              null;
 
             const charStore = createCharactersStorage(app.db);
             const allChars = await charStore.list();
@@ -6399,6 +6407,8 @@ export async function gameRoutes(app: FastifyInstance) {
                 imgEndpointId,
                 imgComfyWorkflow,
                 imgDefaults,
+                styleProfiles,
+                styleProfileId,
                 debugLog: debugLogsEnabled ? debugLog : undefined,
                 promptOverridesStorage: createPromptOverridesStorage(app.db),
               });
@@ -6467,6 +6477,8 @@ export async function gameRoutes(app: FastifyInstance) {
                   imgEndpointId,
                   imgComfyWorkflow,
                   imgDefaults,
+                  styleProfiles,
+                  styleProfileId,
                   debugLog: debugLogsEnabled ? debugLog : undefined,
                   promptOverridesStorage: createPromptOverridesStorage(app.db),
                 });
@@ -6517,6 +6529,8 @@ export async function gameRoutes(app: FastifyInstance) {
                   imgEndpointId,
                   imgComfyWorkflow,
                   imgDefaults,
+                  styleProfiles,
+                  styleProfileId,
                   debugLog: debugLogsEnabled ? debugLog : undefined,
                   promptOverridesStorage: createPromptOverridesStorage(app.db),
                 });
@@ -6623,6 +6637,7 @@ export async function gameRoutes(app: FastifyInstance) {
       z.object({
         id: z.string().min(1).max(200),
         prompt: z.string().min(1).max(5000),
+        negativePrompt: z.string().max(5000).optional(),
       }),
     )
     .max(32)
@@ -6675,6 +6690,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const imageSettings = await loadImageGenerationUserSettings(app.db);
     const backgroundSize: ImageGenerationSize = input.imageSizes?.background ?? imageSettings.background;
     const portraitSize: ImageGenerationSize = input.imageSizes?.portrait ?? imageSettings.portrait;
+    const styleProfiles = imageSettings.styleProfiles;
 
     const imgModel = imgConn.model || "";
     const imgBaseUrl = imgConn.baseUrl || "https://image.pollinations.ai";
@@ -6690,6 +6706,9 @@ export async function gameRoutes(app: FastifyInstance) {
     const genre = (setupCfg?.genre as string) || "";
     const setting = (setupCfg?.setting as string) || "";
     const artStyle = (setupCfg?.artStylePrompt as string) || "";
+    const styleProfileId =
+      ((setupCfg?.imageStyleProfileId as string | undefined) ?? (meta.imageStyleProfileId as string | undefined)) ||
+      null;
     const imagePromptInstructions =
       typeof meta.gameImagePromptInstructions === "string"
         ? meta.gameImagePromptInstructions.trim().slice(0, 1200)
@@ -6700,6 +6719,7 @@ export async function gameRoutes(app: FastifyInstance) {
       kind: "background" | "illustration" | "portrait";
       title: string;
       prompt: string;
+      negativePrompt?: string;
       width: number;
       height: number;
     }> = [];
@@ -6721,14 +6741,25 @@ export async function gameRoutes(app: FastifyInstance) {
         imgEndpointId,
         imgComfyWorkflow,
         imgDefaults,
+        styleProfiles,
+        styleProfileId,
         promptOverridesStorage,
         size: backgroundSize,
+      });
+      const compiledReviewPrompt = compileImagePrompt({
+        kind: "background",
+        prompt,
+        styleProfiles,
+        styleProfileId,
+        imageDefaults: imgDefaults,
+        generatedStyle: artStyle,
       });
       items.push({
         id: gameImagePromptReviewId("background", slug),
         kind: "background",
         title: `Background: ${slug}`,
-        prompt,
+        prompt: compiledReviewPrompt.prompt,
+        negativePrompt: compiledReviewPrompt.negativePrompt,
         width: backgroundSize.width,
         height: backgroundSize.height,
       });
@@ -6793,15 +6824,26 @@ export async function gameRoutes(app: FastifyInstance) {
           imgEndpointId,
           imgComfyWorkflow,
           imgDefaults,
+          styleProfiles,
+          styleProfileId,
           promptOverridesStorage,
           size: backgroundSize,
         });
         const illustrationKey = illustration.slug || illustration.reason || illustration.prompt.slice(0, 80);
+        const compiledReviewPrompt = compileImagePrompt({
+          kind: "illustration",
+          prompt,
+          styleProfiles,
+          styleProfileId,
+          imageDefaults: imgDefaults,
+          generatedStyle: artStyle,
+        });
         items.push({
           id: gameImagePromptReviewId("illustration", illustrationKey),
           kind: "illustration",
           title: illustration.reason ? `Illustration: ${illustration.reason}` : "Scene illustration",
-          prompt,
+          prompt: compiledReviewPrompt.prompt,
+          negativePrompt: compiledReviewPrompt.negativePrompt,
           width: backgroundSize.width,
           height: backgroundSize.height,
         });
@@ -6862,14 +6904,25 @@ export async function gameRoutes(app: FastifyInstance) {
           imgEndpointId,
           imgComfyWorkflow,
           imgDefaults,
+          styleProfiles,
+          styleProfileId,
           promptOverridesStorage,
           size: portraitSize,
+        });
+        const compiledReviewPrompt = compileImagePrompt({
+          kind: "portrait",
+          prompt,
+          styleProfiles,
+          styleProfileId,
+          imageDefaults: imgDefaults,
+          generatedStyle: artStyle,
         });
         items.push({
           id: gameImagePromptReviewId("portrait", npc.name),
           kind: "portrait",
           title: `Portrait: ${npc.name}`,
-          prompt,
+          prompt: compiledReviewPrompt.prompt,
+          negativePrompt: compiledReviewPrompt.negativePrompt,
           width: portraitSize.width,
           height: portraitSize.height,
         });
@@ -6957,6 +7010,9 @@ export async function gameRoutes(app: FastifyInstance) {
     const genre = (setupCfg?.genre as string) || "";
     const setting = (setupCfg?.setting as string) || "";
     const artStyle = (setupCfg?.artStylePrompt as string) || "";
+    const styleProfileId =
+      ((setupCfg?.imageStyleProfileId as string | undefined) ?? (meta.imageStyleProfileId as string | undefined)) ||
+      null;
     const imagePromptInstructions =
       typeof meta.gameImagePromptInstructions === "string"
         ? meta.gameImagePromptInstructions.trim().slice(0, 1200)
@@ -6964,7 +7020,13 @@ export async function gameRoutes(app: FastifyInstance) {
     const imageSettings = await loadImageGenerationUserSettings(app.db);
     const backgroundSize: ImageGenerationSize = input.imageSizes?.background ?? imageSettings.background;
     const portraitSize: ImageGenerationSize = input.imageSizes?.portrait ?? imageSettings.portrait;
-    const promptOverrideById = new Map((input.promptOverrides ?? []).map((item) => [item.id, item.prompt.trim()]));
+    const styleProfiles = imageSettings.styleProfiles;
+    const promptOverrideById = new Map(
+      (input.promptOverrides ?? []).map((item) => [
+        item.id,
+        { prompt: item.prompt.trim(), negativePrompt: item.negativePrompt?.trim() || undefined },
+      ]),
+    );
 
     let generatedBackground: string | null = null;
     let fallbackBackground: string | null = null;
@@ -6991,10 +7053,13 @@ export async function gameRoutes(app: FastifyInstance) {
         imgEndpointId,
         imgComfyWorkflow,
         imgDefaults,
+        styleProfiles,
+        styleProfileId,
         debugLog: debugLogsEnabled ? debugLog : undefined,
         promptOverridesStorage: createPromptOverridesStorage(app.db),
         size: backgroundSize,
-        promptOverride,
+        promptOverride: promptOverride?.prompt,
+        negativePromptOverride: promptOverride?.negativePrompt,
       });
       if (tag) {
         generatedBackground = tag;
@@ -7079,10 +7144,13 @@ export async function gameRoutes(app: FastifyInstance) {
           imgEndpointId,
           imgComfyWorkflow,
           imgDefaults,
+          styleProfiles,
+          styleProfileId,
           debugLog: debugLogsEnabled ? debugLog : undefined,
           promptOverridesStorage: createPromptOverridesStorage(app.db),
           size: backgroundSize,
-          promptOverride,
+          promptOverride: promptOverride?.prompt,
+          negativePromptOverride: promptOverride?.negativePrompt,
         });
 
         if (tag) {
@@ -7178,10 +7246,13 @@ export async function gameRoutes(app: FastifyInstance) {
           imgEndpointId,
           imgComfyWorkflow,
           imgDefaults,
+          styleProfiles,
+          styleProfileId,
           debugLog: debugLogsEnabled ? debugLog : undefined,
           promptOverridesStorage: createPromptOverridesStorage(app.db),
           size: portraitSize,
-          promptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name)),
+          promptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name))?.prompt,
+          negativePromptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name))?.negativePrompt,
           force: forceNpcAvatar,
         });
         if (avatarUrl) {

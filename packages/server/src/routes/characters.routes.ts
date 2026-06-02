@@ -18,6 +18,7 @@ import { createConnectionsStorage } from "../services/storage/connections.storag
 import { generateImage } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
+import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
 import { writeFile, mkdir, readFile, readdir } from "fs/promises";
 import { join } from "path";
 import { DATA_DIR } from "../utils/data-dir.js";
@@ -51,6 +52,7 @@ function toSafeExportName(name: string, fallback: string) {
 type AvatarGenerationPromptOverride = {
   id: string;
   prompt: string;
+  negativePrompt?: string;
 };
 
 type AvatarGenerationBody = {
@@ -60,6 +62,7 @@ type AvatarGenerationBody = {
   referenceImages?: string[];
   width?: number;
   height?: number;
+  styleProfileId?: string | null;
   promptOverrides?: AvatarGenerationPromptOverride[];
 };
 
@@ -284,7 +287,14 @@ export async function charactersRoutes(app: FastifyInstance) {
     const imageSettings = await loadImageGenerationUserSettings(app.db);
     const width = body.width ?? imageSettings.portrait.width;
     const height = body.height ?? imageSettings.portrait.height;
-    const prompt = buildAvatarGenerationPrompt(body);
+    const imageDefaults = resolveConnectionImageDefaults(resolved.conn);
+    const compiled = compileImagePrompt({
+      kind: "avatar",
+      prompt: buildAvatarGenerationPrompt(body),
+      styleProfiles: imageSettings.styleProfiles,
+      styleProfileId: body.styleProfileId,
+      imageDefaults,
+    });
 
     return {
       items: [
@@ -292,7 +302,8 @@ export async function charactersRoutes(app: FastifyInstance) {
           id: avatarGenerationPromptId(body.name ?? "character"),
           kind: "avatar",
           title: `Avatar: ${body.name?.trim() || "Character"}`,
-          prompt,
+          prompt: compiled.prompt,
+          negativePrompt: compiled.negativePrompt,
           width,
           height,
         },
@@ -309,9 +320,14 @@ export async function charactersRoutes(app: FastifyInstance) {
     const imageSettings = await loadImageGenerationUserSettings(app.db);
     const width = body.width ?? imageSettings.portrait.width;
     const height = body.height ?? imageSettings.portrait.height;
-    const promptOverrideById = new Map((body.promptOverrides ?? []).map((item) => [item.id, item.prompt.trim()]));
-    const prompt =
-      promptOverrideById.get(avatarGenerationPromptId(body.name ?? "character")) ?? buildAvatarGenerationPrompt(body);
+    const promptOverrideById = new Map(
+      (body.promptOverrides ?? []).map((item) => [
+        item.id,
+        { prompt: item.prompt.trim(), negativePrompt: item.negativePrompt?.trim() || undefined },
+      ]),
+    );
+    const promptOverride = promptOverrideById.get(avatarGenerationPromptId(body.name ?? "character"));
+    const rawPrompt = promptOverride?.prompt ?? buildAvatarGenerationPrompt(body);
     const referenceImages = (body.referenceImages ?? [])
       .map((image) => image.trim())
       .filter((image) => image.startsWith("data:image/") || /^[A-Za-z0-9+/=\s]+$/.test(image))
@@ -323,10 +339,19 @@ export async function charactersRoutes(app: FastifyInstance) {
     const imgSource = conn.imageGenerationSource || imgModel;
     const imgServiceHint = conn.imageService || imgSource;
     const imageDefaults = resolveConnectionImageDefaults(conn);
+    const compiled = compileImagePrompt({
+      kind: "avatar",
+      prompt: rawPrompt,
+      negativePrompt: promptOverride?.negativePrompt,
+      styleProfiles: imageSettings.styleProfiles,
+      styleProfileId: body.styleProfileId,
+      imageDefaults,
+    });
 
     try {
       const result = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
-        prompt,
+        prompt: compiled.prompt,
+        negativePrompt: compiled.negativePrompt || undefined,
         model: imgModel || undefined,
         width,
         height,
@@ -338,7 +363,7 @@ export async function charactersRoutes(app: FastifyInstance) {
       });
       return {
         image: `data:${result.mimeType};base64,${result.base64}`,
-        prompt,
+        prompt: compiled.prompt,
       };
     } catch (err) {
       req.log.error(err, "Avatar generation failed");

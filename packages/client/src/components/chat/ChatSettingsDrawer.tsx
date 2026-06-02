@@ -316,6 +316,7 @@ export function ChatSettingsDrawer({
   const roleplaySpriteScale = useUIStore((s) => s.roleplaySpriteScale);
   const imageSelfieWidth = useUIStore((s) => s.imageSelfieWidth);
   const imageSelfieHeight = useUIStore((s) => s.imageSelfieHeight);
+  const imageStyleProfiles = useUIStore((s) => s.imageStyleProfiles);
 
   const { data: allCharacters } = useCharacters();
   const { data: characterGroups } = useCharacterGroups();
@@ -3141,6 +3142,23 @@ export function ChatSettingsDrawer({
                       </option>
                     ))}
                   </select>
+                  <label className="block">
+                    <span className="mb-1 block text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                      Image style
+                    </span>
+                    <select
+                      value={(metadata.imageStyleProfileId as string) ?? ""}
+                      onChange={(e) => updateMeta.mutate({ id: chat.id, imageStyleProfileId: e.target.value || null })}
+                      className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
+                    >
+                      <option value="">Use global or connection default</option>
+                      {imageStyleProfiles.profiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          {profile.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <p className="text-[0.55rem] text-[var(--muted-foreground)]">
                     Used for character selfies when Commands are enabled. The Illustrator agent uses its own connection
                     from the Agents tab.
@@ -4495,6 +4513,25 @@ export function ChatSettingsDrawer({
                             </option>
                           ))}
                         </select>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                            Image style
+                          </span>
+                          <select
+                            value={(metadata.imageStyleProfileId as string) ?? ""}
+                            onChange={(e) =>
+                              updateMeta.mutate({ id: chat.id, imageStyleProfileId: e.target.value || null })
+                            }
+                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-1.5 text-xs text-[var(--foreground)]"
+                          >
+                            <option value="">Use global or connection default</option>
+                            {imageStyleProfiles.profiles.map((profile) => (
+                              <option key={profile.id} value={profile.id}>
+                                {profile.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <label className="flex flex-col gap-1">
                           <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                             Scene image instructions

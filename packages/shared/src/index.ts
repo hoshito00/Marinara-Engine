@@ -24,6 +24,7 @@ export * from "./types/chat-preset.js";
 export * from "./types/game.js";
 export * from "./types/sidecar.js";
 export * from "./types/image-generation-defaults.js";
+export * from "./types/image-style-profile.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -48,6 +49,7 @@ export * from "./constants/agent-prompts.js";
 export * from "./constants/agent-activation.js";
 export * from "./constants/impersonate.js";
 export * from "./constants/image-generation-defaults.js";
+export * from "./constants/image-style-profiles.js";
 export * from "./constants/security.js";
 export * from "./constants/game-assets.js";
 
@@ -65,3 +67,4 @@ export * from "./utils/game-state-text.js";
 export * from "./utils/chat-summary-entries.js";
 export * from "./utils/quest-state.js";
 export * from "./utils/quote-format.js";
+export * from "./utils/image-prompt-compiler.js";

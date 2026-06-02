@@ -3,7 +3,13 @@
 // ──────────────────────────────────────────────
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { normalizeQuoteFormat, type QuoteFormat } from "@marinara-engine/shared";
+import {
+  IMAGE_STYLE_PROFILES_STORAGE_KEY,
+  normalizeImageStyleProfileSettings,
+  normalizeQuoteFormat,
+  type ImageStyleProfileSettings,
+  type QuoteFormat,
+} from "@marinara-engine/shared";
 
 type Panel =
   | "chat"
@@ -331,6 +337,7 @@ interface UIState {
   imagePortraitHeight: number;
   imageSelfieWidth: number;
   imageSelfieHeight: number;
+  imageStyleProfiles: ImageStyleProfileSettings;
 
   messageGrouping: boolean;
   showTimestamps: boolean;
@@ -555,6 +562,7 @@ interface UIState {
   setImageBackgroundDimensions: (width: number, height: number) => void;
   setImagePortraitDimensions: (width: number, height: number) => void;
   setImageSelfieDimensions: (width: number, height: number) => void;
+  setImageStyleProfiles: (settings: ImageStyleProfileSettings) => void;
 
   setMessageGrouping: (v: boolean) => void;
   setShowTimestamps: (v: boolean) => void;
@@ -693,6 +701,7 @@ export function pickSyncedSettings(state: UIState) {
     imagePortraitHeight: state.imagePortraitHeight,
     imageSelfieWidth: state.imageSelfieWidth,
     imageSelfieHeight: state.imageSelfieHeight,
+    [IMAGE_STYLE_PROFILES_STORAGE_KEY]: state.imageStyleProfiles,
 
     messageGrouping: state.messageGrouping,
     showTimestamps: state.showTimestamps,
@@ -816,6 +825,7 @@ export const useUIStore = create<UIState>()(
       imagePortraitHeight: 1024,
       imageSelfieWidth: 896,
       imageSelfieHeight: 1152,
+      imageStyleProfiles: normalizeImageStyleProfileSettings(null),
 
       messageGrouping: true,
       showTimestamps: false,
@@ -1243,6 +1253,7 @@ export const useUIStore = create<UIState>()(
           imageSelfieWidth: clampImageDimension(width),
           imageSelfieHeight: clampImageDimension(height),
         }),
+      setImageStyleProfiles: (settings) => set({ imageStyleProfiles: normalizeImageStyleProfileSettings(settings) }),
 
       setMessageGrouping: (v) => set({ messageGrouping: v }),
       setShowTimestamps: (v) => set({ showTimestamps: v }),
@@ -1380,7 +1391,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 37,
+      version: 38,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1696,6 +1707,14 @@ export const useUIStore = create<UIState>()(
           persisted.quoteFormat = normalizeQuoteFormat(persisted.quoteFormat);
         }
         persisted.quoteFormat = normalizeQuoteFormat(persisted.quoteFormat);
+        // v37 -> v38: customizable image style profiles.
+        if (version <= 37) {
+          persisted.imageStyleProfiles = normalizeImageStyleProfileSettings(
+            persisted[IMAGE_STYLE_PROFILES_STORAGE_KEY] ?? persisted.imageStyleProfiles,
+          );
+          delete persisted[IMAGE_STYLE_PROFILES_STORAGE_KEY];
+        }
+        persisted.imageStyleProfiles = normalizeImageStyleProfileSettings(persisted.imageStyleProfiles);
         delete persisted.trackerPanelWidth;
         return persisted;
       },
@@ -1736,6 +1755,7 @@ export const useUIStore = create<UIState>()(
         imagePortraitHeight: state.imagePortraitHeight,
         imageSelfieWidth: state.imageSelfieWidth,
         imageSelfieHeight: state.imageSelfieHeight,
+        imageStyleProfiles: state.imageStyleProfiles,
 
         messageGrouping: state.messageGrouping,
         showTimestamps: state.showTimestamps,

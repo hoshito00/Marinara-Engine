@@ -1,5 +1,10 @@
 import type { DB } from "../../db/connection.js";
 import { createAppSettingsStorage } from "../storage/app-settings.storage.js";
+import {
+  IMAGE_STYLE_PROFILES_STORAGE_KEY,
+  normalizeImageStyleProfileSettings,
+  type ImageStyleProfileSettings,
+} from "@marinara-engine/shared";
 
 export interface ImageGenerationSize {
   width: number;
@@ -10,6 +15,7 @@ export interface ImageGenerationUserSettings {
   background: ImageGenerationSize;
   portrait: ImageGenerationSize;
   selfie: ImageGenerationSize;
+  styleProfiles: ImageStyleProfileSettings;
 }
 
 const IMAGE_DIMENSION_MIN = 64;
@@ -19,6 +25,7 @@ const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationUserSettings = {
   background: { width: 1280, height: 720 },
   portrait: { width: 1024, height: 1024 },
   selfie: { width: 896, height: 1152 },
+  styleProfiles: normalizeImageStyleProfileSettings(null),
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -59,6 +66,7 @@ export function parseImageGenerationUserSettings(raw: string | null): ImageGener
         DEFAULT_IMAGE_GENERATION_SETTINGS.portrait,
       ),
       selfie: readSize(parsed, "imageSelfieWidth", "imageSelfieHeight", DEFAULT_IMAGE_GENERATION_SETTINGS.selfie),
+      styleProfiles: normalizeImageStyleProfileSettings(parsed[IMAGE_STYLE_PROFILES_STORAGE_KEY]),
     };
   } catch {
     return DEFAULT_IMAGE_GENERATION_SETTINGS;
