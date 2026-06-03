@@ -1,6 +1,6 @@
 # Image Generation
 
-Marinara Engine centralizes image prompt style through **Settings -> Image Generation -> Style Profiles**. A style profile controls how roleplay selfies, avatars, Game Mode backgrounds, NPC portraits, and scene illustrations are shaped before they are sent to the selected image provider.
+Marinara Engine centralizes image prompt style through **Settings -> Image Generation -> Style Profiles**. A style profile controls how roleplay selfies, avatars, sprites, Game Mode backgrounds, NPC portraits, and scene illustrations are shaped before they are sent to the selected image provider.
 
 ## Style profiles
 
@@ -35,8 +35,10 @@ Use the Style Profiles test bench to paste a messy sample prompt and see the fin
 
 Each local image connection can optionally choose a style profile in **Connections -> Local Image Defaults**. Leave it on **Use global default** to follow the global profile. Marinara also suggests a profile from common model/checkpoint names, but it does not switch profiles automatically.
 
+Style profile precedence is: explicit chat/game/profile selection, then the image connection default, then the global default style profile.
+
 The backend-specific controls for AUTOMATIC1111/Forge, ComfyUI, NovelAI, and other providers remain in the existing connection defaults. Style profiles only control prompt shape.
 
 ## Prompt review
 
-When **review prompts before image generation** is enabled, Marinara shows the compiled positive prompt and, when available, the compiled negative prompt before generation. Editing either field changes what is sent for that request.
+When **review prompts before image generation** is enabled, Marinara shows the final compiled positive prompt and, when available, the final compiled negative prompt before generation. Editing either field changes exactly what is sent for that request; reviewed prompts are not compiled a second time after confirmation.

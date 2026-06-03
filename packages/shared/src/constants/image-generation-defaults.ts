@@ -204,6 +204,15 @@ export function mergeNegativePrompt(prefix: string, prompt?: string): string {
   const trimmedPrompt = (prompt ?? "").trim();
   if (!trimmedPrefix) return trimmedPrompt;
   if (!trimmedPrompt) return trimmedPrefix;
+  if (
+    trimmedPrompt === trimmedPrefix ||
+    trimmedPrompt.startsWith(`${trimmedPrefix},`) ||
+    trimmedPrompt.startsWith(`${trimmedPrefix}.`) ||
+    trimmedPrompt.startsWith(`${trimmedPrefix};`) ||
+    trimmedPrompt.startsWith(`${trimmedPrefix}\n`)
+  ) {
+    return trimmedPrompt;
+  }
   return `${trimmedPrefix}, ${trimmedPrompt}`;
 }
 

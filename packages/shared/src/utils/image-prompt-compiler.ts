@@ -38,6 +38,7 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
 
   const generatedStyle = input.generatedStyle?.trim() ?? "";
   const promptPrefix = imagePromptPrefixFromDefaults(input.imageDefaults);
+  const negativePromptPrefix = imageNegativePromptPrefixFromDefaults(input.imageDefaults);
   const profileSubjectTags = profile.subjectTags[input.kind] ?? "";
   const compactTags = promptMode === "tagged" || promptMode === "danbooru";
   const compactVisualPrompt =
@@ -71,7 +72,7 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
         { value: input.prompt, sourcePrompt: true },
         { value: input.userPositive, sourcePrompt: true },
       ];
-  const negativeParts = [profile.negativeTags, input.negativePrompt, input.userNegative, input.hardNegative];
+  const negativeParts = [negativePromptPrefix, profile.negativeTags, input.negativePrompt, input.userNegative, input.hardNegative];
   const positiveFragments: string[] = [];
   const hardPrefixFragments: string[] = [];
   const negativeFragments: string[] = [];
@@ -125,6 +126,14 @@ function imagePromptPrefixFromDefaults(defaults: ImageGenerationDefaultsProfile 
   if (defaults.service === "automatic1111") return defaults.automatic1111?.promptPrefix ?? "";
   if (defaults.service === "comfyui") return defaults.comfyui?.promptPrefix ?? "";
   if (defaults.service === "novelai") return defaults.novelai?.promptPrefix ?? "";
+  return "";
+}
+
+function imageNegativePromptPrefixFromDefaults(defaults: ImageGenerationDefaultsProfile | null | undefined): string {
+  if (!defaults) return "";
+  if (defaults.service === "automatic1111") return defaults.automatic1111?.negativePromptPrefix ?? "";
+  if (defaults.service === "comfyui") return defaults.comfyui?.negativePromptPrefix ?? "";
+  if (defaults.service === "novelai") return defaults.novelai?.negativePromptPrefix ?? "";
   return "";
 }
 

@@ -30,6 +30,7 @@ import { createChatsStorage } from "../../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../../services/storage/connections.storage.js";
 import { resolveConnectionImageDefaults } from "../../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../../services/image/image-generation-settings.js";
+import { compileImagePrompt } from "../../services/image/image-prompt-compiler.js";
 import { createGameStateStorage } from "../../services/storage/game-state.storage.js";
 import { createLorebooksStorage } from "../../services/storage/lorebooks.storage.js";
 import { syncGameMapMetaPartyPosition } from "../../services/game/map-position.service.js";
@@ -1769,6 +1770,11 @@ async function applyRetryResultEffects(args: {
 
               const chatMeta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
               const isGameIllustration = ((chat as any).mode ?? "conversation") === "game";
+              const setupConfig = parseSettingsRecord(chatMeta.gameSetupConfig);
+              const styleProfileId =
+                (typeof setupConfig.imageStyleProfileId === "string" ? setupConfig.imageStyleProfileId : "") ||
+                (typeof chatMeta.imageStyleProfileId === "string" ? chatMeta.imageStyleProfileId : "") ||
+                null;
               const selfieRes = isGameIllustration ? "" : ((chatMeta.selfieResolution as string) ?? "");
               const resParts = selfieRes.split("x").map(Number);
               const parsedW = resParts[0] ?? 0;
@@ -1797,6 +1803,15 @@ async function applyRetryResultEffects(args: {
                 imagePositivePrompt,
               });
               const finalNegativePrompt = [negativePrompt, savedNegativePrompt].filter(Boolean).join(", ");
+              const compiledPrompt = compileImagePrompt({
+                kind: "illustration",
+                prompt: fullPrompt,
+                negativePrompt: finalNegativePrompt || undefined,
+                styleProfiles: imageSettings.styleProfiles,
+                styleProfileId,
+                imageDefaults,
+                generatedStyle: style,
+              });
 
               // Collect character avatar references when enabled
               const useAvatarRefs = illustratorAgent?.resolved.settings?.useAvatarReferences === true;
@@ -1849,8 +1864,8 @@ async function applyRetryResultEffects(args: {
               }
 
               const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
-                prompt: fullPrompt,
-                negativePrompt: finalNegativePrompt || undefined,
+                prompt: compiledPrompt.prompt,
+                negativePrompt: compiledPrompt.negativePrompt || undefined,
                 model: imgModel,
                 width: imgWidth,
                 height: imgHeight,
@@ -1865,7 +1880,7 @@ async function applyRetryResultEffects(args: {
               const galleryEntry = await galleryStore.create({
                 chatId,
                 filePath,
-                prompt: fullPrompt,
+                prompt: compiledPrompt.prompt,
                 provider: "image_generation",
                 model: imgModel || "unknown",
                 width: imgWidth,
@@ -1882,7 +1897,7 @@ async function applyRetryResultEffects(args: {
                   type: "image",
                   url: imageUrl,
                   filename: `illustration.${imageResult.ext}`,
-                  prompt: fullPrompt,
+                  prompt: compiledPrompt.prompt,
                   galleryId: (galleryEntry as any)?.id,
                 };
                 const swipeRow = (await chatsDb.getSwipes(retryMessageId)).find(
@@ -1913,7 +1928,7 @@ async function applyRetryResultEffects(args: {
                 data: {
                   messageId: retryMessageId,
                   imageUrl,
-                  prompt: fullPrompt,
+                  prompt: compiledPrompt.prompt,
                   reason: illData.reason,
                   galleryId: (galleryEntry as any)?.id,
                 },

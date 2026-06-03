@@ -95,7 +95,6 @@ import {
 } from "../services/game/journal.service.js";
 import { dedupeSessionSummaryLists } from "../services/game/session-summary-normalization.js";
 import {
-  compileImagePrompt,
   generationParametersSchema,
   resolveMacros,
   scoreMusic,
@@ -124,9 +123,9 @@ import {
   generateBackground,
   generateSceneIllustration,
   readAvatarBase64,
-  buildBackgroundImagePrompt,
-  buildNpcPortraitImagePrompt,
-  buildSceneIllustrationImagePrompt,
+  buildBackgroundProviderPrompt,
+  buildNpcPortraitProviderPrompt,
+  buildSceneIllustrationProviderPrompt,
 } from "../services/game/game-asset-generation.js";
 import { saveImageToDisk } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
@@ -6726,7 +6725,7 @@ export async function gameRoutes(app: FastifyInstance) {
 
     if (input.backgroundTag) {
       const slug = generatedBackgroundSlug(input.backgroundTag);
-      const prompt = await buildBackgroundImagePrompt({
+      const compiledReviewPrompt = await buildBackgroundProviderPrompt({
         chatId: input.chatId,
         locationSlug: slug,
         sceneDescription: input.backgroundTag.replace(/:/g, " ").replace(/-/g, " "),
@@ -6745,14 +6744,6 @@ export async function gameRoutes(app: FastifyInstance) {
         styleProfileId,
         promptOverridesStorage,
         size: backgroundSize,
-      });
-      const compiledReviewPrompt = compileImagePrompt({
-        kind: "background",
-        prompt,
-        styleProfiles,
-        styleProfileId,
-        imageDefaults: imgDefaults,
-        generatedStyle: artStyle,
       });
       items.push({
         id: gameImagePromptReviewId("background", slug),
@@ -6804,7 +6795,7 @@ export async function gameRoutes(app: FastifyInstance) {
           charAvatarByName,
           charDescriptionByName,
         });
-        const prompt = await buildSceneIllustrationImagePrompt({
+        const compiledReviewPrompt = await buildSceneIllustrationProviderPrompt({
           chatId: input.chatId,
           prompt: illustration.prompt,
           reason: illustration.reason,
@@ -6830,14 +6821,6 @@ export async function gameRoutes(app: FastifyInstance) {
           size: backgroundSize,
         });
         const illustrationKey = illustration.slug || illustration.reason || illustration.prompt.slice(0, 80);
-        const compiledReviewPrompt = compileImagePrompt({
-          kind: "illustration",
-          prompt,
-          styleProfiles,
-          styleProfileId,
-          imageDefaults: imgDefaults,
-          generatedStyle: artStyle,
-        });
         items.push({
           id: gameImagePromptReviewId("illustration", illustrationKey),
           kind: "illustration",
@@ -6891,7 +6874,7 @@ export async function gameRoutes(app: FastifyInstance) {
         if (!forceNpcAvatar && existingNpcAvatarByName.get(normalizedNpcName)) continue;
         if (!forceNpcAvatar && findCharAvatarFuzzy(npc.name, charAvatarByName)) continue;
 
-        const prompt = await buildNpcPortraitImagePrompt({
+        const compiledReviewPrompt = await buildNpcPortraitProviderPrompt({
           chatId: input.chatId,
           npcName: npc.name,
           appearance: npc.description,
@@ -6908,14 +6891,6 @@ export async function gameRoutes(app: FastifyInstance) {
           styleProfileId,
           promptOverridesStorage,
           size: portraitSize,
-        });
-        const compiledReviewPrompt = compileImagePrompt({
-          kind: "portrait",
-          prompt,
-          styleProfiles,
-          styleProfileId,
-          imageDefaults: imgDefaults,
-          generatedStyle: artStyle,
         });
         items.push({
           id: gameImagePromptReviewId("portrait", npc.name),

@@ -281,13 +281,36 @@ export interface NpcPortraitRequest {
   force?: boolean;
 }
 
-export async function buildNpcPortraitImagePrompt(req: NpcPortraitRequest): Promise<string> {
-  if (req.promptOverride?.trim()) return req.promptOverride.trim().slice(0, 1400);
+export type CompiledGameImagePrompt = {
+  prompt: string;
+  negativePrompt: string;
+};
+
+async function buildNpcPortraitRawPrompt(req: NpcPortraitRequest): Promise<string> {
   const vars = npcPortraitVariables(req);
-  const rawPrompt = req.promptOverridesStorage
+  return req.promptOverridesStorage
     ? await loadPrompt(req.promptOverridesStorage, GAME_NPC_PORTRAIT, vars)
     : GAME_NPC_PORTRAIT.defaultBuilder(vars);
-  return compileGameImagePrompt(req, "portrait", rawPrompt, 1400).prompt;
+}
+
+export async function buildNpcPortraitProviderPrompt(req: NpcPortraitRequest): Promise<CompiledGameImagePrompt> {
+  if (req.promptOverride?.trim()) {
+    return {
+      prompt: req.promptOverride.trim(),
+      negativePrompt: req.negativePromptOverride?.trim() || "",
+    };
+  }
+  return compileGameImagePrompt(
+    req,
+    "portrait",
+    await buildNpcPortraitRawPrompt(req),
+    1400,
+    GAME_PORTRAIT_NEGATIVE_PROMPT,
+  );
+}
+
+export async function buildNpcPortraitImagePrompt(req: NpcPortraitRequest): Promise<string> {
+  return (await buildNpcPortraitProviderPrompt(req)).prompt;
 }
 
 function compileGameImagePrompt(
@@ -302,7 +325,10 @@ function compileGameImagePrompt(
   negativePrompt?: string | null,
 ) {
   if (!req.styleProfiles) {
-    return { prompt: prompt.slice(0, maxLength), negativePrompt: [negativePrompt, hardNegative].filter(Boolean).join(", ") };
+    return {
+      prompt: prompt.slice(0, maxLength),
+      negativePrompt: [negativePrompt, hardNegative].filter(Boolean).join(", "),
+    };
   }
   const compiled = compileImagePrompt({
     kind,
@@ -336,17 +362,7 @@ export async function generateNpcPortrait(req: NpcPortraitRequest): Promise<stri
     return `/api/avatars/npc/${req.chatId}/${slug}.png`;
   }
 
-  const rawPrompt = req.promptOverride?.trim()
-    ? req.promptOverride.trim().slice(0, 1400)
-    : await buildNpcPortraitImagePrompt({ ...req, styleProfiles: undefined });
-  const compiled = compileGameImagePrompt(
-    req,
-    "portrait",
-    rawPrompt,
-    1400,
-    GAME_PORTRAIT_NEGATIVE_PROMPT,
-    req.negativePromptOverride,
-  );
+  const compiled = await buildNpcPortraitProviderPrompt(req);
   const prompt = compiled.prompt;
   const size = resolvedSize(req.size, DEFAULT_GAME_PORTRAIT_SIZE);
   req.debugLog?.(
@@ -367,7 +383,7 @@ export async function generateNpcPortrait(req: NpcPortraitRequest): Promise<stri
       req.imgSource || req.imgService || "",
       {
         prompt,
-        negativePrompt: compiled.negativePrompt || GAME_PORTRAIT_NEGATIVE_PROMPT,
+        negativePrompt: compiled.negativePrompt || undefined,
         model: req.imgModel,
         width: size.width,
         height: size.height,
@@ -472,21 +488,38 @@ export interface SceneIllustrationGenRequest {
   negativePromptOverride?: string;
 }
 
-export async function buildBackgroundImagePrompt(req: BackgroundGenRequest): Promise<string> {
-  if (req.promptOverride?.trim()) return req.promptOverride.trim().slice(0, 1000);
+async function buildBackgroundRawPrompt(req: BackgroundGenRequest): Promise<string> {
   const styleHint = [req.artStyle, req.genre, req.setting].filter(Boolean).join(", ");
   const backgroundVars = {
     sceneDescription: req.sceneDescription,
     styleLine: styleHint ? `Style: ${styleHint}.` : "",
   };
-  const rawBackgroundPrompt = req.promptOverridesStorage
+  return req.promptOverridesStorage
     ? await loadPrompt(req.promptOverridesStorage, GAME_BACKGROUND, backgroundVars)
     : GAME_BACKGROUND.defaultBuilder(backgroundVars);
-  return compileGameImagePrompt(req, "background", rawBackgroundPrompt, 1000).prompt;
 }
 
-export async function buildSceneIllustrationImagePrompt(req: SceneIllustrationGenRequest): Promise<string> {
-  if (req.promptOverride?.trim()) return req.promptOverride.trim().slice(0, 2200);
+export async function buildBackgroundProviderPrompt(req: BackgroundGenRequest): Promise<CompiledGameImagePrompt> {
+  if (req.promptOverride?.trim()) {
+    return {
+      prompt: req.promptOverride.trim(),
+      negativePrompt: req.negativePromptOverride?.trim() || "",
+    };
+  }
+  return compileGameImagePrompt(
+    req,
+    "background",
+    await buildBackgroundRawPrompt(req),
+    1000,
+    GAME_BACKGROUND_NEGATIVE_PROMPT,
+  );
+}
+
+export async function buildBackgroundImagePrompt(req: BackgroundGenRequest): Promise<string> {
+  return (await buildBackgroundProviderPrompt(req)).prompt;
+}
+
+async function buildSceneIllustrationRawPrompt(req: SceneIllustrationGenRequest): Promise<string> {
   const styleHint = [req.artStyle, req.genre, req.setting].filter(Boolean).join(", ");
   const imagePromptInstructionsLine = req.imagePromptInstructions?.trim()
     ? `User image instructions: ${req.imagePromptInstructions.trim().replace(/\s+/g, " ").slice(0, 1200)}`
@@ -511,7 +544,29 @@ export async function buildSceneIllustrationImagePrompt(req: SceneIllustrationGe
     imagePromptInstructionsLine && !rawIllustrationPrompt.includes(imagePromptInstructionsLine)
       ? `${rawIllustrationPrompt}\n${imagePromptInstructionsLine}`
       : rawIllustrationPrompt;
-  return compileGameImagePrompt(req, "illustration", finalPrompt, 2200).prompt;
+  return finalPrompt;
+}
+
+export async function buildSceneIllustrationProviderPrompt(
+  req: SceneIllustrationGenRequest,
+): Promise<CompiledGameImagePrompt> {
+  if (req.promptOverride?.trim()) {
+    return {
+      prompt: req.promptOverride.trim(),
+      negativePrompt: req.negativePromptOverride?.trim() || "",
+    };
+  }
+  return compileGameImagePrompt(
+    req,
+    "illustration",
+    await buildSceneIllustrationRawPrompt(req),
+    2200,
+    GAME_ILLUSTRATION_NEGATIVE_PROMPT,
+  );
+}
+
+export async function buildSceneIllustrationImagePrompt(req: SceneIllustrationGenRequest): Promise<string> {
+  return (await buildSceneIllustrationProviderPrompt(req)).prompt;
 }
 
 /**
@@ -533,17 +588,7 @@ export async function generateBackground(req: BackgroundGenRequest): Promise<str
     return tag;
   }
 
-  const rawPrompt = req.promptOverride?.trim()
-    ? req.promptOverride.trim().slice(0, 1000)
-    : await buildBackgroundImagePrompt({ ...req, styleProfiles: undefined });
-  const compiled = compileGameImagePrompt(
-    req,
-    "background",
-    rawPrompt,
-    1000,
-    GAME_BACKGROUND_NEGATIVE_PROMPT,
-    req.negativePromptOverride,
-  );
+  const compiled = await buildBackgroundProviderPrompt(req);
   const prompt = compiled.prompt;
   const size = resolvedSize(req.size, DEFAULT_GAME_BACKGROUND_SIZE);
   req.debugLog?.(
@@ -564,7 +609,7 @@ export async function generateBackground(req: BackgroundGenRequest): Promise<str
       req.imgSource || req.imgService || "",
       {
         prompt,
-        negativePrompt: compiled.negativePrompt || GAME_BACKGROUND_NEGATIVE_PROMPT,
+        negativePrompt: compiled.negativePrompt || undefined,
         model: req.imgModel,
         width: size.width,
         height: size.height,
@@ -611,17 +656,7 @@ export async function generateChatBackground(req: ChatBackgroundGenRequest): Pro
   const existingPath = existingGeneratedBackgroundPath(CHAT_BACKGROUND_DIR, slug);
   if (existingPath) return basename(existingPath);
 
-  const rawPrompt = req.promptOverride?.trim()
-    ? req.promptOverride.trim().slice(0, 1000)
-    : await buildBackgroundImagePrompt({ ...req, styleProfiles: undefined });
-  const compiled = compileGameImagePrompt(
-    req,
-    "background",
-    rawPrompt,
-    1000,
-    GAME_BACKGROUND_NEGATIVE_PROMPT,
-    req.negativePromptOverride,
-  );
+  const compiled = await buildBackgroundProviderPrompt(req);
   const prompt = compiled.prompt;
   const size = resolvedSize(req.size, DEFAULT_GAME_BACKGROUND_SIZE);
   req.debugLog?.(
@@ -642,7 +677,7 @@ export async function generateChatBackground(req: ChatBackgroundGenRequest): Pro
       req.imgSource || req.imgService || "",
       {
         prompt,
-        negativePrompt: compiled.negativePrompt || GAME_BACKGROUND_NEGATIVE_PROMPT,
+        negativePrompt: compiled.negativePrompt || undefined,
         model: req.imgModel,
         width: size.width,
         height: size.height,
@@ -685,17 +720,7 @@ export async function generateSceneIllustration(req: SceneIllustrationGenRequest
   const targetDir = join(GAME_ASSETS_DIR, "backgrounds", "illustrations");
   const tag = `backgrounds:illustrations:${slug}`;
 
-  const rawPrompt = req.promptOverride?.trim()
-    ? req.promptOverride.trim().slice(0, 2200)
-    : await buildSceneIllustrationImagePrompt({ ...req, styleProfiles: undefined });
-  const compiled = compileGameImagePrompt(
-    req,
-    "illustration",
-    rawPrompt,
-    2200,
-    GAME_ILLUSTRATION_NEGATIVE_PROMPT,
-    req.negativePromptOverride,
-  );
+  const compiled = await buildSceneIllustrationProviderPrompt(req);
   const prompt = compiled.prompt;
   const size = resolvedSize(req.size, DEFAULT_GAME_BACKGROUND_SIZE);
   req.debugLog?.(
@@ -717,7 +742,7 @@ export async function generateSceneIllustration(req: SceneIllustrationGenRequest
       req.imgSource || req.imgService || "",
       {
         prompt,
-        negativePrompt: compiled.negativePrompt || GAME_ILLUSTRATION_NEGATIVE_PROMPT,
+        negativePrompt: compiled.negativePrompt || undefined,
         model: req.imgModel,
         width: size.width,
         height: size.height,

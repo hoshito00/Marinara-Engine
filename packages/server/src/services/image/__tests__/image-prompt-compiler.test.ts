@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultImageStyleProfileSettings } from "../../../../../shared/src/constants/image-style-profiles.js";
+import { mergeNegativePrompt } from "../../../../../shared/src/constants/image-generation-defaults.js";
 import { compileImagePrompt } from "../../../../../shared/src/utils/image-prompt-compiler.js";
+import {
+  buildBackgroundProviderPrompt,
+  buildNpcPortraitProviderPrompt,
+} from "../../game/game-asset-generation.js";
 
 test("compileImagePrompt dedupes tags and moves simple negative fragments", () => {
   const settings = createDefaultImageStyleProfileSettings();
@@ -189,4 +194,147 @@ test("compileImagePrompt collapses equivalent portrait composition tags from sav
     compiled.prompt,
   );
   assert.ok(compiled.diagnostics.removedPositiveDuplicates.includes("centered realistic avatar portrait"));
+});
+
+test("compileImagePrompt resolves style precedence from global, connection, then explicit chat/game profile", () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  settings.defaultProfileId = "anime";
+  const imageDefaults = {
+    version: 1 as const,
+    service: "automatic1111" as const,
+    seed: -1,
+    styleProfileId: "photorealistic",
+    automatic1111: {
+      promptPrefix: "",
+      negativePromptPrefix: "",
+      sampler: "Euler a",
+      scheduler: "",
+      steps: 20,
+      cfgScale: 7,
+      clipSkip: null,
+      restoreFaces: false,
+      denoisingStrength: 0.6,
+    },
+  };
+
+  const globalCompiled = compileImagePrompt({
+    kind: "portrait",
+    prompt: "short brown hair, grey eyes",
+    styleProfiles: settings,
+  });
+  const connectionCompiled = compileImagePrompt({
+    kind: "portrait",
+    prompt: "short brown hair, grey eyes",
+    styleProfiles: settings,
+    imageDefaults,
+  });
+  const explicitCompiled = compileImagePrompt({
+    kind: "portrait",
+    prompt: "short brown hair, grey eyes",
+    styleProfiles: settings,
+    styleProfileId: "z-image-turbo",
+    imageDefaults,
+  });
+
+  assert.equal(globalCompiled.profile.id, "anime");
+  assert.equal(connectionCompiled.profile.id, "photorealistic");
+  assert.equal(explicitCompiled.profile.id, "z-image-turbo");
+});
+
+test("compileImagePrompt includes local backend negative prefixes exactly once", () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const compiled = compileImagePrompt({
+    kind: "portrait",
+    prompt: "female, grey eyes, leather armor",
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+    imageDefaults: {
+      version: 1,
+      service: "automatic1111",
+      seed: -1,
+      automatic1111: {
+        promptPrefix: "",
+        negativePromptPrefix: "bad anatomy, extra fingers",
+        sampler: "Euler a",
+        scheduler: "",
+        steps: 20,
+        cfgScale: 7,
+        clipSkip: null,
+        restoreFaces: false,
+        denoisingStrength: 0.6,
+      },
+    },
+  });
+
+  assert.match(compiled.negativePrompt, /^bad anatomy, extra fingers\b/);
+  assert.equal(
+    mergeNegativePrompt("bad anatomy, extra fingers", compiled.negativePrompt),
+    compiled.negativePrompt,
+  );
+});
+
+test("game asset reviewed prompts are final provider prompts after confirmation", async () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const baseReq = {
+    chatId: "chat-1",
+    locationSlug: "sunlit-market",
+    sceneDescription: "A sunlit market square with colorful awnings and cobblestones.",
+    genre: "fantasy",
+    setting: "city",
+    artStyle: "cinematic",
+    imgModel: "sdxl",
+    imgBaseUrl: "http://127.0.0.1:7860",
+    imgApiKey: "",
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+  };
+
+  const preview = await buildBackgroundProviderPrompt(baseReq);
+  const generated = await buildBackgroundProviderPrompt({
+    ...baseReq,
+    promptOverride: preview.prompt,
+    negativePromptOverride: preview.negativePrompt,
+  });
+
+  assert.equal(generated.prompt, preview.prompt);
+  assert.equal(generated.negativePrompt, preview.negativePrompt);
+});
+
+test("game asset reviewed prompts are not silently truncated after confirmation", async () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const longPrompt = `foreground subject, ${"ornate detail, ".repeat(120)}final detail`;
+  const generated = await buildBackgroundProviderPrompt({
+    chatId: "chat-1",
+    locationSlug: "long-reviewed-prompt",
+    sceneDescription: "unused once override is present",
+    imgModel: "sdxl",
+    imgBaseUrl: "http://127.0.0.1:7860",
+    imgApiKey: "",
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+    promptOverride: longPrompt,
+    negativePromptOverride: "text, watermark",
+  });
+
+  assert.equal(generated.prompt, longPrompt);
+  assert.equal(generated.negativePrompt, "text, watermark");
+});
+
+test("legacy NPC portrait path compiles defaults without a review override", async () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const compiled = await buildNpcPortraitProviderPrompt({
+    chatId: "chat-1",
+    npcName: "Cricket",
+    appearance: "Human woman with short brown hair, grey eyes, leather armor, shortsword.",
+    imgModel: "sdxl",
+    imgBaseUrl: "http://127.0.0.1:7860",
+    imgApiKey: "",
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+  });
+
+  assert.match(compiled.prompt, /female/i);
+  assert.match(compiled.prompt, /grey eyes/i);
+  assert.match(compiled.negativePrompt, /text/);
+  assert.doesNotMatch(compiled.prompt, /Cricket,/);
 });

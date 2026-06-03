@@ -8979,6 +8979,12 @@ export async function generateRoutes(app: FastifyInstance) {
                         const imgServiceHint = imgConnFull.imageService || imgSource;
                         const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
                         const imageSettings = await loadImageGenerationUserSettings(app.db);
+                        const styleProfileId =
+                          ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.imageStyleProfileId as
+                            | string
+                            | undefined) ??
+                          (chatMeta.imageStyleProfileId as string | undefined) ??
+                          null;
 
                         for (const npc of charsNeedingAvatars) {
                           try {
@@ -8990,9 +8996,17 @@ export async function generateRoutes(app: FastifyInstance) {
                                 0,
                                 1000,
                               );
+                            const compiledPrompt = compileImagePrompt({
+                              kind: "portrait",
+                              prompt,
+                              styleProfiles: imageSettings.styleProfiles,
+                              styleProfileId,
+                              imageDefaults,
+                            });
 
                             const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
-                              prompt,
+                              prompt: compiledPrompt.prompt,
+                              negativePrompt: compiledPrompt.negativePrompt || undefined,
                               model: imgModel,
                               width: imageSettings.portrait.width,
                               height: imageSettings.portrait.height,
