@@ -234,7 +234,7 @@ export function HomeProfessorMariChat() {
   }, [messages, streamBuffer]);
 
   const displayMessages = useMemo(() => {
-    const base = messages.length > 0 ? messages : [createWelcomeMessage(chatId)];
+    const base = [createWelcomeMessage(chatId), ...messages];
     if (chatId && streamBuffer) return [...base, createStreamMessage(chatId, streamBuffer)];
     return base;
   }, [chatId, messages, streamBuffer]);
@@ -328,7 +328,7 @@ export function HomeProfessorMariChat() {
           <HomeFaq compact />
         </div>
 
-        <div className="flex min-h-[31rem] min-w-0 flex-col rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70">
+        <div className="flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70">
           <div className="flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2">
             <div className="flex min-w-0 items-center gap-2">
               <span className="truncate text-xs font-semibold text-[var(--foreground)]">Ask Professor Mari</span>
@@ -358,7 +358,9 @@ export function HomeProfessorMariChat() {
                   isStreaming={message.id === "__professor_mari_home_stream__"}
                   hideActions
                   hideTimestamp
+                  hideUserAvatar
                   noHoverGroup
+                  plainUserMessages
                   characterMap={characterMap}
                   chatCharacterIds={[PROFESSOR_MARI_ID]}
                   messageIndex={index + 1}

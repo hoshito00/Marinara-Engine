@@ -783,6 +783,10 @@ export function useGenerate() {
       const TYPEWRITER_MAX_FRAME_MS = 120;
       let lastTypewriterPaintAt = 0;
       let typewriterRemainder = 0;
+      const canInspectPageFocus = typeof document !== "undefined";
+      const canListenForWindowBlur = typeof window !== "undefined";
+      const shouldFlushTypewriterForBackground = () =>
+        canInspectPageFocus && (document.visibilityState !== "visible" || !document.hasFocus());
 
       console.log(
         "[Typewriter] streaming=%s, speed=%d, charsPerSecond=%s",
@@ -798,6 +802,11 @@ export function useGenerate() {
         typingActive = false;
         typewriterRemainder = 0;
         if (streamingEnabled && shouldDisplayRawStream && fullBuffer) setStreamBuffer(fullBuffer, params.chatId);
+        if (typewriterDone) {
+          const done = typewriterDone;
+          typewriterDone = null;
+          done();
+        }
       };
 
       const commonPrefixLength = (a: string, b: string) => {
@@ -836,9 +845,17 @@ export function useGenerate() {
       };
 
       const startTypewriter = () => {
+        if (shouldFlushTypewriterForBackground()) {
+          flushTypewriterBuffer();
+          return;
+        }
         if (typingActive) return;
         typingActive = true;
         const tick = (now = performance.now()) => {
+          if (shouldFlushTypewriterForBackground()) {
+            flushTypewriterBuffer();
+            return;
+          }
           if (pendingText.length === 0) {
             typingActive = false;
             if (typewriterDone) {
@@ -875,6 +892,17 @@ export function useGenerate() {
         };
         rafId = requestAnimationFrame(tick);
       };
+      const flushBackgroundedTypewriter = () => {
+        if (shouldFlushTypewriterForBackground() && (pendingText.length > 0 || typingActive)) {
+          flushTypewriterBuffer();
+        }
+      };
+      if (canInspectPageFocus) {
+        document.addEventListener("visibilitychange", flushBackgroundedTypewriter);
+      }
+      if (canListenForWindowBlur) {
+        window.addEventListener("blur", flushBackgroundedTypewriter);
+      }
 
       // Safety net: guarantees the Mari work-status pill clears for this
       // chat on every termination path (done, error, abort, unexpected
@@ -1649,6 +1677,12 @@ export function useGenerate() {
         clearMariPhaseForThisChat();
         // Cancel any pending animation frame to prevent leaks
         cancelAnimationFrame(rafId);
+        if (canInspectPageFocus) {
+          document.removeEventListener("visibilitychange", flushBackgroundedTypewriter);
+        }
+        if (canListenForWindowBlur) {
+          window.removeEventListener("blur", flushBackgroundedTypewriter);
+        }
 
         if (shouldRefreshGameState) {
           // Refresh game state from DB so HUD/sidebar trackers settle on the

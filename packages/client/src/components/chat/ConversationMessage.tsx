@@ -305,6 +305,8 @@ interface ConversationMessageProps {
   hideActions?: boolean;
   noHoverGroup?: boolean;
   hideTimestamp?: boolean;
+  hideUserAvatar?: boolean;
+  plainUserMessages?: boolean;
   forceShowActions?: boolean;
   onDelete?: (messageId: string) => void;
   onRegenerate?: (messageId: string) => void;
@@ -334,6 +336,8 @@ export const ConversationMessage = memo(function ConversationMessage({
   hideActions,
   noHoverGroup,
   hideTimestamp,
+  hideUserAvatar,
+  plainUserMessages,
   forceShowActions,
   onDelete,
   onRegenerate,
@@ -463,27 +467,39 @@ export const ConversationMessage = memo(function ConversationMessage({
   // For user messages, prefer per-message persona snapshot (stored when message was sent)
   // to preserve the correct persona name/avatar even after switching personas.
   // Fall back to the current personaInfo prop for older messages without snapshots.
-  const msgPersona = isUser && extra.personaSnapshot ? extra.personaSnapshot : null;
-  const avatarUrl = isUser ? (msgPersona?.avatarUrl ?? personaInfo?.avatarUrl ?? null) : (charInfo?.avatarUrl ?? null);
+  const msgPersona = isUser && !plainUserMessages && extra.personaSnapshot ? extra.personaSnapshot : null;
+  const avatarUrl = isUser
+    ? plainUserMessages
+      ? null
+      : (msgPersona?.avatarUrl ?? personaInfo?.avatarUrl ?? null)
+    : (charInfo?.avatarUrl ?? null);
   const personaAvatarCrop = isUser
-    ? (parseAvatarCropJson(msgPersona?.avatarCrop) ?? personaInfo?.avatarCrop ?? null)
+    ? plainUserMessages
+      ? null
+      : (parseAvatarCropJson(msgPersona?.avatarCrop) ?? personaInfo?.avatarCrop ?? null)
     : null;
   const avatarCropStyle = isUser ? getAvatarCropStyle(personaAvatarCrop) : getAvatarCropStyle(charInfo?.avatarCrop);
   const displayName = isUser
-    ? (msgPersona?.name ?? personaInfo?.name ?? "You")
+    ? plainUserMessages
+      ? "You"
+      : (msgPersona?.name ?? personaInfo?.name ?? "You")
     : (primaryCharInfo?.name ?? "Assistant");
-  const nameColor = isUser ? (msgPersona?.nameColor ?? personaInfo?.nameColor) : charInfo?.nameColor;
+  const nameColor = isUser
+    ? plainUserMessages
+      ? undefined
+      : (msgPersona?.nameColor ?? personaInfo?.nameColor)
+    : charInfo?.nameColor;
   const renderedContent = useMemo(
     () =>
       resolveMessageMacros(message.content, {
-        userName: msgPersona?.name ?? personaInfo?.name ?? "You",
+        userName: displayName,
         persona: {
-          name: msgPersona?.name ?? personaInfo?.name ?? "You",
-          description: msgPersona?.description ?? personaInfo?.description,
-          personality: msgPersona?.personality ?? personaInfo?.personality,
-          backstory: msgPersona?.backstory ?? personaInfo?.backstory,
-          appearance: msgPersona?.appearance ?? personaInfo?.appearance,
-          scenario: msgPersona?.scenario ?? personaInfo?.scenario,
+          name: displayName,
+          description: plainUserMessages ? undefined : (msgPersona?.description ?? personaInfo?.description),
+          personality: plainUserMessages ? undefined : (msgPersona?.personality ?? personaInfo?.personality),
+          backstory: plainUserMessages ? undefined : (msgPersona?.backstory ?? personaInfo?.backstory),
+          appearance: plainUserMessages ? undefined : (msgPersona?.appearance ?? personaInfo?.appearance),
+          scenario: plainUserMessages ? undefined : (msgPersona?.scenario ?? personaInfo?.scenario),
         },
         primaryCharacter: primaryCharInfo ?? { name: displayName },
         characters: scopedCharacterMap
@@ -498,15 +514,14 @@ export const ConversationMessage = memo(function ConversationMessage({
       msgPersona?.appearance,
       msgPersona?.backstory,
       msgPersona?.description,
-      msgPersona?.name,
       msgPersona?.personality,
       msgPersona?.scenario,
       personaInfo?.appearance,
       personaInfo?.backstory,
       personaInfo?.description,
-      personaInfo?.name,
       personaInfo?.personality,
       personaInfo?.scenario,
+      plainUserMessages,
       primaryCharInfo,
       scopedCharacterMap,
     ],
@@ -702,6 +717,8 @@ export const ConversationMessage = memo(function ConversationMessage({
   const isHiddenExpanded =
     isHiddenFromAI && (!collapseHiddenMessages || manuallyExpandedHidden || editing || !!isStreaming);
   const isHiddenCollapsed = isHiddenFromAI && collapseHiddenMessages && !isHiddenExpanded;
+  const shouldHideUserAvatar = isUser && hideUserAvatar;
+
   const hiddenFromAIHeader = isHiddenFromAI ? (
     <HiddenFromAIConversationButton
       canCollapse={collapseHiddenMessages}
@@ -1049,7 +1066,7 @@ export const ConversationMessage = memo(function ConversationMessage({
       )}
 
       {/* Avatar column — fixed 40px width */}
-      <div className="mari-message-avatar w-10 flex-shrink-0">
+      <div className={cn("mari-message-avatar w-10 flex-shrink-0", shouldHideUserAvatar && "hidden")}>
         {!isGrouped && (
           <>
             <div className="relative h-10 w-10 overflow-hidden rounded-full bg-[var(--accent)]">
