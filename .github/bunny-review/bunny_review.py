@@ -371,30 +371,30 @@ def select_guidance(files):
     joined = "\n".join(files)
     if any(
         marker in joined
-        for marker in ("src/engine/", "src/features/", "src/shared/api/", "src-tauri/")
+        for marker in ("packages/shared/", "packages/server/src/", "packages/client/src/")
     ):
-        guidance.append("skills/marinara-architecture-guard/SKILL.md")
+        guidance.append("docs/ARCHITECTURE_MAP.md")
     if any(
         marker in joined
         for marker in (
             "chat",
             "roleplay",
             "game",
-            "modes",
+            "conversation",
             "prompt",
             "generation",
             "summary",
             "memory",
         )
     ):
-        guidance.append("skills/marinara-mode-separation/SKILL.md")
+        guidance.append("packages/client/.instructions.md")
     if any(
         marker in joined
-        for marker in ("fix/", "storage", "imports", "provider", "transport", "commands")
+        for marker in ("storage", "import", "provider", "db/", "migration", "services/")
     ):
-        guidance.append("skills/marinara-bugfix-discipline/SKILL.md")
-    if any(marker in joined for marker in ("README", "docs/", "skills/", "AGENTS.md")):
-        guidance.append("skills/marinara-getting-started/SKILL.md")
+        guidance.append("docs/FILE_STORAGE_MIGRATION.md")
+    if any(marker in joined for marker in ("README", "docs/", "AGENTS.md", "CONTRIBUTING.md", "CLAUDE.md")):
+        guidance.append("CONTRIBUTING.md")
     return list(dict.fromkeys(guidance))
 
 
@@ -1441,7 +1441,7 @@ def is_ci_check(item):
 
 def is_stale_ci_text(text):
     lowered = text.lower()
-    if "ci" not in lowered and "cargo" not in lowered and "rust check" not in lowered:
+    if "ci" not in lowered and "pnpm" not in lowered and "build" not in lowered:
         return False
     stale_markers = (
         "still running",

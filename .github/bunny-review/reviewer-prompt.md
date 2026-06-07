@@ -57,10 +57,12 @@ One rule: critique code and contracts only. Never personalize or address the aut
    - `git diff --name-only <base>...HEAD`.
 2. Read `AGENTS.md`.
 3. Load only guidance that matches touched areas:
-   - Architecture or ownership changes: `skills/marinara-architecture-guard/SKILL.md`.
-   - Chat, roleplay, or game mode changes: `skills/marinara-mode-separation/SKILL.md`.
-   - Bug fixes or regressions: `skills/marinara-bugfix-discipline/SKILL.md`.
-   - Onboarding/docs/run-build guidance: `skills/marinara-getting-started/SKILL.md`.
+   - Package boundaries or architecture changes: `docs/ARCHITECTURE_MAP.md`.
+   - Frontend (`packages/client`) changes: `packages/client/.instructions.md` and `docs/FRONTEND.md`.
+   - Server (`packages/server`) changes, including logging and route/service boundaries: `CLAUDE.md` and `CONTRIBUTING.md`.
+   - Chat, roleplay, or game mode changes: `docs/ARCHITECTURE_MAP.md` (Mode Ownership), `docs/GAME_MODE.md`, `docs/ROLEPLAY.md`, `docs/CONVERSATION.md`.
+   - Storage, migration, or import/export changes: `docs/FILE_STORAGE_MIGRATION.md`.
+   - Build, container, or CI changes: `docs/installation/containers.md` and `CONTRIBUTING.md`.
 4. Read the changed patch overview, per-file patch context, Bunny path rules, and focused guidance included in the packet.
 5. Inspect callers, contracts, tests, and adjacent implementations from the packet before reporting a finding. If a concrete suspected issue needs missing caller, schema, or contract context, request that focused context once. If context remains missing after the extra batch, say so instead of inventing certainty.
 6. Review mode matters:
@@ -94,13 +96,14 @@ When the packet includes prior Bunny findings or repair contracts from earlier h
 
 Treat these as high-signal Marinara review concerns:
 
-- Product behavior placed outside its owner.
-- Engine code importing React, Zustand stores, Tauri APIs, feature internals, or concrete shared API adapters.
-- Feature code bypassing focused shared API wrappers.
-- Remote-capable behavior that skips the explicit HTTP pipeline.
-- Chat, roleplay, and game mode behavior crossing ownership boundaries.
+- Product behavior placed outside its owning package or mode.
+- `packages/shared` importing React, DOM, Fastify, Drizzle, filesystem, network, or provider SDK code; it must stay the runtime-agnostic contract.
+- Client code calling the server with raw `fetch()` instead of the `@/lib/api-client` wrapper, putting async logic in Zustand stores, or adding barrel/index files.
+- Server code using `console.*` instead of the shared Pino logger, logging errors without the error object first, or putting domain logic in route handlers instead of services.
+- Chat, roleplay, and game mode behavior crossing ownership boundaries, or shared generation/prompt changes silently altering an unrelated mode.
+- SSE/streaming changes that break the token or event contract between `api.stream`/`streamEvents` and the server generate route.
 - Fake success states, silent catches, broad fallbacks, or UI-only guards over broken contracts.
-- Changes without tests when the touched behavior has realistic regression risk.
+- Changes without tests or focused manual proof when the touched behavior has realistic regression risk.
 
 For import, storage, migration, and persistence changes, explicitly check for invariant drift:
 
