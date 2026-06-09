@@ -75,6 +75,7 @@ type SpotifyPlaybackSnapshot = {
   repeatState: "off" | "track" | "context";
   deviceId: string | null;
   deviceName: string | null;
+  deviceType: string | null;
 };
 
 type SpotifyPlaybackDevice = {
@@ -83,6 +84,12 @@ type SpotifyPlaybackDevice = {
   type?: string | null;
   is_active?: boolean;
   is_restricted?: boolean;
+};
+
+type SpotifyPlayRequestBody = {
+  context_uri?: string;
+  uris?: string[];
+  position_ms?: number;
 };
 
 const spotifyTrackIndexCache = new Map<string, SpotifyTrackIndexCacheEntry>();
@@ -572,7 +579,7 @@ async function spotifyGetCurrentPlayback(
       signal: AbortSignal.timeout(10_000),
     });
     if (res.status === 204) {
-      const fallbackDevice = await findAvailableSpotifyPlaybackDevice(creds.accessToken);
+      const fallbackDevice = await findActiveSpotifyPlaybackDevice(creds.accessToken);
       return {
         active: false,
         isPlaying: false,
@@ -586,7 +593,7 @@ async function spotifyGetCurrentPlayback(
             }
           : null,
         note: fallbackDevice
-          ? "No active Spotify playback, but an available Spotify device can be targeted by spotify_play."
+          ? "No active Spotify playback, but the current active Spotify device can be targeted by spotify_play."
           : "No active Spotify playback device.",
       };
     }
@@ -705,7 +712,7 @@ async function fetchSpotifyPlaybackSnapshot(accessToken: string): Promise<Spotif
     is_playing?: boolean;
     repeat_state?: string;
     item?: { uri?: string | null } | null;
-    device?: { id?: string | null; name?: string | null } | null;
+    device?: { id?: string | null; name?: string | null; type?: string | null } | null;
   };
 
   return {
@@ -715,10 +722,11 @@ async function fetchSpotifyPlaybackSnapshot(accessToken: string): Promise<Spotif
     repeatState: normalizeSpotifyRepeatState(data.repeat_state),
     deviceId: typeof data.device?.id === "string" ? data.device.id : null,
     deviceName: typeof data.device?.name === "string" ? data.device.name : null,
+    deviceType: typeof data.device?.type === "string" ? data.device.type : null,
   };
 }
 
-async function findAvailableSpotifyPlaybackDevice(
+async function findActiveSpotifyPlaybackDevice(
   accessToken: string,
 ): Promise<{ deviceId: string; deviceName: string; deviceType: string | null } | null> {
   const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
@@ -729,18 +737,13 @@ async function findAvailableSpotifyPlaybackDevice(
 
   const data = (await res.json().catch(() => null)) as { devices?: SpotifyPlaybackDevice[] } | null;
   const devices = data?.devices ?? [];
-  const pick = (predicate: (device: SpotifyPlaybackDevice) => boolean) =>
-    devices.find(
-      (device) =>
-        typeof device.id === "string" &&
-        device.id.trim().length > 0 &&
-        device.is_restricted !== true &&
-        predicate(device),
-    );
-  const candidate =
-    pick((device) => device.is_active === true) ??
-    pick((device) => device.name !== "Marinara Engine") ??
-    pick((device) => device.name === "Marinara Engine");
+  const candidate = devices.find(
+    (device) =>
+      typeof device.id === "string" &&
+      device.id.trim().length > 0 &&
+      device.is_restricted !== true &&
+      device.is_active === true,
+  );
   if (!candidate?.id) return null;
 
   return {
@@ -750,17 +753,114 @@ async function findAvailableSpotifyPlaybackDevice(
   };
 }
 
+function spotifyPlaybackMatches(
+  snapshot: SpotifyPlaybackSnapshot | null,
+  expectedUris?: string[],
+  requireFirstUri = false,
+): boolean {
+  if (!snapshot?.isPlaying) return false;
+  if (!expectedUris || expectedUris.length === 0) return true;
+  if (!snapshot.trackUri) return false;
+  if (requireFirstUri) return snapshot.trackUri === expectedUris[0];
+  return expectedUris.includes(snapshot.trackUri);
+}
+
 async function waitForSpotifyPlayback(
   accessToken: string,
   expectedTrackUri?: string,
 ): Promise<SpotifyPlaybackSnapshot | null> {
   let latest: SpotifyPlaybackSnapshot | null = null;
-  for (const delay of [0, SPOTIFY_PLAYBACK_SETTLE_MS, SPOTIFY_PLAYBACK_SETTLE_MS] as const) {
+  for (const delay of [0, SPOTIFY_PLAYBACK_SETTLE_MS, 900, 1500, 2500] as const) {
     if (delay > 0) await wait(delay);
     latest = await fetchSpotifyPlaybackSnapshot(accessToken);
-    if (!expectedTrackUri || latest?.trackUri === expectedTrackUri) return latest;
+    if (expectedTrackUri) {
+      if (latest?.isPlaying && latest.trackUri === expectedTrackUri) return latest;
+    } else if (latest?.isPlaying) {
+      return latest;
+    }
   }
   return latest;
+}
+
+async function requestSpotifyPlayback(
+  accessToken: string,
+  deviceId: string | null,
+  body: SpotifyPlayRequestBody,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const playQuery = deviceId ? `?${new URLSearchParams({ device_id: deviceId }).toString()}` : "";
+  const res = await fetch(`https://api.spotify.com/v1/me/player/play${playQuery}`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (res.ok || res.status === 204) return { ok: true };
+
+  const text = await res.text();
+  return { ok: false, error: `Spotify play failed (${res.status}): ${text.slice(0, 200)}` };
+}
+
+async function transferSpotifyPlaybackToDevice(accessToken: string, deviceId: string): Promise<boolean> {
+  const res = await fetch("https://api.spotify.com/v1/me/player", {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ device_ids: [deviceId], play: true }),
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  return !!res && (res.ok || res.status === 204);
+}
+
+async function verifyOrNudgeSpotifyPlayback(args: {
+  accessToken: string;
+  body: SpotifyPlayRequestBody;
+  initialDeviceId: string | null;
+  targetDeviceId: string | null;
+  targetDeviceName: string | null;
+  expectedTrackUri?: string;
+  expectedUris?: string[];
+  requireFirstUri?: boolean;
+}): Promise<SpotifyPlaybackSnapshot | null> {
+  let current = await waitForSpotifyPlayback(args.accessToken, args.expectedTrackUri);
+  if (spotifyPlaybackMatches(current, args.expectedUris, args.requireFirstUri)) return current;
+
+  if (!args.targetDeviceId) return current;
+
+  if (args.initialDeviceId !== args.targetDeviceId) {
+    logger.debug(
+      "[spotify] Playback verification failed; retrying explicit target device %s",
+      args.targetDeviceName ?? args.targetDeviceId,
+    );
+    const retry = await requestSpotifyPlayback(args.accessToken, args.targetDeviceId, args.body);
+    if (retry.ok) {
+      current = await waitForSpotifyPlayback(args.accessToken, args.expectedTrackUri);
+      if (spotifyPlaybackMatches(current, args.expectedUris, args.requireFirstUri)) return current;
+    } else {
+      logger.debug("[spotify] Explicit target retry failed: %s", retry.error);
+    }
+  }
+
+  logger.debug(
+    "[spotify] Playback still not verified; nudging Spotify Connect transfer to %s",
+    args.targetDeviceName ?? args.targetDeviceId,
+  );
+  const transferred = await transferSpotifyPlaybackToDevice(args.accessToken, args.targetDeviceId);
+  if (transferred) {
+    await wait(SPOTIFY_PLAYBACK_SETTLE_MS);
+    const retry = await requestSpotifyPlayback(args.accessToken, args.targetDeviceId, args.body);
+    if (retry.ok) {
+      current = await waitForSpotifyPlayback(args.accessToken, args.expectedTrackUri);
+    } else {
+      logger.debug("[spotify] Post-transfer play retry failed: %s", retry.error);
+    }
+  }
+
+  return current;
 }
 
 function spotifyTrackCacheKey(creds: SpotifyCredentials, playlistId: string): string {
@@ -1130,40 +1230,47 @@ async function spotifyPlay(
     const firstUri = uris[0]!;
     const singleTrackUri = uris.length === 1 && firstUri.startsWith("spotify:track:");
     const beforePlayback = await fetchSpotifyPlaybackSnapshot(creds.accessToken);
-    const fallbackDevice = beforePlayback?.deviceId
-      ? null
-      : await findAvailableSpotifyPlaybackDevice(creds.accessToken);
+    const fallbackDevice = beforePlayback?.deviceId ? null : await findActiveSpotifyPlaybackDevice(creds.accessToken);
     const targetDeviceId = beforePlayback?.deviceId ?? fallbackDevice?.deviceId ?? null;
     const targetDeviceName = beforePlayback?.deviceName ?? fallbackDevice?.deviceName ?? null;
+    const playDeviceId = beforePlayback?.deviceId ? null : targetDeviceId;
     if (!targetDeviceId) {
       return {
         error:
-          "No Spotify device is available. Enable the Spotify mini player in Settings, or open Spotify on another device, then try again.",
+          "No active Spotify device is available. Open Spotify on the device you want to use, then try again.",
       };
     }
-    const playQuery = targetDeviceId ? `?${new URLSearchParams({ device_id: targetDeviceId }).toString()}` : "";
+    logger.debug(
+      "[spotify] Starting playback on %s (%s)",
+      targetDeviceName ?? "the active Spotify device",
+      playDeviceId ? "explicit idle-device target" : "current playback session",
+    );
 
     if (singleTrackUri && repeatAfterPlay === "track") {
-      await applySpotifyRepeatAfterPlay(creds.accessToken, "off", targetDeviceId);
+      await applySpotifyRepeatAfterPlay(creds.accessToken, "off", playDeviceId);
     }
 
     if (uris.length === 1 && !firstUri.startsWith("spotify:track:")) {
-      const body = { context_uri: firstUri };
-      const res = await fetch(`https://api.spotify.com/v1/me/player/play${playQuery}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${creds.accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10_000),
+      const body: SpotifyPlayRequestBody = { context_uri: firstUri };
+      const play = await requestSpotifyPlayback(creds.accessToken, playDeviceId, body);
+      if (!play.ok) return { error: play.error };
+      const repeat = await applySpotifyRepeatAfterPlay(creds.accessToken, repeatAfterPlay, playDeviceId);
+      const current = await verifyOrNudgeSpotifyPlayback({
+        accessToken: creds.accessToken,
+        body,
+        initialDeviceId: playDeviceId,
+        targetDeviceId,
+        targetDeviceName,
       });
-      if (!res.ok && res.status !== 204) {
-        const text = await res.text();
-        return { error: `Spotify play failed (${res.status}): ${text.slice(0, 200)}` };
+      if (!spotifyPlaybackMatches(current)) {
+        return {
+          error: `Spotify accepted the play request, but playback did not start${targetDeviceName ? ` on ${targetDeviceName}` : ""}. Open Spotify on the target device, then try again.`,
+          uris,
+          reason,
+          currentUri: current?.trackUri ?? null,
+          device: current?.deviceName ?? targetDeviceName,
+        };
       }
-      const repeat = await applySpotifyRepeatAfterPlay(creds.accessToken, repeatAfterPlay, targetDeviceId);
-      const current = await waitForSpotifyPlayback(creds.accessToken);
       return {
         applied: true,
         uris,
@@ -1177,26 +1284,42 @@ async function spotifyPlay(
     }
 
     // For track URIs, pass them all as a queue
-    const body = { uris, position_ms: 0 };
-    const res = await fetch(`https://api.spotify.com/v1/me/player/play${playQuery}`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${creds.accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok && res.status !== 204) {
-      const text = await res.text();
-      return { error: `Spotify play failed (${res.status}): ${text.slice(0, 200)}` };
-    }
+    const body: SpotifyPlayRequestBody = { uris, position_ms: 0 };
+    const play = await requestSpotifyPlayback(creds.accessToken, playDeviceId, body);
+    if (!play.ok) return { error: play.error };
     if (singleTrackUri) await wait(SPOTIFY_PLAYBACK_SETTLE_MS);
-    let repeat = await applySpotifyRepeatAfterPlay(creds.accessToken, repeatAfterPlay, targetDeviceId);
-    let current = await waitForSpotifyPlayback(creds.accessToken, singleTrackUri ? firstUri : undefined);
+    let repeat = await applySpotifyRepeatAfterPlay(creds.accessToken, repeatAfterPlay, playDeviceId);
+    let current = await verifyOrNudgeSpotifyPlayback({
+      accessToken: creds.accessToken,
+      body,
+      initialDeviceId: playDeviceId,
+      targetDeviceId,
+      targetDeviceName,
+      expectedTrackUri: singleTrackUri ? firstUri : undefined,
+      expectedUris: uris,
+      requireFirstUri: singleTrackUri,
+    });
     if (singleTrackUri && repeatAfterPlay === "track" && current?.repeatState !== "track") {
-      repeat = await applySpotifyRepeatAfterPlay(creds.accessToken, "track", targetDeviceId, 3);
-      current = await waitForSpotifyPlayback(creds.accessToken, firstUri);
+      repeat = await applySpotifyRepeatAfterPlay(creds.accessToken, "track", current?.deviceId ?? playDeviceId, 3);
+      current = await verifyOrNudgeSpotifyPlayback({
+        accessToken: creds.accessToken,
+        body,
+        initialDeviceId: current?.deviceId ?? playDeviceId,
+        targetDeviceId,
+        targetDeviceName,
+        expectedTrackUri: firstUri,
+        expectedUris: uris,
+        requireFirstUri: true,
+      });
+    }
+    if (!spotifyPlaybackMatches(current, uris, singleTrackUri)) {
+      return {
+        error: `Spotify accepted the play request, but playback did not start${targetDeviceName ? ` on ${targetDeviceName}` : ""}. Open Spotify on the target device, then try again.`,
+        uris,
+        reason,
+        currentUri: current?.trackUri ?? null,
+        device: current?.deviceName ?? targetDeviceName,
+      };
     }
     return {
       applied: true,

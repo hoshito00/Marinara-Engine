@@ -6,7 +6,12 @@ import {
 } from "@marinara-engine/shared";
 import { wrapContent } from "../../services/prompt/format-engine.js";
 
-export type SimpleMessage = { role: "system" | "user" | "assistant"; content: string; images?: string[] };
+export type SimpleMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+  images?: string[];
+  contextKind?: "prompt" | "history" | "injection";
+};
 export type SpeakerPrefixMessage = SimpleMessage & {
   characterId?: string | null;
   name?: string | null;
@@ -117,6 +122,21 @@ export function findLastIndex(messages: SimpleMessage[], role: string): number {
     if (messages[i]!.role === role) return i;
   }
   return -1;
+}
+
+/** Tracker context is injected outside chat history, directly before the latest history message. */
+export function findTrackerContextInsertIndex(
+  messages: Array<{ role: "system" | "user" | "assistant"; contextKind?: string }>,
+): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.contextKind === "history") return i;
+  }
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "user") return i;
+  }
+
+  return messages.length;
 }
 
 /** Parse a JSON extra field safely. */

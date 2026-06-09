@@ -856,6 +856,8 @@ export function ChatRoleplaySurface({
   onSelectAllBelowSelection,
   isGrouped,
 }: RoleplaySurfaceProps) {
+  const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(activeChatId));
+  const hasLiveStream = isStreaming && !isStreamCommitted;
   const linkedChatName = chat?.connectedChatId
     ? getConnectedChatDisplayName(allChats?.find((c) => c.id === chat.connectedChatId))
     : undefined;
@@ -1256,7 +1258,7 @@ export function ChatRoleplaySurface({
                   const sourceIndex = transcriptWindow.startIndex + i;
                   const messageDepth = (messages?.length ?? 0) - 1 - sourceIndex;
                   const messageOrderIndex = loadedMessageOffset + sourceIndex;
-                  const isRegenerating = isStreaming && regenerateMessageId === msg.id;
+                  const isRegenerating = hasLiveStream && regenerateMessageId === msg.id;
                   return (
                     <div
                       key={msg.id}
@@ -1338,7 +1340,7 @@ export function ChatRoleplaySurface({
 
                 {!isStreaming && <CyoaChoices messages={visibleMessages} />}
 
-                {isStreaming && !regenerateMessageId && (
+                {hasLiveStream && !regenerateMessageId && (
                   <StreamingIndicator
                     activeChatId={activeChatId}
                     chatCharIds={chatCharIds}

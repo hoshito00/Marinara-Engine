@@ -17,6 +17,8 @@ const MAX_AGENT_CONTEXT_MESSAGES = 200;
 const EXPRESSION_AGENT_RECENT_CONTEXT_MESSAGES = 2;
 const EXPRESSION_AGENT_CONTEXT_CHAR_LIMIT = 1200;
 const EXPRESSION_AGENT_RESPONSE_CHAR_LIMIT = 6000;
+const CHARACTER_LORE_DESCRIPTION_LIMIT = 2000;
+const CHARACTER_LORE_FIELD_LIMIT = 1200;
 
 /** Strip HTML/XML-style tags (e.g. <div style="..."> <br> <speaker>) from text to save tokens. */
 function stripHtmlTags(text: string): string {
@@ -633,7 +635,12 @@ function invalidJsonAgentError(resultType: AgentResultType): string {
 function shouldRunAgentIndividually(config: Pick<AgentExecConfig, "type">): boolean {
   // These agents either need compact prompts or carry large private extras that
   // must not be merged into unrelated batched agent requests.
-  return config.type === "expression" || config.type === "lorebook-keeper" || config.type === "spotify";
+  return (
+    config.type === "expression" ||
+    config.type === "illustrator" ||
+    config.type === "lorebook-keeper" ||
+    config.type === "spotify"
+  );
 }
 
 function buildStandardAgentMessages(config: AgentExecConfig, template: string, context: AgentContext): ChatMessage[] {
@@ -1020,7 +1027,13 @@ function buildLoreBlock(context: AgentContext): string {
   if (context.characters.length > 0) {
     parts.push(`<characters>`);
     for (const char of context.characters) {
-      parts.push(`- ${char.name}: ${char.description.slice(0, 2000)}`);
+      parts.push(`<character id="${char.id}" name="${char.name}">`);
+      pushLoreField(parts, "Description", char.description, CHARACTER_LORE_DESCRIPTION_LIMIT);
+      pushLoreField(parts, "Appearance", char.appearance, CHARACTER_LORE_FIELD_LIMIT);
+      pushLoreField(parts, "Personality", char.personality, CHARACTER_LORE_FIELD_LIMIT);
+      pushLoreField(parts, "Backstory", char.backstory, CHARACTER_LORE_FIELD_LIMIT);
+      pushLoreField(parts, "Scenario", char.scenario, CHARACTER_LORE_FIELD_LIMIT);
+      parts.push(`</character>`);
     }
     parts.push(`</characters>`);
   }
@@ -1055,6 +1068,12 @@ function buildLoreBlock(context: AgentContext): string {
 
   parts.push(`</lore>`);
   return parts.join("\n");
+}
+
+function pushLoreField(parts: string[], label: string, value: string | undefined, limit: number): void {
+  const text = value?.trim();
+  if (!text) return;
+  parts.push(`${label}: ${text.slice(0, limit)}`);
 }
 
 function buildAvailableSpritesBlock(context: AgentContext): string {

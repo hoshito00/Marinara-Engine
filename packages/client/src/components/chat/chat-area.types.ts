@@ -22,6 +22,7 @@ export type CharacterMap = Map<
 >;
 
 export type PersonaInfo = {
+  id?: string;
   name: string;
   description?: string;
   personality?: string;

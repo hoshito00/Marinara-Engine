@@ -346,6 +346,8 @@ export function ConversationView({
   const qc = useQueryClient();
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreaming = useChatStore((s) => s.isStreaming) && streamingChatId === chatId;
+  const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(chatId));
+  const hasLiveStream = isStreaming && !isStreamCommitted;
   const streamBuffer = useChatStore((s) => s.streamBuffer);
   const thinkingBuffer = useChatStore((s) => s.thinkingBuffer);
   const regenerateMessageId = useChatStore((s) => s.regenerateMessageId);
@@ -361,7 +363,7 @@ export function ConversationView({
   }, [characterMap, characterNames, chatCharIds, streamingCharacterId, typingCharacterName]);
   const liveTypingVerb = liveTypingName.includes(",") || liveTypingName.includes(" & ") ? "are" : "is";
   const showTypingIndicator =
-    isStreaming && !delayedCharacterInfo && (!regenerateMessageId || (!streamBuffer && !thinkingBuffer));
+    hasLiveStream && !delayedCharacterInfo && (!regenerateMessageId || (!streamBuffer && !thinkingBuffer));
 
   // ── Periodic status refresh (every 60s) ──
   // Keeps status dots in sync with the character's schedule regardless of autonomous messaging
@@ -458,7 +460,7 @@ export function ConversationView({
     const onScroll = () => {
       const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       const nearBottom = distFromBottom < 150;
-      if (isStreaming && el.scrollTop < lastScrollTopRef.current - 10) {
+      if (hasLiveStream && el.scrollTop < lastScrollTopRef.current - 10) {
         userScrolledAwayRef.current = true;
       }
       // Re-engage auto-scroll when the user returns to the bottom,
@@ -473,7 +475,7 @@ export function ConversationView({
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     const onUserScroll = () => {
-      if (isStreaming) {
+      if (hasLiveStream) {
         userScrolledAwayRef.current = true;
         userScrolledAtRef.current = Date.now();
       }
@@ -485,11 +487,11 @@ export function ConversationView({
       el.removeEventListener("wheel", onUserScroll);
       el.removeEventListener("touchmove", onUserScroll);
     };
-  }, [isStreaming]);
+  }, [hasLiveStream]);
 
   useEffect(() => {
-    if (!isStreaming) userScrolledAwayRef.current = false;
-  }, [isStreaming]);
+    if (!hasLiveStream) userScrolledAwayRef.current = false;
+  }, [hasLiveStream]);
 
   // Auto-scroll on new messages / streaming / staggered reveals
   const newestMsgId = messages?.[messages.length - 1]?.id;
@@ -500,7 +502,7 @@ export function ConversationView({
     if (isOptimistic || (isNearBottomRef.current && !userScrolledAwayRef.current)) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [newestMsgId, streamBuffer, thinkingBuffer, isStreaming, delayedCharacterInfo, typingCharacterName, isOptimistic]);
+  }, [newestMsgId, streamBuffer, thinkingBuffer, hasLiveStream, delayedCharacterInfo, typingCharacterName, isOptimistic]);
 
   // Preserve scroll on load-more
   useLayoutEffect(() => {
@@ -1016,7 +1018,7 @@ export function ConversationView({
                 <SplitMessageGroup
                   key={`split-${baseId}`}
                   items={groupItems}
-                  isStreaming={isStreaming}
+                  isStreaming={hasLiveStream}
                   regenerateMessageId={regenerateMessageId}
                   streamBuffer={streamBuffer}
                   thinkingBuffer={thinkingBuffer}
@@ -1038,7 +1040,7 @@ export function ConversationView({
 
             // Regular single message
             const { msg, isGrouped } = item;
-            const isRegenerating = isStreaming && regenerateMessageId === msg.id;
+            const isRegenerating = hasLiveStream && regenerateMessageId === msg.id;
             // During regeneration, don't pass isStreaming until content arrives — the
             // "X is typing..." indicator at the bottom provides visual feedback instead
             // of showing bouncing dots inside the message bubble.
@@ -1091,7 +1093,7 @@ export function ConversationView({
         />
 
         {/* Delayed indicator (DND/idle — waiting for character to become available) */}
-        {delayedCharacterInfo && isStreaming && !streamBuffer && !thinkingBuffer && (
+        {delayedCharacterInfo && hasLiveStream && !streamBuffer && !thinkingBuffer && (
           <div className="flex items-center gap-2 px-4 py-1.5 text-[0.8125rem] text-[var(--text-secondary)]">
             <span className="italic">
               {delayedCharacterInfo.status === "dnd"

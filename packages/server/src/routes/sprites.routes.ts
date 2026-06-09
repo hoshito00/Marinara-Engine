@@ -143,6 +143,32 @@ type SpritePromptPlan = {
   promptOverridesStorage: ReturnType<typeof createPromptOverridesStorage>;
 };
 
+const SPRITE_GENERATION_TIMEOUT_MS = Number(
+  process.env.SPRITE_GENERATION_TIMEOUT_MS ?? process.env.IMAGE_GEN_TIMEOUT_MS ?? 300_000,
+);
+
+class SpriteGenerationTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Sprite generation timed out after ${Math.round(timeoutMs / 1000)} seconds`);
+    this.name = "SpriteGenerationTimeoutError";
+  }
+}
+
+function withSpriteGenerationDeadline<T>(promise: Promise<T>): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const deadline = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new SpriteGenerationTimeoutError(SPRITE_GENERATION_TIMEOUT_MS)),
+      SPRITE_GENERATION_TIMEOUT_MS,
+    );
+    timeout.unref?.();
+  });
+
+  return Promise.race([promise, deadline]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
 function spritePromptReviewId(kind: "sheet" | "expression", spriteType: string | undefined, label: string): string {
   const normalizedLabel = label
     .trim()
@@ -163,6 +189,10 @@ function isOpenAIGptImageModel(model?: string): boolean {
   return !!model && /^gpt-image-(?:1|1\.5|2)(?:$|-)/i.test(model.trim());
 }
 
+function isOpenAIGptImage2Model(model?: string): boolean {
+  return !!model && /^gpt-image-2(?:$|-)/i.test(model.trim());
+}
+
 function resolveSpriteSheetCanvas({
   cols,
   rows,
@@ -179,7 +209,7 @@ function resolveSpriteSheetCanvas({
   const requestedSheetWidth = cols * preferredCellWidth;
   const requestedSheetHeight = rows * preferredCellHeight;
 
-  if (!isOpenAIGptImageModel(model)) {
+  if (!isOpenAIGptImageModel(model) || (spriteType !== "full-body" && isOpenAIGptImage2Model(model))) {
     return {
       sheetWidth: requestedSheetWidth,
       sheetHeight: requestedSheetHeight,
@@ -207,7 +237,7 @@ const CLEANUP_FRIENDLY_MATTE_FALLBACK =
 const CLEANUP_FRIENDLY_TRANSPARENT_PNG_PROMPT = `${NATIVE_TRANSPARENT_PNG_PROMPT}. ${CLEANUP_FRIENDLY_MATTE_FALLBACK}`;
 
 function shouldUseCleanupFriendlyTransparentPrompt(model?: string): boolean {
-  return !!model && /^gpt-image-2(?:$|-)/i.test(model.trim());
+  return isOpenAIGptImage2Model(model);
 }
 
 function applyNativeTransparentPngPrompt(prompt: string, cleanupFriendly = false): string {
@@ -222,7 +252,7 @@ function applyNativeTransparentPngPrompt(prompt: string, cleanupFriendly = false
   if (updated !== prompt) {
     return updated;
   }
-  if (/\bno background\b/i.test(updated)) {
+  if (/\b(?:no background|transparent background|transparent png|png format)\b/i.test(updated)) {
     return cleanupFriendly && !/flat pure white/i.test(updated)
       ? `${updated}. ${CLEANUP_FRIENDLY_MATTE_FALLBACK}`
       : updated;
@@ -253,6 +283,33 @@ function compileSpritePrompt(
 
 function finalSpritePromptOverride(override: SpriteCompiledPrompt | undefined, fallback: SpriteCompiledPrompt) {
   return override ?? fallback;
+}
+
+function withSpriteSheetLayoutContract(prompt: SpriteCompiledPrompt, plan: SpritePromptPlan): SpriteCompiledPrompt {
+  if (plan.generateExpressionsIndividually) return prompt;
+
+  const totalCells = plan.cols * plan.rows;
+  const expressionList = plan.expressions.map(formatSpriteLabelForPrompt).join(", ");
+  const wrongNineCellGuard =
+    totalCells === 9 ? "" : " Do not return a 3x3 grid, 9 cells, or fewer cells than requested.";
+  const layoutContract = [
+    `MANDATORY SPRITE SHEET LAYOUT: return one ${plan.sheetWidth}x${plan.sheetHeight}px image containing exactly ${totalCells} separate cells in a strict ${plan.cols} columns by ${plan.rows} rows grid.`,
+    `Each cell is exactly ${plan.cellWidth}x${plan.cellHeight}px; vertical grid cuts are every ${plan.cellWidth}px and horizontal grid cuts are every ${plan.cellHeight}px.`,
+    `Fill every cell. The first ${plan.expressions.length} cells, read left-to-right then top-to-bottom, must be: ${expressionList}.`,
+    `No missing cells, no extra cells, no merged cells, no blank cells, no uneven grid, and no one-large-image composition.${wrongNineCellGuard}`,
+  ].join(" ");
+  const negativeLayout = [
+    prompt.negativePrompt,
+    `missing cells, fewer than ${totalCells} cells, extra cells, merged cells, blank cells, uneven grid, one large image spanning cells`,
+    totalCells === 9 ? "" : `3x3 grid, 9 cells`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  return {
+    prompt: `${prompt.prompt}\n\n${layoutContract}`,
+    negativePrompt: negativeLayout,
+  };
 }
 
 function formatSpriteLabelForPrompt(label: string): string {
@@ -1027,7 +1084,10 @@ async function buildSpritePromptPlan(
   const singlePortrait = body.spriteType !== "full-body" && expressions.length === 1 && cols === 1 && rows === 1;
   const singleFullBody = body.spriteType === "full-body" && expressions.length === 1 && cols === 1 && rows === 1;
   const generateExpressionsIndividually =
-    body.spriteType !== "full-body" && !singlePortrait && isOpenAIGptImageModel(imgModel);
+    body.spriteType !== "full-body" &&
+    !singlePortrait &&
+    isOpenAIGptImageModel(imgModel) &&
+    !isOpenAIGptImage2Model(imgModel);
   const promptOverridesStorage = createPromptOverridesStorage(app.db);
   const trimmedAppearance = body.appearance?.trim() || "";
   const nativeTransparentPng = body.nativeTransparentPng === true;
@@ -1081,6 +1141,10 @@ async function buildSpritePromptPlan(
       expressionCount: expressions.length,
       expressionList,
       appearance: trimmedAppearance,
+      sheetWidth,
+      sheetHeight,
+      cellWidth,
+      cellHeight,
     });
   }
   if (nativeTransparentPng) {
@@ -1570,7 +1634,10 @@ export async function spritesRoutes(app: FastifyInstance) {
       plan.spriteType,
       `${plan.cols}x${plan.rows}-${plan.expressions.join(",")}`,
     );
-    const reviewedPrompt = finalSpritePromptOverride(plan.promptOverrides.get(sheetPromptId), compiledPrompt);
+    const reviewedPrompt = withSpriteSheetLayoutContract(
+      finalSpritePromptOverride(plan.promptOverrides.get(sheetPromptId), compiledPrompt),
+      plan,
+    );
     return {
       items: [
         {
@@ -1637,7 +1704,10 @@ export async function spritesRoutes(app: FastifyInstance) {
       styleProfiles: imageSettings.styleProfiles,
       imageDefaults,
     });
-    const sheetPrompt = finalSpritePromptOverride(plan.promptOverrides.get(sheetPromptId), compiledSheetPrompt);
+    const sheetPrompt = withSpriteSheetLayoutContract(
+      finalSpritePromptOverride(plan.promptOverrides.get(sheetPromptId), compiledSheetPrompt),
+      plan,
+    );
 
     // Parse reference images to raw base64 (supports data URL, raw base64, or local avatar URL)
     const rawRefs = body.referenceImages?.length
@@ -1648,6 +1718,8 @@ export async function spritesRoutes(app: FastifyInstance) {
     const resolvedRefs = rawRefs.map(resolveReferenceImageBase64).filter((r): r is string => !!r);
 
     try {
+      return await withSpriteGenerationDeadline(
+        (async () => {
       if (plan.generateExpressionsIndividually) {
         const cells: Array<{ expression: string; base64: string }> = [];
         const failedExpressions: Array<{ expression: string; error: string }> = [];
@@ -1717,10 +1789,10 @@ export async function spritesRoutes(app: FastifyInstance) {
         }
 
         if (cells.length === 0) {
-          return reply.status(500).send({
-            error: "All expression generations failed",
-            failedExpressions,
-          });
+          const allFailedError = new Error("All expression generations failed");
+          (allFailedError as Error & { failedExpressions?: typeof failedExpressions }).failedExpressions =
+            failedExpressions;
+          throw allFailedError;
         }
 
         return {
@@ -1799,10 +1871,14 @@ export async function spritesRoutes(app: FastifyInstance) {
         sheetBase64: sheetBuffer.toString("base64"),
         cells,
       };
+        })(),
+      );
     } catch (err: any) {
       app.log.error(err, "Sprite sheet generation failed");
-      return reply.status(500).send({
+      const failedExpressions = Array.isArray(err?.failedExpressions) ? { failedExpressions: err.failedExpressions } : {};
+      return reply.status(err instanceof SpriteGenerationTimeoutError ? 504 : 500).send({
         error: err?.message || "Sprite sheet generation failed",
+        ...failedExpressions,
       });
     }
   });

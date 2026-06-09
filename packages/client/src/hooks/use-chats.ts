@@ -168,6 +168,11 @@ export function useChat(id: string | null) {
     queryFn: () => api.get<Chat>(`/chats/${id}`),
     enabled: !!id,
     staleTime: 60_000,
+    retry: (failureCount, error) => {
+      const status = error instanceof ApiError ? error.status : 0;
+      if (status >= 400 && status < 500 && status !== 408 && status !== 429) return false;
+      return failureCount < 3;
+    },
   });
 }
 

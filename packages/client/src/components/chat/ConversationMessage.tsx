@@ -456,8 +456,18 @@ export const ConversationMessage = memo(function ConversationMessage({
 
   // Character info
   const charInfo = message.characterId && scopedCharacterMap ? scopedCharacterMap.get(message.characterId) : null;
+  const fallbackChatCharacterEntry = useMemo(() => {
+    if (!scopedCharacterMap) return null;
+    const orderedIds = chatCharacterIds?.length ? chatCharacterIds : Array.from(scopedCharacterMap.keys());
+    for (const id of orderedIds) {
+      const info = scopedCharacterMap.get(id);
+      if (info) return { id, info };
+    }
+    return null;
+  }, [chatCharacterIds, scopedCharacterMap]);
+  const resolvedCharacterInfo = charInfo ?? fallbackChatCharacterEntry?.info ?? null;
   const primaryCharInfo =
-    charInfo ??
+    resolvedCharacterInfo ??
     (scopedCharacterMap
       ? (Array.from(scopedCharacterMap.values()).find(
           (candidate): candidate is NonNullable<typeof candidate> => !!candidate,
@@ -472,13 +482,15 @@ export const ConversationMessage = memo(function ConversationMessage({
     ? plainUserMessages
       ? null
       : (msgPersona?.avatarUrl ?? personaInfo?.avatarUrl ?? null)
-    : (charInfo?.avatarUrl ?? null);
+    : (resolvedCharacterInfo?.avatarUrl ?? null);
   const personaAvatarCrop = isUser
     ? plainUserMessages
       ? null
       : (parseAvatarCropJson(msgPersona?.avatarCrop) ?? personaInfo?.avatarCrop ?? null)
     : null;
-  const avatarCropStyle = isUser ? getAvatarCropStyle(personaAvatarCrop) : getAvatarCropStyle(charInfo?.avatarCrop);
+  const avatarCropStyle = isUser
+    ? getAvatarCropStyle(personaAvatarCrop)
+    : getAvatarCropStyle(resolvedCharacterInfo?.avatarCrop);
   const displayName = isUser
     ? plainUserMessages
       ? "You"
@@ -488,7 +500,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     ? plainUserMessages
       ? undefined
       : (msgPersona?.nameColor ?? personaInfo?.nameColor)
-    : charInfo?.nameColor;
+    : resolvedCharacterInfo?.nameColor;
   const renderedContent = useMemo(
     () =>
       resolveMessageMacros(message.content, {

@@ -52,7 +52,7 @@ import { join } from "path";
 import { DATA_DIR } from "../utils/data-dir.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import {
-  findLastIndex,
+  findTrackerContextInsertIndex,
   isManualTrackerCharacterId,
   parseExtra,
   isMessageHiddenFromAI,
@@ -333,6 +333,25 @@ function formatPeekTrackerContextBlock(args: {
 function resolveLorebookGenerationTriggers(mode: unknown): string[] {
   const modeTrigger = mode === "game" ? "game" : typeof mode === "string" && mode.trim() ? mode.trim() : "roleplay";
   return Array.from(new Set([modeTrigger, "chat"]));
+}
+
+function resolveChatCharacterIds(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  if (typeof raw !== "string") return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function toPeekPromptMessages(
+  messages: Array<{ role: string; content: string }>,
+): Array<{ role: string; content: string }> {
+  return messages.map((message) => ({ role: message.role, content: message.content }));
 }
 
 function cardPromptText(value: unknown): string {
@@ -1541,13 +1560,7 @@ export async function chatsRoutes(app: FastifyInstance) {
             presetStore.listChoiceBlocksForPreset(presetId),
           ]);
 
-          const allCharacterIds: string[] = (() => {
-            try {
-              return JSON.parse(chat.characterIds as string);
-            } catch {
-              return [];
-            }
-          })();
+          const allCharacterIds = resolveChatCharacterIds(chat.characterIds);
           const characterIds = resolveActiveCharacterIds(allCharacterIds, chatMeta, {
             mode: (chat.mode as string) ?? "roleplay",
             allowEmpty: true,
@@ -1976,17 +1989,16 @@ export async function chatsRoutes(app: FastifyInstance) {
               : null;
 
             if (contextBlock) {
-              const lastUserIdx = findLastIndex(assembled.messages, "user");
-              if (lastUserIdx >= 0) {
-                assembled.messages.splice(lastUserIdx, 0, { role: "system", content: contextBlock });
-              } else {
-                assembled.messages.splice(0, 0, { role: "system", content: contextBlock });
-              }
+              assembled.messages.splice(findTrackerContextInsertIndex(assembled.messages), 0, {
+                role: "user",
+                content: contextBlock,
+                contextKind: "injection",
+              });
             }
           }
 
           return {
-            messages: assembled.messages,
+            messages: toPeekPromptMessages(assembled.messages),
             parameters: assembled.parameters,
             source: "live_preview",
             exact: false,

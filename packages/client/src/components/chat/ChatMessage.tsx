@@ -1103,8 +1103,19 @@ export const ChatMessage = memo(function ChatMessage({
 
   // Resolve character info from characters that actually belong to this chat.
   const charInfo = message.characterId && scopedCharacterMap ? scopedCharacterMap.get(message.characterId) : null;
+  const fallbackChatCharacterEntry = useMemo(() => {
+    if (!scopedCharacterMap) return null;
+    const orderedIds = chatCharacterIds?.length ? chatCharacterIds : Array.from(scopedCharacterMap.keys());
+    for (const id of orderedIds) {
+      const info = scopedCharacterMap.get(id);
+      if (info) return { id, info };
+    }
+    return null;
+  }, [chatCharacterIds, scopedCharacterMap]);
+  const resolvedCharacterInfo = charInfo ?? fallbackChatCharacterEntry?.info ?? null;
+  const resolvedCharacterId = charInfo ? message.characterId : (fallbackChatCharacterEntry?.id ?? message.characterId);
   const primaryCharInfo =
-    charInfo ??
+    resolvedCharacterInfo ??
     (scopedCharacterMap
       ? (Array.from(scopedCharacterMap.values()).find(
           (candidate): candidate is NonNullable<typeof candidate> => !!candidate,
@@ -1170,9 +1181,17 @@ export const ChatMessage = memo(function ChatMessage({
   ]);
 
   const displayName = isUser ? userName : charName;
-  const avatarUrl = isUser ? (msgPersona?.avatarUrl ?? personaInfo?.avatarUrl ?? null) : (charInfo?.avatarUrl ?? null);
+  const avatarUrl = isUser
+    ? (msgPersona?.avatarUrl ?? personaInfo?.avatarUrl ?? null)
+    : (resolvedCharacterInfo?.avatarUrl ?? null);
+  const personaExpressionId =
+    isUser && typeof msgPersona?.personaId === "string" ? msgPersona.personaId : personaInfo?.id;
   const expressionAvatarUrl =
-    !isUser && message.characterId ? (expressionAvatarResolver?.(message, message.characterId) ?? null) : null;
+    isUser && personaExpressionId
+      ? (expressionAvatarResolver?.(message, personaExpressionId) ?? null)
+      : !isUser && resolvedCharacterId
+        ? (expressionAvatarResolver?.(message, resolvedCharacterId) ?? null)
+        : null;
   const displayAvatarUrl = expressionAvatarUrl ?? avatarUrl;
   const personaAvatarCrop = isUser
     ? (parseAvatarCropJson(msgPersona?.avatarCrop) ?? personaInfo?.avatarCrop ?? null)
@@ -1181,7 +1200,7 @@ export const ChatMessage = memo(function ChatMessage({
     ? {}
     : isUser
       ? getAvatarCropStyle(personaAvatarCrop)
-      : getAvatarCropStyle(charInfo?.avatarCrop);
+      : getAvatarCropStyle(resolvedCharacterInfo?.avatarCrop);
 
   // Resolve colors: character colors for assistant, persona colors for user
   // Prefer per-message persona snapshot colors over current persona
@@ -1193,7 +1212,7 @@ export const ChatMessage = memo(function ChatMessage({
           boxColor: msgPersona.boxColor,
         }
       : personaInfo
-    : charInfo;
+    : resolvedCharacterInfo;
   const dialogueColor = msgColors?.dialogueColor;
   const boxBgColor = msgColors?.boxColor;
   const msgNameColor = msgColors?.nameColor;
@@ -1346,7 +1365,7 @@ export const ChatMessage = memo(function ChatMessage({
     ? (personaAvatarCrop ?? null)
     : expressionAvatarUrl
       ? null
-      : (charInfo?.avatarCrop ?? null);
+      : (resolvedCharacterInfo?.avatarCrop ?? null);
   const compactAvatarCropStyle: React.CSSProperties = useCompactRectangleAvatar
     ? rectangleSafeCropStyle(compactAvatarCrop, avatarCropStyle)
     : avatarCropStyle;

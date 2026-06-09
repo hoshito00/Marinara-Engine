@@ -37,7 +37,7 @@ import { sendSseEvent, startSseReply } from "./sse.js";
 import {
   appendReadableAttachmentsToContent,
   extractImageAttachmentDataUrls,
-  findLastIndex,
+  findTrackerContextInsertIndex,
   isMessageHiddenFromAI,
   mergeCustomParameters,
   parseExtra,
@@ -58,6 +58,14 @@ import { createGameStateStorage, type GameStateVisibleAnchor } from "../../servi
 import { logger } from "../../lib/logger.js";
 
 type WrapFormat = "xml" | "markdown" | "none";
+type DryRunPromptMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+  images?: string[];
+  contextKind?: "prompt" | "history" | "injection";
+  characterId?: string | null;
+  providerMetadata?: Record<string, unknown>;
+};
 
 function cardPromptText(value: unknown): string {
   return typeof value === "string" ? stripMacroComments(value).trim() : "";
@@ -213,22 +221,18 @@ function formatTrackersContextBlock(args: {
 }
 
 function injectTrackerContext(
-  finalMessages: Array<{ role: "system" | "user" | "assistant"; content: string; images?: string[] }>,
+  finalMessages: DryRunPromptMessage[],
   contextBlock: string,
-  placement: "append" | "beforeLastUser",
-): Array<{ role: "system" | "user" | "assistant"; content: string; images?: string[] }> {
+  placement: "append" | "beforeLastHistoryMessage",
+): DryRunPromptMessage[] {
+  const trackerMessage = { role: "user" as const, content: contextBlock, contextKind: "injection" as const };
+
   if (placement === "append") {
-    finalMessages.push({ role: "system", content: contextBlock });
+    finalMessages.push(trackerMessage);
     return finalMessages;
   }
 
-  const lastUserIdx = findLastIndex(finalMessages as any, "user");
-  if (lastUserIdx >= 0) {
-    finalMessages.splice(lastUserIdx, 0, { role: "system", content: contextBlock });
-    return finalMessages;
-  }
-
-  finalMessages.push({ role: "system", content: contextBlock });
+  finalMessages.splice(findTrackerContextInsertIndex(finalMessages), 0, trackerMessage);
   return finalMessages;
 }
 
@@ -244,10 +248,10 @@ function wrapperMessages(
 }
 
 function wrapConversationHistoryAndLastMessageInPlace(
-  messages: Array<{ role: "system" | "user" | "assistant"; content: string; images?: string[] }>,
+  messages: DryRunPromptMessage[],
   wrapFormat: WrapFormat,
   opts?: { excludeTrailingImpersonationInstruction?: boolean },
-): Array<{ role: "system" | "user" | "assistant"; content: string; images?: string[] }> {
+): DryRunPromptMessage[] {
   if (wrapFormat === "none") return messages;
 
   // NOTE: This function is a dry-run-only compatibility shim for extensions.
@@ -285,10 +289,15 @@ function wrapConversationHistoryAndLastMessageInPlace(
     return messages.length - 1;
   })();
 
-  const convoStart = messages.findIndex((m) => m.role === "user" || m.role === "assistant");
+  const historyIndexes = messages
+    .map((message, index) => (message.contextKind === "history" ? index : -1))
+    .filter((index) => index >= 0);
+  const convoStart =
+    historyIndexes[0] ?? messages.findIndex((m) => m.role === "user" || m.role === "assistant");
   if (convoStart < 0 || lastNonInstructionIdx < convoStart) return messages;
 
   const convoEnd = (() => {
+    if (historyIndexes.length > 0) return historyIndexes[historyIndexes.length - 1]!;
     for (let i = lastNonInstructionIdx; i >= convoStart; i--) {
       const r = messages[i]!.role;
       if (r === "user" || r === "assistant") return i;
@@ -382,12 +391,10 @@ function wrapConversationHistoryAndLastMessageInPlace(
     // If tracker context ended up *after* the assistant we want to tag, move it
     // before the assistant so the final assistant tag remains the tail of convo.
     //
-    // This is a dry-run-only shim: tracker injection in this route uses "insert before
-    // last user", which can land after assistant turns if the preset has trailing user
-    // sections. Extensions expect trackers to be established context *before* the final
-    // assistant message.
-    const isTrackerContextMessage = (m: { role: string; content: string }): boolean => {
-      if (m.role !== "system") return false;
+    // This is a dry-run-only shim for extension previews. Tracker context is an
+    // injection outside chat history, not part of the conversation slice.
+    const isTrackerContextMessage = (m: DryRunPromptMessage): boolean => {
+      if (m.contextKind !== "injection" && m.role !== "system") return false;
       const c = (m.content ?? "").trimStart();
       if (wrapFormat === "xml") return c.startsWith("<context>") || c.includes("\n</context>");
       return c.startsWith("# Context\n*(Established state as of the last message.");
@@ -709,6 +716,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       return {
         role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
         content: appendReadableAttachmentsToContent((m.content as string) ?? "", attachments),
+        contextKind: "history" as const,
         characterId: typeof m.characterId === "string" && m.characterId ? m.characterId : null,
         ...(images?.length ? { images } : {}),
         ...geminiParts,
@@ -723,7 +731,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     }
 
     // Build prompt messages
-    let finalMessages: Array<{ role: "system" | "user" | "assistant"; content: string; images?: string[] }> = [];
+    let finalMessages: DryRunPromptMessage[] = [];
     let wrapFormat: WrapFormat = "xml";
 
     // Optional: fine-grained prompt assembly (server-side) for extensions.
@@ -1102,8 +1110,11 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         ? (mappedMessages.map((m: any) => ({
             role: m.role,
             content: m.content,
+            contextKind: "history" as const,
+            characterId: m.characterId ?? null,
             ...(m.images ? { images: m.images } : {}),
-          })) as Array<{ role: "system" | "user" | "assistant"; content: string; images?: string[] }>)
+            ...(m.providerMetadata ? { providerMetadata: m.providerMetadata } : {}),
+          })) as DryRunPromptMessage[])
         : [];
 
       const lastConvIdx = (() => {
@@ -1217,8 +1228,8 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         if (key === "trackers") {
           if (!trackersBlock) continue;
           // Trackers already come out wrapped as `<context> ... </context>` when using XML.
-          // In promptParts mode, honor `promptParts.order` strictly (no splicing before last user).
-          finalMessages.push({ role: "system", content: trackersBlock });
+          // In promptParts mode, honor `promptParts.order` strictly.
+          finalMessages.push({ role: "user", content: trackersBlock, contextKind: "injection" });
           continue;
         }
       }
@@ -1415,7 +1426,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       const snap = await loadLatestGameSnapshot(app, chatId, visibleGameStateAnchor, regenerateMessageId);
       const contextBlock = snap ? formatTrackersContextBlock({ wrapFormat, snap, chatMeta }) : null;
       if (contextBlock) {
-        finalMessages = injectTrackerContext(finalMessages, contextBlock, "beforeLastUser");
+        finalMessages = injectTrackerContext(finalMessages, contextBlock, "beforeLastHistoryMessage");
       }
     }
 

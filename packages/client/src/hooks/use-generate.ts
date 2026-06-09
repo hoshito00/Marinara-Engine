@@ -573,6 +573,7 @@ export function useGenerate() {
   const setStreaming = useChatStore((s) => s.setStreaming);
   const setMariPhase = useChatStore((s) => s.setMariPhase);
   const setStreamBuffer = useChatStore((s) => s.setStreamBuffer);
+  const setStreamCommitted = useChatStore((s) => s.setStreamCommitted);
   const clearStreamBuffer = useChatStore((s) => s.clearStreamBuffer);
   const appendThinkingBuffer = useChatStore((s) => s.appendThinkingBuffer);
   const clearThinkingBuffer = useChatStore((s) => s.clearThinkingBuffer);
@@ -642,6 +643,7 @@ export function useGenerate() {
       const isActiveChat = () => useChatStore.getState().activeChatId === params.chatId;
       const isGameGeneration = getCachedChatMode(qc, params.chatId) === "game";
       const shouldRefreshGameState = shouldRefreshGameStateAfterGeneration(qc, params.chatId);
+      let spriteChangeReceived = false;
 
       // Only touch global streaming UI state if the user is viewing this chat.
       // Background generations (e.g. autonomous messaging) run silently,
@@ -915,6 +917,18 @@ export function useGenerate() {
         window.addEventListener("blur", flushBackgroundedTypewriter);
       }
 
+      const waitForTypewriterDrain = async () => {
+        if (!streamingEnabled || !shouldDisplayRawStream || (pendingText.length === 0 && !typingActive)) return;
+        await new Promise<void>((resolve) => {
+          if (pendingText.length === 0 && !typingActive) {
+            resolve();
+            return;
+          }
+          typewriterDone = resolve;
+          startTypewriter();
+        });
+      };
+
       // Safety net: guarantees the Mari work-status pill clears for this
       // chat on every termination path (done, error, abort, unexpected
       // throw). The assistant_commands_end SSE event is still the primary
@@ -1093,6 +1107,17 @@ export function useGenerate() {
 
               if (result.success) {
                 qc.invalidateQueries({ queryKey: agentKeys.customRuns(params.chatId) });
+                if (result.resultType === "sprite_change") {
+                  spriteChangeReceived = true;
+                  const streamState = useChatStore.getState();
+                  const canRefreshMessagesNow =
+                    !streamingEnabled ||
+                    streamState.streamingChatId !== params.chatId ||
+                    streamState.committedStreamChatIds.has(params.chatId);
+                  if (canRefreshMessagesNow) {
+                    qc.invalidateQueries({ queryKey: chatKeys.messages(params.chatId) });
+                  }
+                }
                 if (result.agentType === "spotify") {
                   qc.invalidateQueries({ queryKey: ["spotify", "player"] });
                 }
@@ -1304,6 +1329,7 @@ export function useGenerate() {
                 clearThinkingBuffer(params.chatId);
               }
 
+              if (streamingEnabled) setStreamCommitted(params.chatId, false);
               if (isActiveChat()) setStreamingCharacterId(turn.characterId);
               break;
             }
@@ -1349,6 +1375,14 @@ export function useGenerate() {
                 }
                 fullBuffer = normalizeLineBreakSpacing(rw.editedText);
                 if (streamingEnabled && shouldDisplayRawStream) setStreamBuffer(fullBuffer, params.chatId);
+                if (useChatStore.getState().committedStreamChatIds.has(params.chatId)) {
+                  const latestSavedMessage = latestAssistantMessage(persistedMessages.values());
+                  if (latestSavedMessage) {
+                    const updatedMessage = { ...latestSavedMessage, content: fullBuffer };
+                    persistedMessages.set(updatedMessage.id, updatedMessage);
+                    upsertPersistedMessages(qc, params.chatId, [updatedMessage]);
+                  }
+                }
               }
               break;
             }
@@ -1371,12 +1405,22 @@ export function useGenerate() {
                     ? savedMessage.activeSwipeIndex
                     : 0,
               };
-              // During non-regeneration streaming, defer the cache upsert until
-              // streaming ends. Otherwise the saved message appears in the list
-              // while the StreamingIndicator is still visible — causing a
-              // duplicate message that vanishes on refresh.
+              // Once an ordinary roleplay stream is saved, the durable message
+              // should own the transcript even if post-generation agents
+              // (Illustrator, Spotify, etc.) are still running.
               if (params.regenerateMessageId || !streamingEnabled) {
                 upsertPersistedMessages(qc, params.chatId, [savedMessage]);
+              } else if (shouldDisplayRawStream && !isGameGeneration) {
+                await waitForTypewriterDrain();
+                upsertPersistedMessages(qc, params.chatId, [savedMessage]);
+                clearStreamBuffer(params.chatId);
+                clearThinkingBuffer(params.chatId);
+                setStreamCommitted(params.chatId, true);
+                if (isActiveChat() && useChatStore.getState().streamingChatId === params.chatId) {
+                  setStreamingCharacterId(null);
+                  setTypingCharacterName(null);
+                  setDelayedCharacterInfo(null);
+                }
               }
               break;
             }
@@ -1584,6 +1628,9 @@ export function useGenerate() {
             }
 
             case "done": {
+              if (spriteChangeReceived) {
+                qc.invalidateQueries({ queryKey: chatKeys.messages(params.chatId) });
+              }
               if (isActiveChat()) setProcessing(false);
               clearMariPhaseForThisChat();
               break;
@@ -1759,16 +1806,22 @@ export function useGenerate() {
           // Only clear global streaming/UI state if this chat is still the one
           // being displayed, to avoid corrupting another chat's active generation.
           if (useChatStore.getState().streamingChatId === params.chatId) {
-            if (isGameGeneration || (receivedContent && persistedForRefresh.length === 0)) {
+            if (isGameGeneration) {
               // Game mode still needs the authoritative refresh before release
               // because the scene/HUD pipeline depends on the final snapshot.
               await refreshMessagesAuthoritatively(qc, params.chatId, persistedForRefresh);
+              setStreaming(false);
+              clearStreamBuffer(params.chatId);
             } else {
-              primeMessagesFromSaved();
-              refreshMessagesInBackground();
+              setStreaming(false);
+              clearStreamBuffer(params.chatId);
+              if (receivedContent && persistedForRefresh.length === 0) {
+                await refreshMessagesAuthoritatively(qc, params.chatId, persistedForRefresh);
+              } else {
+                primeMessagesFromSaved();
+                refreshMessagesInBackground();
+              }
             }
-            setStreaming(false);
-            clearStreamBuffer(params.chatId);
           } else {
             if (isGameGeneration || (receivedContent && persistedForRefresh.length === 0)) {
               await refreshMessagesAuthoritatively(qc, params.chatId, persistedForRefresh);
@@ -1858,6 +1911,7 @@ export function useGenerate() {
       setStreaming,
       setMariPhase,
       setStreamBuffer,
+      setStreamCommitted,
       clearStreamBuffer,
       appendThinkingBuffer,
       clearThinkingBuffer,
@@ -1887,6 +1941,7 @@ export function useGenerate() {
       setProcessing(true);
       clearFailedAgentTypes();
       clearThoughtBubbles();
+      let hasError = false;
 
       try {
         const flushPatch = useGameStateStore.getState().flushPatch;
@@ -1899,9 +1954,9 @@ export function useGenerate() {
           }
         }
 
-        let hasError = false;
         let agentResultCount = 0;
         let trackerPatchCount = 0;
+        let spriteChangeReceived = false;
         const isTrackerRetry = agentTypes.some(
           (agentType) => BUILT_IN_TRACKER_AGENT_TYPE_SET.has(agentType) || !BUILT_IN_AGENT_TYPE_SET.has(agentType),
         );
@@ -1951,6 +2006,10 @@ export function useGenerate() {
 
               if (result.success) {
                 qc.invalidateQueries({ queryKey: agentKeys.customRuns(chatId) });
+                if (result.resultType === "sprite_change") {
+                  spriteChangeReceived = true;
+                  qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
+                }
                 if (result.agentType === "spotify") {
                   qc.invalidateQueries({ queryKey: ["spotify", "player"] });
                 }
@@ -2038,6 +2097,7 @@ export function useGenerate() {
               break;
             }
             case "agents_retry_failed": {
+              hasError = true;
               const failedList = event.data as Array<{
                 agentType: string;
                 agentName?: string | null;
@@ -2073,7 +2133,7 @@ export function useGenerate() {
               toast(illData.reason ? `🎨 ${illData.reason}` : "🎨 Scene illustration generated");
               // Refresh messages so the illustration attachment appears
               if (isActiveChat()) {
-                qc.invalidateQueries({ queryKey: ["messages", chatId] });
+                qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
                 qc.invalidateQueries({ queryKey: ["gallery", chatId] });
               }
               break;
@@ -2094,6 +2154,9 @@ export function useGenerate() {
               break;
             }
             case "done": {
+              if (spriteChangeReceived) {
+                qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
+              }
               break;
             }
           }
@@ -2111,6 +2174,7 @@ export function useGenerate() {
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
+        hasError = true;
         const msg =
           error instanceof Error
             ? (error as { cause?: unknown }).cause instanceof Error
@@ -2120,6 +2184,9 @@ export function useGenerate() {
         showError(msg);
       } finally {
         setProcessing(false);
+        if (hasError && isActiveChat()) {
+          void refreshMessagesAuthoritatively(qc, chatId);
+        }
         if (shouldRefreshGameStateAfterGeneration(qc, chatId)) {
           void refreshVisibleGameStateAfterGeneration(chatId);
         }

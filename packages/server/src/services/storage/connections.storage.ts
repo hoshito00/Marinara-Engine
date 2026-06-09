@@ -41,6 +41,17 @@ export function createConnectionsStorage(db: DB) {
       return { ...row, apiKey: decryptApiKey(row.apiKeyEncrypted) };
     },
 
+    /** Get the image-generation connection marked as default for Illustrator (with decrypted key). */
+    async getDefaultForImageGeneration() {
+      const rows = await db
+        .select()
+        .from(apiConnections)
+        .where(and(eq(apiConnections.defaultForAgents, "true"), eq(apiConnections.provider, "image_generation")));
+      const row = rows[0] ?? null;
+      if (!row) return null;
+      return { ...row, apiKey: decryptApiKey(row.apiKeyEncrypted) };
+    },
+
     async create(input: CreateConnectionInput) {
       const id = newId();
       const timestamp = now();

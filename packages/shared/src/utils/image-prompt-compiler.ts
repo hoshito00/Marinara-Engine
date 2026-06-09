@@ -40,7 +40,8 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
   const promptPrefix = imagePromptPrefixFromDefaults(input.imageDefaults);
   const negativePromptPrefix = imageNegativePromptPrefixFromDefaults(input.imageDefaults);
   const profileSubjectTags = profile.subjectTags[input.kind] ?? "";
-  const compactTags = promptMode === "tagged" || promptMode === "danbooru";
+  const preserveScenePrompt = input.kind === "illustration" || input.kind === "background";
+  const compactTags = !preserveScenePrompt && (promptMode === "tagged" || promptMode === "danbooru");
   const compactVisualPrompt =
     profile.baseStyle !== "z_image_turbo" && ["avatar", "portrait", "selfie", "sprite"].includes(input.kind);
   const compactPrompt = compactTags || compactVisualPrompt;
@@ -78,7 +79,7 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
   const negativeFragments: string[] = [];
 
   for (const part of positiveParts) {
-    const shouldDistill = part.sourcePrompt;
+    const shouldDistill = part.sourcePrompt && !preserveScenePrompt;
     for (const fragment of splitPromptFragments(part.value, fragmentMode, shouldDistill)) {
       const negative = extractNegativeFragment(fragment);
       if (negative) {

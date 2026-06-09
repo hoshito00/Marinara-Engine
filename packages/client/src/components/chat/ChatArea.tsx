@@ -21,10 +21,11 @@ import {
 
 import { useChatStore } from "../../stores/chat.store";
 import { useGenerate } from "../../hooks/use-generate";
-import { spriteKeys, useCharacters, usePersonas, type SpriteInfo } from "../../hooks/use-characters";
+import { characterKeys, spriteKeys, useCharacters, usePersonas, type SpriteInfo } from "../../hooks/use-characters";
 import { usePageActivity } from "../../hooks/use-page-activity";
 import { api, ApiError } from "../../lib/api-client";
 import { getChatDisplayName, getConnectedChatDisplayName, parseChatMetadata } from "../../lib/chat-display";
+import { getChatCharacterIds } from "../../lib/chat-macros";
 import { resolveCurrentGameSessionChatId } from "../../lib/game-session-resolution";
 import { parseCharacterDisplayData } from "../../lib/character-display";
 import { showConfirmDialog } from "../../lib/app-dialogs";
@@ -146,6 +147,35 @@ type AgentInjectionReviewRequest = {
   injections: AgentInjectionReviewItem[];
 };
 
+type CharacterRow = { id: string; data: unknown; avatarPath: string | null };
+type CharacterMapValue = NonNullable<ReturnType<CharacterMap["get"]>>;
+
+function toCharacterMapValue(char: CharacterRow): CharacterMapValue {
+  try {
+    const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
+    const data = parsed && typeof parsed === "object" ? (parsed as Record<string, any>) : {};
+    const extensions = data.extensions && typeof data.extensions === "object" ? data.extensions : {};
+    return {
+      name: data.name ?? "Unknown",
+      description: data.description ?? "",
+      personality: data.personality ?? "",
+      backstory: extensions.backstory ?? "",
+      appearance: extensions.appearance ?? "",
+      scenario: data.scenario ?? "",
+      example: data.mes_example ?? "",
+      avatarUrl: char.avatarPath ?? null,
+      nameColor: extensions.nameColor || undefined,
+      dialogueColor: extensions.dialogueColor || undefined,
+      boxColor: extensions.boxColor || undefined,
+      avatarCrop: extensions.avatarCrop || null,
+      conversationStatus: extensions.conversationStatus || undefined,
+      conversationActivity: extensions.conversationActivity || undefined,
+    };
+  } catch {
+    return { name: "Unknown", avatarUrl: char.avatarPath ?? null };
+  }
+}
+
 const ChatConversationSurface = lazy(async () => {
   const module = await import("./ChatConversationSurface");
   return { default: module.ChatConversationSurface };
@@ -203,8 +233,13 @@ export function ChatArea() {
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const [selectionAnchorIndex, setSelectionAnchorIndex] = useState<number | null>(null);
 
-  const { data: chat, error: chatError } = useChat(activeChatId);
+  const { data: chatDetail, error: chatError } = useChat(activeChatId);
   const { data: allChats } = useChats();
+  const listedActiveChat = useMemo(
+    () => (activeChatId ? (allChats?.find((candidate) => candidate.id === activeChatId) ?? null) : null),
+    [activeChatId, allChats],
+  );
+  const chat = chatDetail ?? null;
   // Game mode loads ALL messages (no pagination) so the in-game log
   // shows the full session history instead of only the latest page.
   const isGameChat = (chat as unknown as { mode?: string })?.mode === "game";
@@ -267,6 +302,12 @@ export function ChatArea() {
     setActiveChatId(null);
   }, [activeChatId, chatError, setActiveChatId]);
 
+  useEffect(() => {
+    if (!activeChatId || !allChats) return;
+    if (listedActiveChat) return;
+    setActiveChatId(null);
+  }, [activeChatId, allChats, listedActiveChat, setActiveChatId]);
+
   const currentGameSessionChatId = useMemo(() => resolveCurrentGameSessionChatId(chat, allChats), [allChats, chat]);
 
   useEffect(() => {
@@ -306,46 +347,42 @@ export function ChatArea() {
     setAgentInjectionDrafts({});
   }, []);
 
-  // Build character lookup map
-  const characterMap: CharacterMap = useMemo(() => {
+  // Character IDs in the active chat
+  const chatCharIds = useMemo(() => getChatCharacterIds(chat), [chat]);
+
+  const baseCharacterMap: CharacterMap = useMemo(() => {
     const map: CharacterMap = new Map();
     if (!allCharacters) return map;
-    for (const char of allCharacters as Array<{ id: string; data: string; avatarPath: string | null }>) {
-      try {
-        const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-        map.set(char.id, {
-          name: parsed.name ?? "Unknown",
-          description: parsed.description ?? "",
-          personality: parsed.personality ?? "",
-          backstory: parsed.extensions?.backstory ?? "",
-          appearance: parsed.extensions?.appearance ?? "",
-          scenario: parsed.scenario ?? "",
-          example: parsed.mes_example ?? "",
-          avatarUrl: char.avatarPath ?? null,
-          nameColor: parsed.extensions?.nameColor || undefined,
-          dialogueColor: parsed.extensions?.dialogueColor || undefined,
-          boxColor: parsed.extensions?.boxColor || undefined,
-          avatarCrop: parsed.extensions?.avatarCrop || null,
-          conversationStatus: parsed.extensions?.conversationStatus || undefined,
-          conversationActivity: parsed.extensions?.conversationActivity || undefined,
-        });
-      } catch {
-        map.set(char.id, { name: "Unknown", avatarUrl: null });
-      }
+    for (const char of allCharacters as CharacterRow[]) {
+      map.set(char.id, toCharacterMapValue(char));
     }
     return map;
   }, [allCharacters]);
 
-  // Character IDs in the active chat
-  const chatCharIds: string[] = useMemo(
-    () =>
-      chat
-        ? typeof (chat as unknown as { characterIds: unknown }).characterIds === "string"
-          ? JSON.parse((chat as unknown as { characterIds: string }).characterIds)
-          : (chat.characterIds ?? [])
-        : [],
-    [chat],
+  const missingChatCharacterIds = useMemo(
+    () => chatCharIds.filter((id) => !baseCharacterMap.has(id)),
+    [baseCharacterMap, chatCharIds],
   );
+  const missingCharacterQueries = useQueries({
+    queries: missingChatCharacterIds.map((id) => ({
+      queryKey: characterKeys.detail(id),
+      queryFn: () => api.get<CharacterRow>(`/characters/${id}`),
+      enabled: !!chat?.id,
+      staleTime: 5 * 60_000,
+    })),
+  });
+
+  // Build character lookup map. Cold launches can render chat detail before the
+  // full library list has produced every active character, so merge exact
+  // per-chat character fetches as a rescue path.
+  const characterMap: CharacterMap = useMemo(() => {
+    const map: CharacterMap = new Map(baseCharacterMap);
+    for (const query of missingCharacterQueries) {
+      const char = query.data;
+      if (char?.id) map.set(char.id, toCharacterMapValue(char));
+    }
+    return map;
+  }, [baseCharacterMap, missingCharacterQueries]);
 
   const characterNames = useMemo(
     () => chatCharIds.map((id) => characterMap.get(id)?.name).filter((n): n is string => !!n),
@@ -393,6 +430,7 @@ export function ChatArea() {
       }
     }
     return {
+      id: persona.id,
       name: persona.name,
       description,
       personality: persona.personality || undefined,
@@ -674,12 +712,17 @@ export function ChatArea() {
   const combatAgentEnabled = enabledAgentTypes.has("combat");
   const expressionAgentEnabled = enabledAgentTypes.has("expression");
   const expressionAvatarsEnabled =
-    isRoleplay && chatMeta.expressionAvatarsEnabled === true && expressionAgentEnabled && chatCharIds.length > 0;
+    isRoleplay &&
+    chatMeta.expressionAvatarsEnabled === true &&
+    expressionAgentEnabled &&
+    (chatCharIds.length > 0 || !!personaInfo?.id);
   const expressionAvatarCharacterIds = useMemo(() => {
+    const allowedIds = new Set(chatCharIds);
+    if (personaInfo?.id) allowedIds.add(personaInfo.id);
     const configuredIds =
-      spriteCharacterIds.length > 0 ? spriteCharacterIds.filter((id) => chatCharIds.includes(id)) : chatCharIds;
+      spriteCharacterIds.length > 0 ? spriteCharacterIds.filter((id) => allowedIds.has(id)) : Array.from(allowedIds);
     return Array.from(new Set(configuredIds.filter((id) => typeof id === "string" && id.trim())));
-  }, [chatCharIds, spriteCharacterIds]);
+  }, [chatCharIds, personaInfo?.id, spriteCharacterIds]);
   const expressionAvatarSpriteQueries = useQueries({
     queries: expressionAvatarCharacterIds.map((characterId) => ({
       queryKey: spriteKeys.list(characterId),
@@ -923,7 +966,7 @@ export function ChatArea() {
     [activeChatId, isStreaming, generate, currentInput, guideGenerations],
   );
 
-  const _handleRetryAgents = useCallback(async () => {
+  const handleRetryAgents = useCallback(async () => {
     if (!activeChatId || isStreaming || agentProcessing || failedAgentTypes.length === 0) return;
     await retryAgents(activeChatId, failedAgentTypes);
   }, [activeChatId, isStreaming, agentProcessing, failedAgentTypes, retryAgents]);
@@ -1054,6 +1097,15 @@ export function ChatArea() {
     if (!activeChatId) return;
     peekPrompt.mutate(activeChatId, {
       onSuccess: (data) => setPeekPromptData(data),
+      onError: (error) => {
+        const message =
+          error instanceof ApiError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : "Could not assemble the prompt preview.";
+        toast.error(message);
+      },
     });
   }, [activeChatId, peekPrompt]);
 
@@ -1513,6 +1565,47 @@ export function ChatArea() {
   ]);
 
   // ═══════════════════════════════════════════════
+  // Restoring persisted active chat
+  // ═══════════════════════════════════════════════
+  if (activeChatId && !chat) {
+    const errorMessage =
+      chatError instanceof ApiError
+        ? chatError.message
+        : chatError instanceof Error
+          ? chatError.message
+          : "Opening chat...";
+    const hasOpenError = !!chatError;
+
+    return (
+      <div
+        data-component="ChatArea.RestoringChat"
+        className="flex flex-1 items-center justify-center overflow-hidden p-6"
+      >
+        <div className="flex flex-col items-center gap-3 text-center">
+          {!hasOpenError && (
+            <div className="h-7 w-7 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--primary)]" />
+          )}
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-[var(--foreground)]">
+              {hasOpenError ? "Could not open this chat" : "Opening chat..."}
+            </p>
+            {hasOpenError && <p className="max-w-sm text-xs text-[var(--muted-foreground)]">{errorMessage}</p>}
+          </div>
+          {hasOpenError && (
+            <button
+              type="button"
+              onClick={() => setActiveChatId(null)}
+              className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
+            >
+              Back to chats
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ═══════════════════════════════════════════════
   // Empty state (no active chat)
   // ═══════════════════════════════════════════════
   if (!activeChatId) {
@@ -1962,6 +2055,7 @@ export function ChatArea() {
           onToggleSelectMessage={handleToggleSelectMessage}
           onRerunTrackers={handleRerunTrackers}
           onRerunSingleTracker={handleRerunSingleTracker}
+          onRetryFailedAgents={handleRetryAgents}
           onStartEncounter={() => startEncounter()}
           onConcludeScene={() => concludeScene(activeChatId)}
           onAbandonScene={() => abandonScene(activeChatId)}

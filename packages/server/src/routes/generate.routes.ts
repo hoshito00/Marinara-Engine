@@ -72,7 +72,6 @@ import {
   resolveMacrosWithVariableSnapshot,
   type AssemblerInput,
 } from "../services/prompt/index.js";
-import { mergeAdjacentMessages } from "../services/prompt/merger.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
 import {
   fitMessagesToContext,
@@ -116,6 +115,10 @@ import {
   type FetchCommand,
 } from "../services/conversation/character-commands.js";
 import {
+  ILLUSTRATOR_TEXT_NEGATIVE_PROMPT,
+  resolveIllustratorCharacterReferences,
+} from "./generate/illustrator-references.js";
+import {
   ConversationSpotifyCommandError,
   isSilentConversationSpotifyCommandError,
   playConversationSpotifyCommand,
@@ -156,6 +159,7 @@ import {
   appendGenerationTailMessages,
   canUseMessageForUserRegeneration,
   findLastIndex,
+  findTrackerContextInsertIndex,
   appendReadableAttachmentsToContent,
   buildUserMessageRegenerationPromptFromSource,
   buildUserMessageRegenerationSourceMessage,
@@ -247,7 +251,7 @@ import {
   withActiveGameMapMeta,
 } from "../services/game/map-position.service.js";
 import { applyAllSegmentEdits, stripGmCommandTags } from "../services/game/segment-edits.js";
-import { listPartySprites, readPreferredFullBodySpriteBase64 } from "../services/game/sprite.service.js";
+import { listPartySprites } from "../services/game/sprite.service.js";
 import {
   generatePerceptionHints,
   formatPerceptionHints,
@@ -423,6 +427,21 @@ function formatConversationPromptTurn(content: string, role: string, personaName
   return role === "user" ? prefixConversationUserTurn(content, personaName) : content.trim();
 }
 
+async function findLastUserMessageIdBefore(
+  chats: ReturnType<typeof createChatsStorage>,
+  chatId: string,
+  beforeMessageId?: string | null,
+): Promise<string | null> {
+  const rows = await chats.listMessages(chatId);
+  const beforeIndex = beforeMessageId ? rows.findIndex((message: any) => message.id === beforeMessageId) : -1;
+  const startIndex = beforeIndex >= 0 ? beforeIndex - 1 : rows.length - 1;
+  for (let index = startIndex; index >= 0; index -= 1) {
+    const message = rows[index] as any;
+    if (message?.role === "user" && typeof message.id === "string") return message.id;
+  }
+  return null;
+}
+
 function resolveLorebookGenerationTriggers(
   input: {
     impersonate?: boolean;
@@ -564,28 +583,6 @@ function rememberKnowledgeRouterActivatedLorebookIds(
   for (const entry of result.budgetSkippedEntries) {
     targetExcludedFromKeywordScan.add(entry.id);
   }
-}
-
-/** Read a character's avatar from disk as base64, or return undefined if unavailable. */
-function readAvatarBase64(avatarPath: string | null | undefined): string | undefined {
-  if (!avatarPath) return undefined;
-  // avatarPath is like /api/avatars/file/<filename> — extract just the filename
-  const filename = avatarPath.split("?")[0]?.split("/").pop();
-  if (!filename || filename.includes("..") || filename.includes("/") || filename.includes("\\")) return undefined;
-  const diskPath = join(DATA_DIR, "avatars", filename);
-  try {
-    if (!existsSync(diskPath)) return undefined;
-    return readFileSync(diskPath).toString("base64");
-  } catch {
-    return undefined;
-  }
-}
-
-function readBestCharacterReferenceBase64(
-  characterId: string | null | undefined,
-  avatarPath: string | null | undefined,
-): string | undefined {
-  return readPreferredFullBodySpriteBase64(characterId)?.base64 ?? readAvatarBase64(avatarPath);
 }
 
 function normalizeDmTargetName(value: string): string {
@@ -1778,6 +1775,7 @@ export async function generateRoutes(app: FastifyInstance) {
     // ── Discord webhook URL (parsed once, used for mirroring below) ──
     const discordWebhookUrl = typeof earlyMeta.discordWebhookUrl === "string" ? earlyMeta.discordWebhookUrl : "";
     let pendingUserDiscordMsg = "";
+    let currentTurnUserMessageId: string | null = null;
 
     // Save user message — skip for impersonate (no real user message to save)
     if (!input.impersonate && (input.userMessage || input.attachments?.length)) {
@@ -1800,6 +1798,7 @@ export async function generateRoutes(app: FastifyInstance) {
         characterId: null,
         content: input.userMessage ?? "",
       });
+      currentTurnUserMessageId = userMsg?.id ?? null;
       if (requestChatMode === "conversation") {
         recordUserActivity(input.chatId);
       }
@@ -5892,16 +5891,13 @@ export async function generateRoutes(app: FastifyInstance) {
                       ? `<context>\n${trackerParts.map((p) => "    " + p.replace(/\n/g, "\n    ")).join("\n")}\n</context>`
                       : `# Context\n*(Established state as of the last message. Do not re-describe — advance from here.)*\n${trackerParts.join("\n")}`;
 
-                // Insert as system message right before the last user message.
-                // When strict role formatting merges post-chat sections (like
-                // Output Format) into the last user message, this ensures the
-                // tracker context appears before those instructions.
-                const lastUserIdx = findLastIndex(finalMessages, "user");
-                if (lastUserIdx >= 0) {
-                  finalMessages.splice(lastUserIdx, 0, { role: "system", content: contextBlock });
-                } else {
-                  finalMessages.splice(finalMessages.length, 0, { role: "system", content: contextBlock });
-                }
+                // Insert as a user injection outside chat history, directly
+                // before the latest real chat message.
+                finalMessages.splice(findTrackerContextInsertIndex(finalMessages), 0, {
+                  role: "user",
+                  content: contextBlock,
+                  contextKind: "injection",
+                });
               }
             }
           }
@@ -6880,7 +6876,11 @@ export async function generateRoutes(app: FastifyInstance) {
               const dirBlock = wrapContent(dirLines, "scene_directions", wrapFormat);
 
               if (wrapFormat === "xml") {
-                const ctxIdx = finalMessages.findIndex((m) => m.role === "system" && m.content.includes("<context>"));
+                const ctxIdx = finalMessages.findIndex(
+                  (m) =>
+                    (m.contextKind === "injection" || m.role === "system") &&
+                    m.content.includes("<context>"),
+                );
                 if (ctxIdx >= 0) {
                   const ctxMsg = finalMessages[ctxIdx]!;
                   finalMessages[ctxIdx] = {
@@ -6892,30 +6892,34 @@ export async function generateRoutes(app: FastifyInstance) {
                   };
                 } else {
                   const contextBlock = `<context>\n    ${dirBlock.replace(/\n/g, "\n    ")}\n</context>`;
-                  const lastUserIdx = findLastIndex(finalMessages, "user");
-                  finalMessages.splice(lastUserIdx >= 0 ? lastUserIdx : finalMessages.length, 0, {
-                    role: "system",
+                  finalMessages.splice(findTrackerContextInsertIndex(finalMessages), 0, {
+                    role: "user",
                     content: contextBlock,
+                    contextKind: "injection",
                   });
                 }
               } else if (wrapFormat === "markdown") {
-                const ctxIdx = finalMessages.findIndex((m) => m.role === "system" && m.content.includes("# Context"));
+                const ctxIdx = finalMessages.findIndex(
+                  (m) =>
+                    (m.contextKind === "injection" || m.role === "system") &&
+                    m.content.includes("# Context"),
+                );
                 if (ctxIdx >= 0) {
                   const ctxMsg = finalMessages[ctxIdx]!;
                   finalMessages[ctxIdx] = { ...ctxMsg, content: ctxMsg.content + "\n" + dirBlock };
                 } else {
                   const contextBlock = `# Context\n${dirBlock}`;
-                  const lastUserIdx = findLastIndex(finalMessages, "user");
-                  finalMessages.splice(lastUserIdx >= 0 ? lastUserIdx : finalMessages.length, 0, {
-                    role: "system",
+                  finalMessages.splice(findTrackerContextInsertIndex(finalMessages), 0, {
+                    role: "user",
                     content: contextBlock,
+                    contextKind: "injection",
                   });
                 }
               } else {
-                const lastUserIdx = findLastIndex(finalMessages, "user");
-                finalMessages.splice(lastUserIdx >= 0 ? lastUserIdx : finalMessages.length, 0, {
-                  role: "system",
+                finalMessages.splice(findTrackerContextInsertIndex(finalMessages), 0, {
+                  role: "user",
                   content: dirBlock,
+                  contextKind: "injection",
                 });
               }
             }
@@ -7041,6 +7045,15 @@ export async function generateRoutes(app: FastifyInstance) {
         let fullThinking = "";
         let providerThinking = "";
         let allResponses: string[] = [];
+        const generatedExpressionTargetIds = new Set<string>();
+        const recordExpressionTarget = (savedMsg: any, fallbackCharacterId: string | null) => {
+          const savedRole = typeof savedMsg?.role === "string" ? savedMsg.role : input.impersonate ? "user" : "assistant";
+          if (savedRole === "assistant" && fallbackCharacterId) {
+            generatedExpressionTargetIds.add(fallbackCharacterId);
+          } else if (savedRole === "user" && personaId) {
+            generatedExpressionTargetIds.add(personaId);
+          }
+        };
 
         const onThinking = (chunk: string) => {
           providerThinking += chunk;
@@ -7333,6 +7346,31 @@ export async function generateRoutes(app: FastifyInstance) {
               ...(message.providerMetadata ? { providerMetadata: message.providerMetadata } : {}),
             }));
 
+          const mergeProviderAdjacentMessages = (messages: ChatMessage[]): ChatMessage[] => {
+            const merged: ChatMessage[] = [];
+            for (const message of messages) {
+              if (!message.content.trim()) continue;
+
+              const last = merged[merged.length - 1];
+              if (last && last.role === message.role) {
+                last.content = `${last.content}\n\n${message.content}`;
+                delete last.contextKind;
+                if (message.images?.length) {
+                  last.images = [...(last.images ?? []), ...message.images];
+                }
+                if (message.providerMetadata) {
+                  last.providerMetadata = message.providerMetadata;
+                }
+              } else {
+                merged.push({
+                  ...message,
+                  ...(message.images?.length ? { images: [...message.images] } : {}),
+                });
+              }
+            }
+            return merged;
+          };
+
           const prepareProviderMessages = (messages: ChatMessage[]): ChatMessage[] => {
             // Convert mid-prompt system messages to user role after context fitting.
             // This keeps prompt/injection system blocks protected while trimming history,
@@ -7346,7 +7384,7 @@ export async function generateRoutes(app: FastifyInstance) {
               if (m.role === "system") return { ...m, role: "user" as const };
               return m;
             });
-            return mergeAdjacentMessages(converted as any) as ChatMessage[];
+            return mergeProviderAdjacentMessages(converted);
           };
 
           let finalPromptSent: ChatMessage[] = [];
@@ -8294,6 +8332,7 @@ export async function generateRoutes(app: FastifyInstance) {
             if (!genResult) break; // aborted
             firstSavedMsg ??= genResult.savedMsg;
             lastSavedMsg = genResult.savedMsg;
+            recordExpressionTarget(genResult.savedMsg, charId);
             allResponses.push(genResult.response);
             for (const cmd of genResult.commands) {
               collectedCommands.push({
@@ -8368,6 +8407,7 @@ export async function generateRoutes(app: FastifyInstance) {
           if (genResult) {
             firstSavedMsg ??= genResult.savedMsg;
             lastSavedMsg = genResult.savedMsg;
+            recordExpressionTarget(genResult.savedMsg, genResult.characterId);
             for (const cmd of genResult.commands) {
               collectedCommands.push({
                 command: cmd,
@@ -8429,6 +8469,12 @@ export async function generateRoutes(app: FastifyInstance) {
         // (pendingIllustration is hoisted above the follow-up loop.)
         const hasPostWork = hasPostProcessingAgents || parallelResults.length > 0;
         if (hasPostWork && combinedResponse && !abortController.signal.aborted) {
+          if (generatedExpressionTargetIds.size > 0 && Array.isArray(agentContext.memory._availableSprites)) {
+            agentContext.memory._availableSprites = (
+              agentContext.memory._availableSprites as Array<{ characterId: string }>
+            ).filter((sprite) => generatedExpressionTargetIds.has(sprite.characterId));
+            agentContext.memory._expressionTargetIds = [...generatedExpressionTargetIds];
+          }
           reply.raw.write(`data: ${JSON.stringify({ type: "agent_start", data: { phase: "post_generation" } })}\n\n`);
 
           // LOG_LEVEL=debug: log post-processing agents
@@ -8827,10 +8873,26 @@ export async function generateRoutes(app: FastifyInstance) {
                 ) ?? [];
               if (persistedExpressions.length > 0) {
                 const exprMap: Record<string, string> = {};
-                for (const e of persistedExpressions) exprMap[e.characterId] = e.expression;
+                const personaExprMap: Record<string, string> = {};
+                for (const e of persistedExpressions) {
+                  if (personaId && e.characterId === personaId) {
+                    personaExprMap[e.characterId] = e.expression;
+                  } else {
+                    exprMap[e.characterId] = e.expression;
+                  }
+                }
                 try {
-                  await chats.updateMessageExtra(messageId, { spriteExpressions: exprMap });
-                  await chats.updateSwipeExtra(messageId, targetSwipeIndex, { spriteExpressions: exprMap });
+                  if (Object.keys(exprMap).length > 0) {
+                    await chats.updateMessageExtra(messageId, { spriteExpressions: exprMap });
+                    await chats.updateSwipeExtra(messageId, targetSwipeIndex, { spriteExpressions: exprMap });
+                  }
+                  if (Object.keys(personaExprMap).length > 0) {
+                    const personaMessageId =
+                      currentTurnUserMessageId ?? (await findLastUserMessageIdBefore(chats, input.chatId, messageId));
+                    if (personaMessageId) {
+                      await chats.updateMessageExtra(personaMessageId, { spriteExpressions: personaExprMap });
+                    }
+                  }
                 } catch {
                   /* non-critical */
                 }
@@ -9522,23 +9584,22 @@ export async function generateRoutes(app: FastifyInstance) {
                 );
                 const imagePositivePrompt = ((illustratorAgent?.settings?.imagePositivePrompt as string) ?? "").trim();
                 const savedNegativePrompt = ((illustratorAgent?.settings?.imageNegativePrompt as string) ?? "").trim();
-                let imgConnId = (illustratorAgent?.settings?.imageConnectionId as string) ?? null;
-                if (!imgConnId) {
-                  const defaultImageConn = (await connections.list()).find(
-                    (c) =>
-                      c.provider === "image_generation" &&
-                      (c.defaultForAgents === true || c.defaultForAgents === "true"),
+                const imageConnectionOverride = ((illustratorAgent?.settings?.imageConnectionId as string) ?? "").trim();
+                let imgConnFull = imageConnectionOverride ? await connections.getWithKey(imageConnectionOverride) : null;
+                if (imageConnectionOverride && !imgConnFull) {
+                  logger.warn(
+                    "[illustrator] Image connection override %s could not be resolved; falling back to default Illustrator connection",
+                    imageConnectionOverride,
                   );
-                  imgConnId = defaultImageConn?.id ?? null;
                 }
-                if (imgConnId) {
+                imgConnFull ??= await connections.getDefaultForImageGeneration();
+                if (imgConnFull) {
+                  const resolvedImageConnection = imgConnFull;
                   // Queue image generation to run after the result loop so it doesn't
                   // block other agents (game state, trackers, consistency editor).
                   pendingIllustration = (async () => {
                     try {
-                      const imgConnFull = await connections.getWithKey(imgConnId);
-                      if (!imgConnFull) throw new Error("Cannot resolve Illustrator agent connection");
-
+                      const imgConnFull = resolvedImageConnection;
                       const { generateImage, saveImageToDisk } = await import("../services/image/image-generation.js");
                       const { createGalleryStorage } = await import("../services/storage/gallery.storage.js");
                       const galleryStore = createGalleryStorage(app.db);
@@ -9566,74 +9627,51 @@ export async function generateRoutes(app: FastifyInstance) {
                       if (imagePositivePrompt) {
                         fullPrompt = `${fullPrompt}, ${imagePositivePrompt}`;
                       }
-                      const finalNegativePrompt = [negativePrompt, savedNegativePrompt].filter(Boolean).join(", ");
+                      const finalNegativePrompt = [
+                        negativePrompt,
+                        savedNegativePrompt,
+                        ILLUSTRATOR_TEXT_NEGATIVE_PROMPT,
+                      ]
+                        .filter(Boolean)
+                        .join(", ");
 
                       logger.debug(`[illustrator] Starting image generation (${imgWidth}x${imgHeight})...`);
 
-                      // Collect character reference images when the setting is enabled.
-                      // Prefer saved full-body sprites, then fall back to avatar portraits.
-                      const useAvatarRefs = illustratorAgent?.settings?.useAvatarReferences === true;
+                      // Collect character reference images when enabled. Prefer
+                      // full-body sprites, then fall back to avatar portraits.
+                      const useAvatarRefs = illustratorAgent?.settings?.useAvatarReferences !== false;
                       let illustratorRefImages: string[] | undefined;
                       if (useAvatarRefs) {
-                        // Match character names from the Illustrator's output to character IDs.
-                        // The LLM picks which characters are visible in the image via the "characters" field.
-                        // If it didn't specify any, fall back to all characters in the chat.
-                        const illCharLower = illCharacters.map((n) => n.toLowerCase().trim());
-                        const relevantCharIds =
-                          illCharLower.length > 0
-                            ? charInfo
-                                .filter((c) => illCharLower.some((n) => c.name.toLowerCase() === n))
-                                .map((c) => c.id)
-                            : characterIds;
-                        const includePersona =
-                          illCharLower.length === 0 || illCharLower.some((n) => n === personaName.toLowerCase());
-
-                        // Collect visual reference images for chosen characters + persona.
-                        const refImages: string[] = [];
-                        for (const cid of relevantCharIds) {
-                          const ci = charInfo.find((c) => c.id === cid);
-                          if (!ci) continue;
-                          const b64 = readBestCharacterReferenceBase64(ci.id, ci.avatarPath);
-                          if (b64) refImages.push(b64);
-                        }
-                        if (includePersona && persona) {
-                          const personaB64 = readBestCharacterReferenceBase64(
-                            personaId,
-                            persona.avatarPath as string | null,
-                          );
-                          if (personaB64) refImages.push(personaB64);
-                        }
-                        if (refImages.length > 0) {
-                          illustratorRefImages = refImages;
+                        const referenceResolution = await resolveIllustratorCharacterReferences({
+                          charactersStore: chars,
+                          chatCharacters: charInfo.map((character) => ({
+                            id: character.id,
+                            name: character.name,
+                            avatarPath: character.avatarPath,
+                          })),
+                          persona: persona
+                            ? {
+                                id: personaId,
+                                name: personaName,
+                                avatarPath: persona.avatarPath as string | null,
+                              }
+                            : null,
+                          requestedNames: illCharacters.filter((name): name is string => typeof name === "string"),
+                          promptText: [
+                            imagePrompt,
+                            style,
+                            typeof illData.reason === "string" ? illData.reason : "",
+                            combinedResponse,
+                          ].join("\n"),
+                        });
+                        if (referenceResolution.referenceImages.length > 0) {
+                          illustratorRefImages = referenceResolution.referenceImages;
+                          if (referenceResolution.referenceLine) fullPrompt += `\n\n${referenceResolution.referenceLine}`;
                           logger.debug(
-                            `[illustrator] Sending ${refImages.length} character reference(s) for: ${illCharLower.length > 0 ? illCharacters.join(", ") : "all characters"}`,
+                            "[illustrator] Sending %d character reference(s) for: %s",
+                            referenceResolution.referenceImages.length,
+                            referenceResolution.referenceNames.join(", "),
                           );
-                        }
-
-                        // Build character appearance descriptions and augment the prompt
-                        const appearanceLines: string[] = [];
-                        for (const cid of relevantCharIds) {
-                          const ci = charInfo.find((c) => c.id === cid);
-                          if (!ci) continue;
-                          const visual = ci.appearance || ci.description;
-                          if (visual) appearanceLines.push(`${ci.name}: ${visual}`);
-                        }
-                        if (includePersona && persona) {
-                          const pAppearance = (persona as any).appearance ?? "";
-                          if (pAppearance) appearanceLines.push(`${personaName}: ${pAppearance}`);
-                        }
-                        if (appearanceLines.length > 0 || illustratorRefImages) {
-                          const parts: string[] = [];
-                          if (illustratorRefImages) {
-                            parts.push(
-                              "Reference images of the characters are attached. " +
-                                "Use them closely to match each character's exact visual appearance — face, hair, eyes, build, etc.",
-                            );
-                          }
-                          if (appearanceLines.length > 0) {
-                            parts.push("Character visual descriptions:\n" + appearanceLines.join("\n"));
-                          }
-                          fullPrompt = fullPrompt + "\n\n" + parts.join("\n");
                         }
                       }
 
