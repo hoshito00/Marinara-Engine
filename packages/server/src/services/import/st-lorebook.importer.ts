@@ -5,6 +5,7 @@ import type { DB } from "../../db/connection.js";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
 import type { CreateLorebookEntryInput, LorebookCategory } from "@marinara-engine/shared";
 import type { TimestampOverrides } from "./import-timestamps.js";
+import { resolveLorebookEntryRole } from "./lorebook-role.js";
 
 interface STWorldInfoEntry {
   uid?: number;
@@ -220,16 +221,6 @@ function resolvePosition(value: STWorldInfoEntry["position"]): number {
   return 0;
 }
 
-function resolveRole(value: STWorldInfoEntry["role"]): "system" | "user" | "assistant" {
-  const roleMap: Record<number, "system" | "user" | "assistant"> = {
-    0: "system",
-    1: "user",
-    2: "assistant",
-  };
-  if (value === "system" || value === "user" || value === "assistant") return value;
-  return roleMap[typeof value === "number" ? value : 0] ?? "system";
-}
-
 function detectCategory(entries: STWorldInfoEntry[], name?: string): LorebookCategory {
   const scores: Record<LorebookCategory, number> = {
     world: 0,
@@ -388,7 +379,7 @@ export async function importSTLorebook(
     // V2 position can be string ("before_char"/"after_char") — map to number
     const resolvedPosition = resolvePosition(entry.position);
     // Role can be a number (ST) or string (V2)
-    const resolvedRole = resolveRole(entry.role);
+    const resolvedRole = resolveLorebookEntryRole(entry.role);
     const resolvedCaseSensitive = entry.caseSensitive ?? entry.case_sensitive ?? false;
     const resolvedMatchWholeWords = entry.matchWholeWords ?? entry.match_whole_words ?? false;
     const sanitizedContent = normalizeString(entry.content);

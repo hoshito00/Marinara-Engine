@@ -9,6 +9,7 @@ import { createCharacterGalleryStorage } from "../storage/character-gallery.stor
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
 import { createPromptsStorage } from "../storage/prompts.storage.js";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "./import-timestamps.js";
+import { resolveLorebookEntryRole } from "./lorebook-role.js";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { DATA_DIR } from "../../utils/data-dir.js";
@@ -455,7 +456,7 @@ async function importLorebook(data: unknown, db: DB) {
         position: Number(e.position ?? 0),
         depth: Number(e.depth ?? 4),
         order: Number(e.order ?? 100),
-        role: (e.role as any) ?? "system",
+        role: resolveLorebookEntryRole(e.role),
         sticky: e.sticky != null ? Number(e.sticky) : null,
         cooldown: e.cooldown != null ? Number(e.cooldown) : null,
         delay: e.delay != null ? Number(e.delay) : null,
