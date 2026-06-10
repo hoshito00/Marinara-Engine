@@ -5362,6 +5362,14 @@ export async function generateRoutes(app: FastifyInstance) {
           agentContext.memory._personaAvatarPath =
             persona && typeof persona.avatarPath === "string" ? persona.avatarPath : null;
         }
+        const getLatestUserExpressionSource = () =>
+          (
+            [...agentContext.recentMessages].reverse().find((message) => message.role === "user" && message.content.trim())
+              ?.content ??
+            currentUserInputContent() ??
+            input.userMessage ??
+            ""
+          ).trim();
 
         // ── Interval gating: Narrative Director only intervenes every N assistant messages ──
         const directorAgent = resolvedAgents.find((a) => a.type === "director");
@@ -5483,7 +5491,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
             const includePersonaSprite =
               !!personaId &&
-              (Boolean(currentTurnUserMessageId) ||
+              (Boolean(getLatestUserExpressionSource()) ||
                 !restrictToSelectedSprites ||
                 selectedSpriteIds.has(personaId) ||
                 chatMeta.expressionAvatarsEnabled === true);
@@ -8651,7 +8659,7 @@ export async function generateRoutes(app: FastifyInstance) {
         // (pendingIllustration is hoisted above the follow-up loop.)
         const hasPostWork = hasPostProcessingAgents || parallelResults.length > 0;
         if (hasPostWork && combinedResponse && !abortController.signal.aborted) {
-          if (currentTurnUserMessageId && personaId && Array.isArray(agentContext.memory._availableSprites)) {
+          if (personaId && getLatestUserExpressionSource() && Array.isArray(agentContext.memory._availableSprites)) {
             generatedExpressionTargetIds.add(personaId);
           }
           if (generatedExpressionTargetIds.size > 0 && Array.isArray(agentContext.memory._availableSprites)) {
@@ -8710,14 +8718,9 @@ export async function generateRoutes(app: FastifyInstance) {
               agentContext.memory._expressionTargetIds,
             );
             if (requiredExpressionTargetIds.length > 0) {
-              const latestUserExpressionSource =
-                [...agentContext.recentMessages]
-                  .reverse()
-                  .find((message) => message.role === "user" && message.content.trim())?.content ??
-                input.userMessage ??
-                "";
+              const latestUserExpressionSource = getLatestUserExpressionSource();
               const sourceTextByCharacterId = new Map<string, string>();
-              if (personaId && latestUserExpressionSource.trim()) {
+              if (personaId && latestUserExpressionSource) {
                 sourceTextByCharacterId.set(personaId, latestUserExpressionSource);
               }
               const completion = completeRequiredSpriteExpressionEntries(
@@ -9120,14 +9123,9 @@ export async function generateRoutes(app: FastifyInstance) {
                   agentContext.memory._expressionTargetIds,
                 );
                 if (requiredExpressionTargetIds.length > 0) {
-                  const latestUserExpressionSource =
-                    [...agentContext.recentMessages]
-                      .reverse()
-                      .find((message) => message.role === "user" && message.content.trim())?.content ??
-                    input.userMessage ??
-                    "";
+                  const latestUserExpressionSource = getLatestUserExpressionSource();
                   const sourceTextByCharacterId = new Map<string, string>();
-                  if (personaId && latestUserExpressionSource.trim()) {
+                  if (personaId && latestUserExpressionSource) {
                     sourceTextByCharacterId.set(personaId, latestUserExpressionSource);
                   }
                   const completion = completeRequiredSpriteExpressionEntries(
