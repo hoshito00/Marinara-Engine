@@ -17,7 +17,11 @@ const CLAUDE_ADAPTIVE_ONLY_OPUS_RE = /claude-opus-4-(?:[7-9]|\d{2,})/;
 
 export function isClaudeAdaptiveOnlyNoSamplingModel(model: string): boolean {
   const normalized = model.toLowerCase();
-  return CLAUDE_ADAPTIVE_ONLY_OPUS_RE.test(normalized) || normalized.includes("claude-fable-5");
+  return (
+    CLAUDE_ADAPTIVE_ONLY_OPUS_RE.test(normalized) ||
+    normalized.includes("claude-fable-5") ||
+    normalized.includes("claude-mythos-5")
+  );
 }
 
 // ── OpenAI (from #model_openai_select) ──
@@ -111,6 +115,7 @@ export const OPENAI_MODELS: KnownModel[] = [
 
 export const ANTHROPIC_MODELS: KnownModel[] = [
   { id: "claude-fable-5", name: "claude-fable-5", context: 1000000, maxOutput: 128000 },
+  { id: "claude-mythos-5", name: "claude-mythos-5 (limited access)", context: 1000000, maxOutput: 128000 },
   { id: "claude-opus-4-8", name: "claude-opus-4-8", context: 1000000, maxOutput: 128000 },
   { id: "claude-opus-4-7", name: "claude-opus-4-7", context: 1000000, maxOutput: 128000 },
   { id: "claude-opus-4-6", name: "claude-opus-4-6", context: 1000000, maxOutput: 32000 },

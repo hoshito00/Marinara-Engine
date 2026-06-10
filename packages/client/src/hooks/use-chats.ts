@@ -327,6 +327,23 @@ function getDeleteChatGroupId(input: DeleteChatInput) {
   return typeof input === "string" ? null : (input.groupId ?? null);
 }
 
+function upsertCachedChat(rows: Chat[] | undefined, chat: Chat): Chat[] | undefined {
+  if (!rows) return rows;
+  const existingIndex = rows.findIndex((row) => row.id === chat.id);
+  if (existingIndex === -1) return [chat, ...rows];
+  return rows.map((row) => (row.id === chat.id ? chat : row));
+}
+
+function syncCachedBranch(rows: Chat[] | undefined, sourceChatId: string, newChat: Chat): Chat[] | undefined {
+  if (!rows) return rows;
+  const groupedRows = newChat.groupId
+    ? rows.map((row) =>
+        row.id === sourceChatId && row.groupId !== newChat.groupId ? { ...row, groupId: newChat.groupId } : row,
+      )
+    : rows;
+  return upsertCachedChat(groupedRows, newChat);
+}
+
 export function useCreateChat() {
   const qc = useQueryClient();
   return useMutation({
@@ -339,7 +356,11 @@ export function useCreateChat() {
       personaId?: string | null;
       promptPresetId?: string | null;
     }) => api.post<Chat>("/chats", data),
-    onSuccess: () => {
+    onSuccess: (chat) => {
+      if (chat) {
+        qc.setQueryData(chatKeys.detail(chat.id), chat);
+        qc.setQueryData<Chat[]>(chatKeys.list(), (existing) => upsertCachedChat(existing, chat));
+      }
       qc.invalidateQueries({ queryKey: chatKeys.list() });
     },
   });
@@ -864,15 +885,25 @@ export function useBranchChat() {
     mutationFn: ({ chatId, upToMessageId }: { chatId: string; upToMessageId?: string }) =>
       api.post<Chat>(`/chats/${chatId}/branch`, { upToMessageId }),
     onSuccess: (newChat, { chatId }) => {
+      if (newChat) {
+        qc.setQueryData(chatKeys.detail(newChat.id), newChat);
+        qc.setQueryData<Chat[]>(chatKeys.list(), (existing) => syncCachedBranch(existing, chatId, newChat));
+
+        if (newChat.groupId) {
+          qc.setQueryData<Chat>(chatKeys.detail(chatId), (existing) =>
+            existing && existing.groupId !== newChat.groupId ? { ...existing, groupId: newChat.groupId } : existing,
+          );
+          qc.setQueryData<Chat[]>(chatKeys.group(newChat.groupId), (existing) =>
+            syncCachedBranch(existing, chatId, newChat),
+          );
+        }
+      }
+
       qc.invalidateQueries({ queryKey: chatKeys.list() });
       qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
 
       if (newChat?.groupId) {
         qc.invalidateQueries({ queryKey: chatKeys.group(newChat.groupId) });
-      }
-
-      if (newChat) {
-        qc.setQueryData(chatKeys.detail(newChat.id), newChat);
       }
     },
   });

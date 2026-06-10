@@ -1125,11 +1125,7 @@ function normalizeSpotifyAgentResult(result: AgentResult): AgentResult {
 }
 
 function shouldDeferSpotifyAgentEvent(result: AgentResult): boolean {
-  if (result.agentType !== "spotify" || !result.success || !result.data || typeof result.data !== "object") {
-    return false;
-  }
-
-  return (result.data as Record<string, unknown>).parseError === true;
+  return result.agentType === "spotify";
 }
 
 function isBlockingSpotifyToolError(error: string | null | undefined): error is string {
@@ -5985,8 +5981,10 @@ export async function generateRoutes(app: FastifyInstance) {
             },
           });
         };
-        const sendAgentEvent = (result: AgentResult) => {
-          if (shouldDeferSpotifyAgentEvent(result) || shouldDeferExpressionAgentEvent(result)) return;
+        const sendAgentEvent = (result: AgentResult, options: { finalized?: boolean } = {}) => {
+          if (!options.finalized && (shouldDeferSpotifyAgentEvent(result) || shouldDeferExpressionAgentEvent(result))) {
+            return;
+          }
           sendAgentResultEvent(result);
         };
 
@@ -8778,8 +8776,10 @@ export async function generateRoutes(app: FastifyInstance) {
           const spotifyFallbackInputResults = postResults;
           postResults = await applySpotifyAgentPlaybackFallbacks(postResults, resolvedAgents, postAgentContext);
           for (let i = 0; i < postResults.length; i++) {
-            if (postResults[i] !== spotifyFallbackInputResults[i]) {
-              sendAgentEvent(postResults[i]!);
+            const result = postResults[i];
+            if (!result) continue;
+            if (result.agentType === "spotify" || result !== spotifyFallbackInputResults[i]) {
+              sendAgentEvent(result, { finalized: result.agentType === "spotify" });
             }
           }
 
@@ -8820,7 +8820,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   retryCtx,
                 );
                 const finalizedRetry = finalizedRetryResults[0] ?? retried;
-                sendAgentEvent(finalizedRetry);
+                sendAgentEvent(finalizedRetry, { finalized: finalizedRetry.agentType === "spotify" });
                 retryResults.push(finalizedRetry);
               } catch {
                 retryResults.push(failed);
