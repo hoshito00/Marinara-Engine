@@ -1064,6 +1064,7 @@ async function attachRetrySpotifyToolContexts(args: {
       (entry.resolved as any).__spotifyToolCalls = new Set<string>();
       (entry.resolved as any).__spotifyPlayApplied = false;
       (entry.resolved as any).__spotifyPlayError = null;
+      (entry.resolved as any).__spotifyPlaybackPending = false;
     }
     entry.resolved.toolContext = {
       tools,
@@ -1114,6 +1115,7 @@ async function attachRetrySpotifyToolContexts(args: {
             if (parsed.applied === true) {
               (entry.resolved as any).__spotifyPlayApplied = true;
               (entry.resolved as any).__spotifyPlayError = null;
+              (entry.resolved as any).__spotifyPlaybackPending = parsed.playbackPending === true;
               (entry.resolved as any).__spotifyPlayUris = getSpotifyTrackUris(parsed);
               (entry.resolved as any).__spotifyCurrentAfterPlayUri = getSpotifyPlaybackTrackUri(parsed);
               (entry.resolved as any).__spotifyRepeatAfterPlayState =
@@ -1267,8 +1269,9 @@ async function applyDeterministicSpotifyRetryFallback(args: {
     const playError = typeof play.error === "string" ? play.error : "Spotify play did not apply playback.";
     return { ...result, success: false, error: playError };
   }
+  const playbackPending = play.playbackPending === true;
   const playedUri = getSpotifyPlaybackTrackUri(play);
-  if (playedUri !== picked.uri) {
+  if (!playbackPending && playedUri !== picked.uri) {
     return {
       ...result,
       success: false,
@@ -1276,7 +1279,7 @@ async function applyDeterministicSpotifyRetryFallback(args: {
     };
   }
   const repeatState = getStringField(play, "repeatState") || getStringField(play, "repeat");
-  if (repeatState && repeatState !== "track") {
+  if (!playbackPending && repeatState && repeatState !== "track") {
     return {
       ...result,
       success: false,
@@ -1299,6 +1302,9 @@ async function applyDeterministicSpotifyRetryFallback(args: {
       repeat: play.repeat ?? null,
       repeatState: repeatState || null,
       currentUri: playedUri ?? null,
+      device: getStringField(play, "device") || null,
+      display: getStringField(play, "display") || null,
+      playbackPending,
     },
   };
 }
@@ -1329,6 +1335,7 @@ async function validateSpotifyRetryPlayback(
   const currentBeforePlay = (entry.resolved as any).__spotifyCurrentBeforePlayUri;
   const currentAfterPlay = (entry.resolved as any).__spotifyCurrentAfterPlayUri;
   const repeatAfterPlay = (entry.resolved as any).__spotifyRepeatAfterPlayState;
+  const playbackPending = (entry.resolved as any).__spotifyPlaybackPending === true;
   if (
     spotifyPlayCalled &&
     spotifyPlayApplied &&
@@ -1338,6 +1345,31 @@ async function validateSpotifyRetryPlayback(
     (!repeatAfterPlay || repeatAfterPlay === "track")
   ) {
     return result;
+  }
+
+  if (spotifyPlayCalled && spotifyPlayApplied && playbackPending) {
+    return {
+      ...result,
+      success: true,
+      error: null,
+      data:
+        result.data && typeof result.data === "object"
+          ? {
+              ...(result.data as Record<string, unknown>),
+              playbackPending: true,
+              toolPlaybackApplied: true,
+              currentUri: currentAfterPlay ?? null,
+              repeatState: repeatAfterPlay || null,
+            }
+          : {
+              action: "play",
+              trackUris: spotifyPlayUris,
+              playbackPending: true,
+              toolPlaybackApplied: true,
+              currentUri: currentAfterPlay ?? null,
+              repeatState: repeatAfterPlay || null,
+            },
+    };
   }
 
   if (spotifyPlayCalled && spotifyPlayApplied) {
@@ -1364,10 +1396,12 @@ async function validateSpotifyRetryPlayback(
         const fallbackCurrentBefore = (entry.resolved as any).__spotifyCurrentBeforePlayUri;
         const fallbackPlayedUri = getSpotifyPlaybackTrackUri(parsed);
         const fallbackRepeatState = getStringField(parsed, "repeatState") || getStringField(parsed, "repeat");
+        const fallbackPlaybackPending = parsed.playbackPending === true;
         if (
-          fallbackCurrentBefore === requestedTrackUri ||
-          fallbackPlayedUri !== requestedTrackUri ||
-          (fallbackRepeatState && fallbackRepeatState !== "track")
+          !fallbackPlaybackPending &&
+          (fallbackCurrentBefore === requestedTrackUri ||
+            fallbackPlayedUri !== requestedTrackUri ||
+            (fallbackRepeatState && fallbackRepeatState !== "track"))
         ) {
           return applyDeterministicSpotifyRetryFallback({ entry, result, context, constraints });
         }
@@ -1380,6 +1414,7 @@ async function validateSpotifyRetryPlayback(
                   toolFallbackApplied: true,
                   currentUri: fallbackPlayedUri,
                   repeatState: fallbackRepeatState || null,
+                  playbackPending: fallbackPlaybackPending,
                 }
               : {
                   action: "play",
@@ -1387,6 +1422,7 @@ async function validateSpotifyRetryPlayback(
                   toolFallbackApplied: true,
                   currentUri: fallbackPlayedUri,
                   repeatState: fallbackRepeatState || null,
+                  playbackPending: fallbackPlaybackPending,
                 },
         };
       }

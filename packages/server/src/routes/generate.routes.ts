@@ -981,6 +981,7 @@ type SpotifyRuntimeAgent = ResolvedAgent & {
   __spotifyPlayApplied?: boolean;
   __spotifyPlayError?: string | null;
   __spotifyToolError?: string | null;
+  __spotifyPlaybackPending?: boolean;
   __spotifyPlayUris?: string[];
   __spotifyCandidateTracks?: SpotifyRuntimeTrack[];
   __spotifyCurrentAfterPlayUri?: string | null;
@@ -1338,6 +1339,7 @@ async function applySpotifyAgentPlaybackFallback(
         queued,
         currentUri: agent.__spotifyCurrentAfterPlayUri ?? null,
         device: agent.__spotifyDevice ?? null,
+        playbackPending: agent.__spotifyPlaybackPending === true,
         display:
           agent.__spotifyPlayDisplay ??
           (queued && queued > 1 ? `🎵 Queued ${queued} tracks: ${mood}` : `🎵 Started Spotify playback: ${mood}`),
@@ -6378,6 +6380,7 @@ export async function generateRoutes(app: FastifyInstance) {
             spotifyAgent.__spotifyPlayApplied = false;
             spotifyAgent.__spotifyPlayError = null;
             spotifyAgent.__spotifyToolError = null;
+            spotifyAgent.__spotifyPlaybackPending = false;
             spotifyAgent.__spotifyPlayUris = [];
             spotifyAgent.__spotifyCandidateTracks = [];
             spotifyAgent.__spotifyCurrentAfterPlayUri = null;
@@ -6414,6 +6417,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   if (parsed.applied === true) {
                     spotifyAgent.__spotifyPlayApplied = true;
                     spotifyAgent.__spotifyPlayError = null;
+                    spotifyAgent.__spotifyPlaybackPending = parsed.playbackPending === true;
                     spotifyAgent.__spotifyPlayUris = readSpotifyTrackUris(parsed);
                     spotifyAgent.__spotifyCurrentAfterPlayUri = readSpotifyPlaybackTrackUri(parsed);
                     spotifyAgent.__spotifyPlayDisplay = readSpotifyStringField(parsed, "display") || null;
