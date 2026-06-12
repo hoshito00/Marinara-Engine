@@ -449,7 +449,7 @@ export function HomeFaq({
         <div className="overflow-hidden rounded-lg border border-[var(--border)]/60 bg-[var(--card)]/70">
           <button
             type="button"
-            onClick={() => setExpanded((current) => !current)}
+            onClick={() => setExpanded(!expanded)}
             className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
             aria-expanded={expanded}
           >
@@ -489,7 +489,7 @@ export function HomeFaq({
                     >
                       <button
                         type="button"
-                        onClick={() => setOpenItemId((current) => (current === item.id ? null : item.id))}
+                        onClick={() => setOpenItemId(openItemId === item.id ? null : item.id)}
                         className="flex w-full items-start gap-2 px-2.5 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
                         aria-expanded={isOpen}
                       >
@@ -546,7 +546,7 @@ export function HomeFaq({
       <div className="overflow-hidden rounded-[1rem] border border-[var(--border)]/60 bg-[var(--card)] shadow-[0_14px_38px_rgba(0,0,0,0.24)] backdrop-blur-xl dark:bg-[linear-gradient(180deg,rgba(18,14,23,0.92),rgba(11,10,16,0.86))]">
         <button
           type="button"
-          onClick={() => setExpanded((current) => !current)}
+          onClick={() => setExpanded(!expanded)}
           className="flex w-full items-start gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5 sm:items-center sm:gap-3 sm:px-4"
           aria-expanded={expanded}
         >
@@ -639,7 +639,7 @@ export function HomeFaq({
                     >
                       <button
                         type="button"
-                        onClick={() => setOpenItemId((current) => (current === item.id ? null : item.id))}
+                        onClick={() => setOpenItemId(openItemId === item.id ? null : item.id)}
                         className="flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
                         aria-expanded={isOpen}
                       >
