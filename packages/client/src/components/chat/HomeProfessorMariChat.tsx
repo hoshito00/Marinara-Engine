@@ -11,6 +11,7 @@ import { api } from "../../lib/api-client";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { cn } from "../../lib/utils";
+import { ProfessorMariWorkingWindow } from "../ui/ProfessorMariWorkingWindow";
 import { ConversationMessage } from "./ConversationMessage";
 import { HomeFaq } from "./HomeFaq";
 import type { CharacterMap } from "./chat-area.types";
@@ -321,162 +322,177 @@ export function HomeProfessorMariChat({ pageActive = true }: { pageActive?: bool
   };
 
   return (
-    <section
-      className="home-professor-mari-chat mt-10 w-full max-w-3xl rounded-xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 sm:mt-0"
-      data-paused={pageActive ? "false" : "true"}
-    >
-      <div className="grid gap-2.5 p-2 sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)] sm:p-2.5">
-        <div className="flex min-w-0 flex-col items-center justify-start gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5">
-          <div className="w-full max-w-[14rem] [--mari-professor-sprite-bottom:5%]">
-            <ProfessorMariPixelScene active={isBusy || mariPhase !== null} />
-          </div>
-          <div className="hidden sm:block w-full">
-            <HomeFaq compact expanded={faqExpanded} onExpandedChange={setFaqExpanded} openItemId={faqOpenItemId} onOpenItemIdChange={setFaqOpenItemId} />
-          </div>
-        </div>
-
-        <div className="flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70">
-          <div className="flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-xs font-semibold text-[var(--foreground)]">Ask Professor Mari</span>
+    <>
+      <section
+        className="home-professor-mari-chat mt-10 w-full max-w-3xl rounded-xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 sm:mt-0"
+        data-paused={pageActive ? "false" : "true"}
+      >
+        <div className="grid gap-2.5 p-2 sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)] sm:p-2.5">
+          <div className="flex min-w-0 flex-col items-center justify-start gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5">
+            <div className="w-full max-w-[14rem] [--mari-professor-sprite-bottom:5%]">
+              <ProfessorMariPixelScene active={isBusy || mariPhase !== null} />
             </div>
-            <button
-              type="button"
-              onClick={() => void runRestart()}
-              disabled={isBusy}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
-              title="Restart Professor Mari chat"
-            >
-              <RefreshCw size="0.75rem" />
-              /restart
-            </button>
-          </div>
-
-          <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 py-3 text-left">
-            {loadingHistory ? (
-              <div className="flex h-full items-center justify-center text-xs text-[var(--muted-foreground)]">
-                Loading Professor Mari...
-              </div>
-            ) : (
-              displayMessages.map((message, index) => (
-                <ConversationMessage
-                  key={message.id}
-                  message={message}
-                  isStreaming={message.id === "__professor_mari_home_stream__"}
-                  hideActions
-                  hideTimestamp
-                  hideUserAvatar
-                  noHoverGroup
-                  plainUserMessages
-                  characterMap={characterMap}
-                  chatCharacterIds={[PROFESSOR_MARI_ID]}
-                  messageIndex={index + 1}
-                  messageOrderIndex={index + 1}
-                />
-              ))
-            )}
-          </div>
-
-          <form
-            className="border-t border-[var(--border)]/60 p-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleSubmit();
-            }}
-          >
-            <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
-              <button
-                ref={connectionButtonRef}
-                type="button"
-                onClick={() => setConnectionMenuOpen((current) => !current)}
-                className={cn(
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
-                  connectionMenuOpen
-                    ? "bg-foreground/10 text-foreground/75"
-                    : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
-                )}
-                title={effectiveConnection?.name ? `Connection: ${effectiveConnection.name}` : "Select connection"}
-              >
-                <Link size="1rem" />
-              </button>
-
-              {connectionMenuOpen && (
-                <div
-                  ref={connectionMenuRef}
-                  className="absolute bottom-full left-2 z-20 mb-2 flex max-h-72 min-w-[15rem] max-w-[20rem] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] text-left shadow-2xl"
-                >
-                  <div className="border-b border-[var(--border)] px-3 py-2 text-[0.6875rem] font-semibold text-[var(--foreground)]">
-                    Connections
-                  </div>
-                  <div className="overflow-y-auto p-1">
-                    {languageConnections.length > 0 ? (
-                      languageConnections.map((connection) => {
-                        const isActive = effectiveConnectionId === connection.id;
-                        return (
-                          <button
-                            key={connection.id}
-                            type="button"
-                            onClick={() => handleConnectionChange(connection.id)}
-                            className={cn(
-                              "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]",
-                              isActive && "font-semibold text-[var(--foreground)]",
-                            )}
-                          >
-                            <span className="min-w-0 flex-1 truncate">{connection.name || connection.id}</span>
-                            {isActive && <Check size="0.75rem" className="shrink-0 text-[var(--primary)]" />}
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setConnectionMenuOpen(false);
-                          useUIStore.getState().openRightPanel("connections");
-                        }}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                      >
-                        <Link size="0.875rem" />
-                        Add a connection
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <textarea
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void handleSubmit();
-                  }
-                }}
-                rows={1}
-                placeholder="Ask Professor Mari..."
-                className="max-h-24 min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm leading-5 text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
-                disabled={isBusy}
+            <div className="hidden sm:block w-full">
+              <HomeFaq
+                compact
+                expanded={faqExpanded}
+                onExpandedChange={setFaqExpanded}
+                openItemId={faqOpenItemId}
+                onOpenItemIdChange={setFaqOpenItemId}
               />
+            </div>
+          </div>
+
+          <div className="flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70">
+            <div className="flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-xs font-semibold text-[var(--foreground)]">Ask Professor Mari</span>
+              </div>
               <button
-                type="submit"
-                disabled={!draft.trim() || isBusy}
-                className={cn(
-                  "mari-chat-send-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white transition-all duration-200",
-                  draft.trim() && !isBusy ? "hover:text-white active:scale-90" : "cursor-not-allowed opacity-40",
-                )}
-                aria-label="Send to Professor Mari"
-                title="Send"
+                type="button"
+                onClick={() => void runRestart()}
+                disabled={isBusy}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+                title="Restart Professor Mari chat"
               >
-                <Send size="0.9375rem" className={cn(draft.trim() && "translate-x-[1px]")} />
+                <RefreshCw size="0.75rem" />
+                /restart
               </button>
             </div>
-          </form>
+
+            <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 py-3 text-left">
+              {loadingHistory ? (
+                <div className="flex h-full items-center justify-center text-xs text-[var(--muted-foreground)]">
+                  Loading Professor Mari...
+                </div>
+              ) : (
+                displayMessages.map((message, index) => (
+                  <ConversationMessage
+                    key={message.id}
+                    message={message}
+                    isStreaming={message.id === "__professor_mari_home_stream__"}
+                    hideActions
+                    hideTimestamp
+                    hideUserAvatar
+                    noHoverGroup
+                    plainUserMessages
+                    characterMap={characterMap}
+                    chatCharacterIds={[PROFESSOR_MARI_ID]}
+                    messageIndex={index + 1}
+                    messageOrderIndex={index + 1}
+                  />
+                ))
+              )}
+            </div>
+
+            <form
+              className="border-t border-[var(--border)]/60 p-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleSubmit();
+              }}
+            >
+              <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
+                <button
+                  ref={connectionButtonRef}
+                  type="button"
+                  onClick={() => setConnectionMenuOpen((current) => !current)}
+                  className={cn(
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
+                    connectionMenuOpen
+                      ? "bg-foreground/10 text-foreground/75"
+                      : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+                  )}
+                  title={effectiveConnection?.name ? `Connection: ${effectiveConnection.name}` : "Select connection"}
+                >
+                  <Link size="1rem" />
+                </button>
+
+                {connectionMenuOpen && (
+                  <div
+                    ref={connectionMenuRef}
+                    className="absolute bottom-full left-2 z-20 mb-2 flex max-h-72 min-w-[15rem] max-w-[20rem] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] text-left shadow-2xl"
+                  >
+                    <div className="border-b border-[var(--border)] px-3 py-2 text-[0.6875rem] font-semibold text-[var(--foreground)]">
+                      Connections
+                    </div>
+                    <div className="overflow-y-auto p-1">
+                      {languageConnections.length > 0 ? (
+                        languageConnections.map((connection) => {
+                          const isActive = effectiveConnectionId === connection.id;
+                          return (
+                            <button
+                              key={connection.id}
+                              type="button"
+                              onClick={() => handleConnectionChange(connection.id)}
+                              className={cn(
+                                "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]",
+                                isActive && "font-semibold text-[var(--foreground)]",
+                              )}
+                            >
+                              <span className="min-w-0 flex-1 truncate">{connection.name || connection.id}</span>
+                              {isActive && <Check size="0.75rem" className="shrink-0 text-[var(--primary)]" />}
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConnectionMenuOpen(false);
+                            useUIStore.getState().openRightPanel("connections");
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                        >
+                          <Link size="0.875rem" />
+                          Add a connection
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void handleSubmit();
+                    }
+                  }}
+                  rows={1}
+                  placeholder="Ask Professor Mari..."
+                  className="max-h-24 min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm leading-5 text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+                  disabled={isBusy}
+                />
+                <button
+                  type="submit"
+                  disabled={!draft.trim() || isBusy}
+                  className={cn(
+                    "mari-chat-send-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white transition-all duration-200",
+                    draft.trim() && !isBusy ? "hover:text-white active:scale-90" : "cursor-not-allowed opacity-40",
+                  )}
+                  aria-label="Send to Professor Mari"
+                  title="Send"
+                >
+                  <Send size="0.9375rem" className={cn(draft.trim() && "translate-x-[1px]")} />
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-      </div>
-      <div className="sm:hidden px-2 pb-2">
-        <HomeFaq compact expanded={faqExpanded} onExpandedChange={setFaqExpanded} openItemId={faqOpenItemId} onOpenItemIdChange={setFaqOpenItemId} />
-      </div>
-    </section>
+        <div className="sm:hidden px-2 pb-2">
+          <HomeFaq
+            compact
+            expanded={faqExpanded}
+            onExpandedChange={setFaqExpanded}
+            openItemId={faqOpenItemId}
+            onOpenItemIdChange={setFaqOpenItemId}
+          />
+        </div>
+      </section>
+      <ProfessorMariWorkingWindow visible={isBusy} />
+    </>
   );
 }
