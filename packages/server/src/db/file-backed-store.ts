@@ -363,7 +363,7 @@ async function atomicWriteFile(path: string, content: string, options: { refresh
   }
 }
 
-type ParseResult<T> = { value: T; recoveredFromBackup: boolean };
+type ParseResult<T> = { value: T; recoveredFromBackup: boolean; recoveredFromFallback: boolean };
 
 function describeStaleness(mainPath: string, backupPath: string): string {
   try {
@@ -385,26 +385,50 @@ function describeStaleness(mainPath: string, backupPath: string): string {
 }
 
 function parseJsonFile<T>(path: string, fallback: T): ParseResult<T> {
-  if (!existsSync(path)) return { value: fallback, recoveredFromBackup: false };
+  if (!existsSync(path)) return { value: fallback, recoveredFromBackup: false, recoveredFromFallback: false };
   try {
-    return { value: JSON.parse(readFileSync(path, "utf8")) as T, recoveredFromBackup: false };
+    return { value: JSON.parse(readFileSync(path, "utf8")) as T, recoveredFromBackup: false, recoveredFromFallback: false };
   } catch (err) {
     const backupPath = `${path}.bak`;
     if (existsSync(backupPath)) {
       const staleness = describeStaleness(path, backupPath);
-      logger.error(
-        err,
-        "[file-storage] %s is corrupt; recovering from %s (backup is %s older). Edits made since the backup are unrecoverable.",
-        path,
-        backupPath,
-        staleness,
-      );
-      return {
-        value: JSON.parse(readFileSync(backupPath, "utf8")) as T,
-        recoveredFromBackup: true,
-      };
+      try {
+        const value = JSON.parse(readFileSync(backupPath, "utf8")) as T;
+        logger.error(
+          err,
+          "[file-storage] %s is corrupt; recovering from %s (backup is %s older). Edits made since the backup are unrecoverable.",
+          path,
+          backupPath,
+          staleness,
+        );
+        return {
+          value,
+          recoveredFromBackup: true,
+          recoveredFromFallback: false,
+        };
+      } catch (backupErr) {
+        logger.error(
+          err,
+          "[file-storage] %s is corrupt and backup %s could not be used (backup is %s older); continuing with fallback data. Data in the primary and backup files is unrecoverable.",
+          path,
+          backupPath,
+          staleness,
+        );
+        logger.error(
+          backupErr,
+          "[file-storage] Backup %s parse failure while recovering %s.",
+          backupPath,
+          path,
+        );
+        return { value: fallback, recoveredFromBackup: false, recoveredFromFallback: true };
+      }
     }
-    throw err;
+    logger.error(
+      err,
+      "[file-storage] %s is corrupt and no usable backup exists; continuing with fallback data. Data in this file is unrecoverable.",
+      path,
+    );
+    return { value: fallback, recoveredFromBackup: false, recoveredFromFallback: true };
   }
 }
 
@@ -1026,8 +1050,8 @@ class FileTableStore {
       const path = manifestPath(this.rootDir);
       const result = parseJsonFile<TableSnapshotManifest | null>(path, null);
       loadedManifest = result.value;
-      needsManifestRewrite = result.recoveredFromBackup;
-      if (result.recoveredFromBackup) {
+      needsManifestRewrite = result.recoveredFromBackup || result.recoveredFromFallback;
+      if (result.recoveredFromBackup || result.recoveredFromFallback) {
         this.backupRecoveredPaths.add(path);
       }
     } catch (err) {
@@ -1051,16 +1075,15 @@ class FileTableStore {
     for (const table of FILE_BACKED_TABLES) {
       const meta = getMeta(table);
       const path = tableFilePath(this.rootDir, table);
-      const { value: rows, recoveredFromBackup } = parseJsonFile<Row[]>(path, []);
+      const { value: rows, recoveredFromBackup, recoveredFromFallback } = parseJsonFile<Row[]>(path, []);
       const normalized = (Array.isArray(rows) ? rows : []).map((row) => normalizeRow(meta, row));
       this.tables.set(table, normalized);
       counts[table] = normalized.length;
-      if (recoveredFromBackup) {
+      if (recoveredFromBackup || recoveredFromFallback) {
         this.backupRecoveredPaths.add(path);
-        // Same self-heal: rewrite the corrupt main file from in-memory data
-        // (which now matches the recovered backup) on the next flush, while
-        // suppressing .bak refresh for that write so the recovery source is
-        // preserved until the primary is repaired.
+        // Same self-heal: rewrite the corrupt main file from in-memory data on
+        // the next flush, while suppressing .bak refresh for that write so a
+        // corrupt primary is never copied over the recovery source.
         this.dirtyTables.add(table);
         this.dirty = true;
       }

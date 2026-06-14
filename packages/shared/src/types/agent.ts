@@ -257,7 +257,7 @@ export interface AgentContext {
     role: string;
     content: string;
     characterId?: string;
-    /** Committed game state snapshot for this message (if any). */
+    /** Tracker state snapshot for this message (if any). */
     gameState?: import("./game-state.js").GameState | null;
   }>;
   /** The main response text (available for post-processing agents) */

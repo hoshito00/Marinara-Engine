@@ -3060,6 +3060,13 @@ export async function generateRoutes(app: FastifyInstance) {
         // Batch-fetch committed game state snapshots for assistant messages in the agent context
         const assistantMsgIds = agentSlice.filter((m: any) => m.role === "assistant").map((m: any) => m.id as string);
         const committedSnapshots = await gameStateStore.getCommittedForMessages(assistantMsgIds);
+        const visibleHistorySnapshot =
+          latestGameState &&
+          visibleGameStateAnchor &&
+          latestGameState.messageId === visibleGameStateAnchor.messageId &&
+          latestGameState.swipeIndex === visibleGameStateAnchor.swipeIndex
+            ? latestGameState
+            : null;
 
         const recentMsgs = agentSlice.map((m: any) => {
           const msg: AgentContext["recentMessages"][number] = {
@@ -3068,7 +3075,16 @@ export async function generateRoutes(app: FastifyInstance) {
             characterId: m.characterId ?? undefined,
           };
           if (m.role === "assistant") {
-            const snapRow = committedSnapshots.get(m.id as string);
+            const messageSwipeIndex =
+              typeof m.activeSwipeIndex === "number" && Number.isInteger(m.activeSwipeIndex) && m.activeSwipeIndex >= 0
+                ? m.activeSwipeIndex
+                : 0;
+            const snapRow =
+              visibleHistorySnapshot &&
+              m.id === visibleHistorySnapshot.messageId &&
+              messageSwipeIndex === visibleHistorySnapshot.swipeIndex
+                ? visibleHistorySnapshot
+                : committedSnapshots.get(m.id as string);
             if (snapRow) {
               msg.gameState = parseGameStateRow(snapRow as Record<string, unknown>);
             }

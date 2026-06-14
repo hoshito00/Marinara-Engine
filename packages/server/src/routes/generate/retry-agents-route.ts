@@ -345,6 +345,12 @@ async function buildRetryAgentContext(args: {
     .filter((message: any) => message.role === "assistant")
     .map((message: any) => message.id as string);
   const retryCommittedSnapshots = await gameStateStore.getCommittedForMessages(retryAssistantMsgIds);
+  const retryVisibleAnchor =
+    historicalGameStateAnchor ??
+    (useLatestGameStateFallback && lastAssistant ? resolveVisibleGameStateAnchor([lastAssistant]) : null);
+  const retryVisibleHistorySnapshot = retryVisibleAnchor
+    ? await gameStateStore.getByChatAndMessage(chatId, retryVisibleAnchor.messageId, retryVisibleAnchor.swipeIndex)
+    : null;
 
   const agentContext: AgentContext = {
     chatId,
@@ -356,7 +362,18 @@ async function buildRetryAgentContext(args: {
         characterId: message.characterId ?? undefined,
       };
       if (message.role === "assistant") {
-        const snapRow = retryCommittedSnapshots.get(message.id as string);
+        const messageSwipeIndex =
+          typeof message.activeSwipeIndex === "number" &&
+          Number.isInteger(message.activeSwipeIndex) &&
+          message.activeSwipeIndex >= 0
+            ? message.activeSwipeIndex
+            : 0;
+        const snapRow =
+          retryVisibleHistorySnapshot &&
+          message.id === retryVisibleHistorySnapshot.messageId &&
+          messageSwipeIndex === retryVisibleHistorySnapshot.swipeIndex
+            ? retryVisibleHistorySnapshot
+            : retryCommittedSnapshots.get(message.id as string);
         if (snapRow) {
           nextMessage.gameState = parseGameStateRow(snapRow as Record<string, unknown>);
         }
