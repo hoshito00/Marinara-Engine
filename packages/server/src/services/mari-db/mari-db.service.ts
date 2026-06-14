@@ -64,13 +64,17 @@ type Plan = {
   request: ParsedMutationRequest;
 };
 type ParsedMutationRequest = {
-  kind: "insert" | "patch" | "replace" | "delete" | "transform";
+  kind: "insert" | "patch" | "replace" | "delete" | "transform" | "theme-create" | "theme-update" | "theme-set-active";
   table: string | "all";
   id?: string;
   where?: string;
   row?: Row;
   patch?: Row;
   scriptPath?: string;
+  name?: string;
+  css?: string;
+  installedAt?: string;
+  activate?: boolean;
   cwd?: string;
   apply: boolean;
   cascade: boolean;
@@ -95,6 +99,10 @@ const PREVIEW_LIMIT = 50;
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 const HISTORY_LIMIT = 50;
 const FILE_BACKED_TABLE_SET = new Set<string>(FILE_BACKED_TABLES);
+const THEME_TABLE = "custom_themes";
+const THEME_ACTIVE_TRUE = "true";
+const THEME_ACTIVE_FALSE = "false";
+const BOOLEAN_FLAGS = new Set(["active", "activate", "apply", "cascade", "dry-run", "jsonl", "parsed", "raw", "strict"]);
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -284,6 +292,23 @@ function serializeRow(table: string, row: Row): Row {
   return out;
 }
 
+function parseThemeRow(row: Row): Row {
+  return { ...parseRow(THEME_TABLE, row), isActive: row.isActive === THEME_ACTIVE_TRUE };
+}
+
+function summarizeThemeRow(row: Row): Row {
+  const parsed = parseThemeRow(row);
+  const css = typeof row.css === "string" ? row.css : "";
+  return {
+    id: parsed.id,
+    name: parsed.name,
+    isActive: parsed.isActive,
+    cssLength: css.length,
+    installedAt: parsed.installedAt,
+    updatedAt: parsed.updatedAt,
+  };
+}
+
 function knownColumnPatch(meta: TableMeta, row: Row): Row {
   const out: Row = {};
   for (const column of meta.columns) {
@@ -386,7 +411,7 @@ function parseArgs(args: string[]) {
     }
     const name = arg.slice(2);
     const next = args[i + 1];
-    if (next !== undefined && !next.startsWith("--") && !["apply", "dry-run", "cascade", "jsonl", "raw", "parsed", "strict"].includes(name)) {
+    if (next !== undefined && !next.startsWith("--") && !BOOLEAN_FLAGS.has(name)) {
       flags.set(name, next);
       i += 1;
     } else {
@@ -414,6 +439,14 @@ async function parseJsonInput(flags: Map<string, string | boolean>, cwd?: string
   const parsed = JSON.parse(jsonText) as unknown;
   if (!isRecord(parsed)) throw new Error("JSON input must be a JSON object");
   return parsed;
+}
+
+async function parseCssInput(flags: Map<string, string | boolean>, cwd?: string): Promise<string> {
+  const raw = flagString(flags, "css");
+  const file = flagString(flags, "css-file") ?? flagString(flags, "file");
+  if (raw !== undefined && file) throw new Error("Use only one of --css or --css-file");
+  if (raw === undefined && !file) throw new Error("Missing --css '<css>' or --css-file <path>");
+  return file ? readFile(resolve(cwd ? resolve(cwd) : process.cwd(), file), "utf8") : raw!;
 }
 
 function createWherePredicate(expr: string | undefined): (row: Row) => boolean {
@@ -457,6 +490,9 @@ export class MariDbService {
     const command = formatCommand(argv, envelope.command);
     const sessionId = envelope.sessionId || "mari-cli";
     try {
+      if (argv[0] === "theme" || argv[0] === "themes") {
+        return await this.executeThemeCommand(argv.slice(1), { command, sessionId, cwd: envelope.cwd });
+      }
       if (argv[0] !== "db") {
         if (argv[0] === "storage") {
           return {
@@ -612,6 +648,92 @@ export class MariDbService {
     }
 
     return validationFromIssues(issues);
+  }
+
+  private async executeThemeCommand(args: string[], context: { command: string; sessionId: string; cwd?: string }): Promise<MariDbCommandResult> {
+    const sub = args[0];
+    const rest = args.slice(1);
+    const parsed = parseArgs(rest);
+    const flags = parsed.flags;
+
+    switch (sub) {
+      case "list": {
+        const activeOnly = hasFlag(flags, "active");
+        const limit = normalizeLimit(flagString(flags, "limit"), 50, 1000);
+        const rows = (await this.rawRows(THEME_TABLE))
+          .filter((row) => !activeOnly || row.isActive === THEME_ACTIVE_TRUE)
+          .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
+        return { ok: true, mode: "read", command: context.command, output: rows.slice(0, limit).map(summarizeThemeRow) };
+      }
+      case "active": {
+        const row = (await this.rawRows(THEME_TABLE)).find((candidate) => candidate.isActive === THEME_ACTIVE_TRUE) ?? null;
+        return { ok: true, mode: "read", command: context.command, output: row ? parseThemeRow(row) : null };
+      }
+      case "get": {
+        const id = parsed.positionals[0];
+        if (!id) throw new Error("Usage: mari themes get <id>");
+        const row = await this.getRawById(getMeta(THEME_TABLE), id);
+        return { ok: Boolean(row), mode: "read", command: context.command, output: row ? parseThemeRow(row) : null };
+      }
+      case "create": {
+        const name = flagString(flags, "name")?.trim();
+        if (!name) throw new Error("Usage: mari themes create --name <name> (--css <css> | --css-file <path>) [--activate] [--apply]");
+        const css = await parseCssInput(flags, context.cwd);
+        const request: ParsedMutationRequest = {
+          kind: "theme-create",
+          table: THEME_TABLE,
+          id: flagString(flags, "id") ?? newId(),
+          name,
+          css,
+          installedAt: flagString(flags, "installed-at") ?? now(),
+          activate: hasFlag(flags, "activate") || hasFlag(flags, "active"),
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "update": {
+        const id = parsed.positionals[0];
+        if (!id) throw new Error("Usage: mari themes update <id> [--name <name>] [--css <css> | --css-file <path>] [--apply]");
+        const hasCssInput = flags.has("css") || flags.has("css-file") || flags.has("file");
+        const name = flagString(flags, "name")?.trim();
+        const css = hasCssInput ? await parseCssInput(flags, context.cwd) : undefined;
+        if (name === undefined && css === undefined) throw new Error("Theme update needs --name, --css, or --css-file");
+        const request: ParsedMutationRequest = {
+          kind: "theme-update",
+          table: THEME_TABLE,
+          id,
+          name,
+          css,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "set-active": {
+        const rawId = parsed.positionals[0];
+        if (!rawId) throw new Error("Usage: mari themes set-active <id|none> [--apply]");
+        const id = ["default", "none", "null", "off"].includes(rawId.toLowerCase()) ? undefined : rawId;
+        const request: ParsedMutationRequest = {
+          kind: "theme-set-active",
+          table: THEME_TABLE,
+          id,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "help":
+        return { ok: true, mode: "read", command: context.command, output: this.themeHelpText() };
+      default:
+        return { ok: false, mode: "read", command: context.command, error: this.themeHelpText() };
+    }
   }
 
   private async executeDbCommand(args: string[], context: { command: string; sessionId: string; cwd?: string }): Promise<MariDbCommandResult> {
@@ -831,6 +953,9 @@ export class MariDbService {
     else if (request.kind === "patch") changes = await this.planPatch(request, timestamp);
     else if (request.kind === "replace") changes = await this.planReplace(request, timestamp);
     else if (request.kind === "delete") changes = await this.planDelete(request, issues);
+    else if (request.kind === "theme-create") changes = await this.planThemeCreate(request, timestamp, issues);
+    else if (request.kind === "theme-update") changes = await this.planThemeUpdate(request, timestamp, issues);
+    else if (request.kind === "theme-set-active") changes = await this.planThemeSetActive(request, timestamp, issues);
     else changes = await this.planTransform(request, timestamp);
 
     const touchedTables = [...new Set(changes.map((change) => change.table))];
@@ -954,6 +1079,110 @@ export class MariDbService {
     }
     await this.addCascadeDeletes(changes, true);
     return this.dedupeDeletes(changes);
+  }
+
+  private async planThemeCreate(request: ParsedMutationRequest, timestamp: string, issues: MariDbValidationIssue[]): Promise<PlanChange[]> {
+    const meta = getMeta(THEME_TABLE);
+    const pk = getPrimary(meta);
+    const id = String(request.id ?? newId());
+    const name = typeof request.name === "string" ? request.name.trim() : "";
+    const css = typeof request.css === "string" ? request.css : "";
+    const installedAt = request.installedAt ?? timestamp;
+    const existingRows = await this.rawRows(THEME_TABLE);
+
+    this.addThemeNameIssues(name, id, issues);
+    if (existingRows.some((row) => row[pk] === id)) {
+      issues.push({ level: "error", table: THEME_TABLE, id, message: `Theme id ${id} already exists` });
+    }
+    if (existingRows.some((row) => row.name === name && row.css === css)) {
+      issues.push({ level: "notice", table: THEME_TABLE, id, message: "A theme with the same name and CSS already exists" });
+    }
+
+    const changes = request.activate ? this.planThemeActivationChanges(existingRows, id, timestamp) : [];
+    const afterRaw = serializeRow(THEME_TABLE, {
+      id,
+      name,
+      css,
+      installedAt,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      isActive: request.activate ? THEME_ACTIVE_TRUE : THEME_ACTIVE_FALSE,
+    });
+    changes.push({
+      table: THEME_TABLE,
+      id,
+      action: "insert",
+      before: null,
+      after: parseThemeRow(afterRaw),
+      beforeRaw: null,
+      afterRaw,
+      apply: true,
+    });
+    return changes;
+  }
+
+  private async planThemeUpdate(request: ParsedMutationRequest, timestamp: string, issues: MariDbValidationIssue[]): Promise<PlanChange[]> {
+    const meta = getMeta(THEME_TABLE);
+    const id = String(request.id ?? "");
+    const existing = await this.requireRawById(meta, id);
+    const next = parseRow(THEME_TABLE, existing);
+    if (request.name !== undefined) {
+      const name = request.name.trim();
+      this.addThemeNameIssues(name, id, issues);
+      next.name = name;
+    }
+    if (request.css !== undefined) next.css = request.css;
+    this.fillTimestamps(meta, next, false, timestamp);
+    const afterRaw = serializeRow(THEME_TABLE, next);
+    if (stableJson(afterRaw) === stableJson(existing)) return [];
+    return [
+      {
+        table: THEME_TABLE,
+        id,
+        action: "update",
+        before: parseThemeRow(existing),
+        after: parseThemeRow(afterRaw),
+        beforeRaw: existing,
+        afterRaw,
+        apply: true,
+      },
+    ];
+  }
+
+  private async planThemeSetActive(request: ParsedMutationRequest, timestamp: string, issues: MariDbValidationIssue[]): Promise<PlanChange[]> {
+    const targetId = request.id ? String(request.id) : null;
+    const rows = await this.rawRows(THEME_TABLE);
+    if (targetId && !rows.some((row) => row.id === targetId)) {
+      issues.push({ level: "error", table: THEME_TABLE, id: targetId, message: "Theme not found" });
+    }
+    return this.planThemeActivationChanges(rows, targetId, timestamp);
+  }
+
+  private planThemeActivationChanges(rows: Row[], targetId: string | null, timestamp: string): PlanChange[] {
+    const meta = getMeta(THEME_TABLE);
+    return rows
+      .map((row): PlanChange | null => {
+        const id = rowId(meta, row);
+        const nextActive = targetId && id === targetId ? THEME_ACTIVE_TRUE : THEME_ACTIVE_FALSE;
+        if (row.isActive === nextActive) return null;
+        const afterRaw = serializeRow(THEME_TABLE, { ...parseRow(THEME_TABLE, row), isActive: nextActive, updatedAt: timestamp });
+        return {
+          table: THEME_TABLE,
+          id,
+          action: "update",
+          before: parseThemeRow(row),
+          after: parseThemeRow(afterRaw),
+          beforeRaw: row,
+          afterRaw,
+          apply: true,
+        };
+      })
+      .filter((change): change is PlanChange => change !== null);
+  }
+
+  private addThemeNameIssues(name: string, id: string, issues: MariDbValidationIssue[]) {
+    if (!name) issues.push({ level: "error", table: THEME_TABLE, id, message: "Theme name is required" });
+    if (name.length > 200) issues.push({ level: "error", table: THEME_TABLE, id, message: "Theme name must be 200 characters or fewer" });
   }
 
   private fillTimestamps(meta: TableMeta, row: Row, isCreate: boolean, stamp: string) {
@@ -1203,12 +1432,24 @@ export class MariDbService {
     return join(this.journalDir(), "mari-db-history.jsonl");
   }
 
+  private themeHelpText() {
+    return [
+      "Usage: mari themes <command>",
+      "Read: list [--active] [--limit <n>], active, get <id>",
+      "Write: create --name <name> (--css <css> | --css-file <path>) [--activate] [--apply] [--reason <text>]",
+      "Write: update <id> [--name <name>] [--css <css> | --css-file <path>] [--apply] [--reason <text>]",
+      "Write: set-active <id|none> [--apply] [--reason <text>]",
+      "Writes dry-run by default; --apply requests browser approval.",
+    ].join("\n");
+  }
+
   private helpText() {
     return [
-      "Usage: mari db <command>",
+      "Usage: mari db <command> or mari themes <command>",
       "Discovery: status, tables, schema <table>, counts, data-dir, now, new-id",
       "Read: list <table>, get <table> <id>, select <table> --where <expr>, search <table|all> <query>, validate [--table <table>]",
       "Write: insert|patch|replace|delete|transform ... (dry-run by default; --apply requests browser approval)",
+      "Themes: mari themes list|active|get|create|update|set-active",
       `Known tables: ${FILE_BACKED_TABLES.slice(0, 8).join(", ")} ... (${FILE_BACKED_TABLES.length})`,
       `Journal directory: ${this.journalDir()} (${basename(getFileStorageDir())})`,
     ].join("\n");
