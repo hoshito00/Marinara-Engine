@@ -47,8 +47,6 @@ import { QuickSwitcherMobile } from "./QuickSwitcherMobile";
 import { EmojiPicker } from "../ui/EmojiPicker";
 import { GifPicker } from "../ui/GifPicker";
 import { SpeechToTextButton } from "../ui/SpeechToTextButton";
-import { MariThinkingIndicator } from "./MariThinkingIndicator";
-import { MariCapabilityNotice } from "./MariCapabilityNotice";
 import { SlashCommandFeedback } from "./SlashCommandFeedback";
 import { QuickReplyMenu, type QuickReplyAction } from "./QuickReplyMenu";
 import { buildGuidedGenerationInstructionMessage, formatTextQuotes, type Message } from "@marinara-engine/shared";
@@ -1552,10 +1550,6 @@ export function ConversationInput({
           )}
         </div>
       )}
-
-      {/* Mari capability + thinking indicators */}
-      <MariCapabilityNotice />
-      <MariThinkingIndicator />
 
       {/* Input bar */}
       <div

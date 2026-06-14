@@ -103,8 +103,16 @@ function parseChatMetadata(raw: unknown): Record<string, unknown> {
   return isRecord(raw) ? raw : {};
 }
 
-function isInternalProfessorMariChat(chat: { metadata?: unknown }) {
+function isHomeProfessorMariChat(chat: { metadata?: unknown }) {
   return parseChatMetadata(chat.metadata).internalAssistant === PROFESSOR_MARI_INTERNAL_CHAT_MARKER;
+}
+
+function hasProfessorMariCharacter(chat: { characterIds?: unknown }) {
+  return resolveChatCharacterIds(chat.characterIds).includes(PROFESSOR_MARI_ID);
+}
+
+function shouldHideProfessorMariChat(chat: { metadata?: unknown; characterIds?: unknown }) {
+  return isHomeProfessorMariChat(chat) || hasProfessorMariCharacter(chat);
 }
 
 function isUsableTimestamp(value: unknown): value is string {
@@ -438,12 +446,12 @@ export async function chatsRoutes(app: FastifyInstance) {
   // List all chats
   app.get("/", async () => {
     const chats = await storage.list();
-    return chats.filter((chat) => !isInternalProfessorMariChat(chat)).map(sanitizeChatGameNpcAvatars);
+    return chats.filter((chat) => !shouldHideProfessorMariChat(chat)).map(sanitizeChatGameNpcAvatars);
   });
 
   app.get<{ Querystring: { connectionId?: string; personaId?: string } }>("/internal/professor-mari", async (req) => {
     const chats = await storage.list();
-    const existing = chats.find(isInternalProfessorMariChat);
+    const existing = chats.find(isHomeProfessorMariChat) ?? chats.find(hasProfessorMariCharacter);
     const connectionId =
       typeof req.query.connectionId === "string" && req.query.connectionId ? req.query.connectionId : null;
     const personaId = typeof req.query.personaId === "string" && req.query.personaId ? req.query.personaId : null;
@@ -484,19 +492,24 @@ export async function chatsRoutes(app: FastifyInstance) {
   // List chats by group
   app.get<{ Params: { groupId: string } }>("/group/:groupId", async (req) => {
     const chats = await storage.listByGroup(req.params.groupId);
-    return chats.map(sanitizeChatGameNpcAvatars);
+    return chats.filter((chat) => !shouldHideProfessorMariChat(chat)).map(sanitizeChatGameNpcAvatars);
   });
 
   // Get single chat
   app.get<{ Params: { id: string } }>("/:id", async (req, reply) => {
     const chat = await storage.getById(req.params.id);
-    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+    if (!chat || (hasProfessorMariCharacter(chat) && !isHomeProfessorMariChat(chat))) {
+      return reply.status(404).send({ error: "Chat not found" });
+    }
     return sanitizeChatGameNpcAvatars(chat);
   });
 
   // Create chat
-  app.post("/", async (req) => {
+  app.post("/", async (req, reply) => {
     const input = createChatSchema.parse(req.body);
+    if (input.characterIds.includes(PROFESSOR_MARI_ID)) {
+      return reply.status(400).send({ error: "Professor Mari is only available from the Home screen." });
+    }
     const body = req.body as Record<string, unknown>;
     const chat = await storage.create(
       input,
@@ -533,8 +546,13 @@ export async function chatsRoutes(app: FastifyInstance) {
   // Update chat
   app.patch<{ Params: { id: string } }>("/:id", async (req, reply) => {
     const data = createChatSchema.partial().parse(req.body);
+    if (data.characterIds?.includes(PROFESSOR_MARI_ID)) {
+      return reply.status(400).send({ error: "Professor Mari is only available from the Home screen." });
+    }
     const existing = await storage.getById(req.params.id);
-    if (!existing) return reply.status(404).send({ error: "Chat not found" });
+    if (!existing || (hasProfessorMariCharacter(existing) && !isHomeProfessorMariChat(existing))) {
+      return reply.status(404).send({ error: "Chat not found" });
+    }
     const nextMode = data.mode ?? existing.mode;
     if (nextMode === "conversation") {
       if (data.promptPresetId) {
@@ -2226,11 +2244,11 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     let chatsToExport: ChatRow[];
     if (scope === "all") {
-      chatsToExport = ((await storage.list()) as ChatRow[]).filter((chat) => !isInternalProfessorMariChat(chat));
+      chatsToExport = ((await storage.list()) as ChatRow[]).filter((chat) => !shouldHideProfessorMariChat(chat));
     } else {
       if (uniqueIds.length === 0) return reply.status(400).send({ error: "No chats selected for export" });
       const rows = await Promise.all(uniqueIds.map((id) => storage.getById(id)));
-      chatsToExport = rows.filter((chat): chat is ChatRow => chat !== null && !isInternalProfessorMariChat(chat));
+      chatsToExport = rows.filter((chat): chat is ChatRow => chat !== null && !shouldHideProfessorMariChat(chat));
     }
 
     if (chatsToExport.length === 0) return reply.status(404).send({ error: "No chats found to export" });

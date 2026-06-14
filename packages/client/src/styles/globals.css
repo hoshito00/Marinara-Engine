@@ -3262,6 +3262,7 @@ summary[class*="cursor-pointer"],
   display: grid;
   place-items: end center;
   isolation: isolate;
+  overflow: visible;
 }
 
 .home-professor-mari-chat[data-paused="true"] *,

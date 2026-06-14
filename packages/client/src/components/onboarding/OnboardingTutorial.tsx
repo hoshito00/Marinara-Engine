@@ -3,13 +3,9 @@
 // ──────────────────────────────────────────────
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useUIStore } from "../../stores/ui.store";
-import { useChatStore } from "../../stores/chat.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
-import { useCreateChat } from "../../hooks/use-chats";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronRight, ArrowRightLeft } from "lucide-react";
-import { PROFESSOR_MARI_ID, DEFAULT_CONNECTION_ID } from "@marinara-engine/shared";
-import { api } from "../../lib/api-client";
 
 // ─── Step definitions ─────────────────────────
 
@@ -65,7 +61,7 @@ const STEPS: TourStep[] = [
   {
     target: null,
     title: "Meet Professor Mari!",
-    body: "That's me! I'm your built-in assistant. I come pre-installed and I'm always here to help. You can message me anytime to ask questions about the app, and I can even **do things for you:** like create character cards, personas, lorebooks, chats, and presets, review existing presets, and navigate the app.\n\n**Heads up:** when you ask me to update or edit a character or persona, I write directly to your library. Character edits keep a recoverable version snapshot you can roll back to from that character's history, but **persona edits overwrite without a snapshot — back up the persona first** if you want to keep the old version.\n\nI've set up a chat with me in the Chats sidebar already. Feel free to ask me anything after the tour!",
+    body: "That's me! I'm your built-in assistant. I live on the home screen now, where you can ask for app help, setup guidance, or workspace changes that need your approval. I can also **do things for you:** create character cards, personas, lorebooks, chats, and presets, review existing presets, and navigate the app.\n\n**Heads up:** when you ask me to update or edit a character or persona, I write directly to your library. Character edits keep a recoverable version snapshot you can roll back to from that character's history, but **persona edits overwrite without a snapshot — back up the persona first** if you want to keep the old version.",
     sprite: { src: "/sprites/mari/Mari_greet.png" },
   },
   {
@@ -353,27 +349,13 @@ function OnboardingTutorialInner() {
   const setShowDownloadModal = useSidecarStore((s) => s.setShowDownloadModal);
   const fetchSidecarStatus = useSidecarStore((s) => s.fetchStatus);
 
-  const createChat = useCreateChat();
-
   const [step, setStep] = useState(0);
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const rafRef = useRef<number>(0);
-  const mariChatIdRef = useRef<string | null>(null);
   const prevStepRef = useRef(0);
-  const createChatRef = useRef(createChat);
-  createChatRef.current = createChat;
 
   const currentStep = STEPS[step];
   const isLast = step === STEPS.length - 1;
-
-  // Set activeChatId without persisting to localStorage (demo-only)
-  const setDemoChatActive = useCallback((id: string | null) => {
-    useChatStore.setState({
-      activeChatId: id,
-      swipeIndex: new Map(),
-      ...(!id && { activeChat: null }),
-    });
-  }, []);
 
   // ── Side-effects when step changes ──
   useEffect(() => {
@@ -389,66 +371,7 @@ function OnboardingTutorialInner() {
       setSidebarOpen(false);
     }
 
-    // Step 3 (chat area): create persistent Assistant Chat with Mari
-    if (step === 3 && !mariChatIdRef.current) {
-      mariChatIdRef.current = "pending";
-      createChatRef.current
-        .mutateAsync({
-          name: "Assistant Chat With Mari",
-          mode: "conversation",
-          characterIds: [PROFESSOR_MARI_ID],
-          connectionId: DEFAULT_CONNECTION_ID,
-        })
-        .then(async (chat) => {
-          mariChatIdRef.current = chat.id;
-          // Disable autonomous messages, cross-chat awareness, and memory recall
-          // BEFORE activating the chat — otherwise ConversationView triggers schedule generation
-          try {
-            await api.patch(`/chats/${chat.id}/metadata`, {
-              autonomousMessages: false,
-              crossChatAwareness: false,
-              enableMemoryRecall: false,
-            });
-          } catch {
-            /* non-critical */
-          }
-          // Insert Mari's first message BEFORE activating the chat
-          // so the ConversationView picks it up on first render
-          try {
-            const char = await api.get<{ data: string }>(`/characters/${PROFESSOR_MARI_ID}`);
-            const charData = JSON.parse(char.data) as { first_mes?: string };
-            if (charData.first_mes) {
-              await api.post(`/chats/${chat.id}/messages`, {
-                role: "assistant",
-                characterId: PROFESSOR_MARI_ID,
-                content: charData.first_mes,
-              });
-            }
-          } catch {
-            /* non-critical */
-          }
-          // Now activate the chat — ConversationView will see the message + correct metadata
-          setDemoChatActive(chat.id);
-        })
-        .catch(() => {
-          mariChatIdRef.current = null;
-        });
-    }
-    // Leaving step 3: deselect chat (but keep it — it's persistent)
-    if (prev === 3 && step !== 3) {
-      setDemoChatActive(null);
-    }
-  }, [step, setSidebarOpen, setDemoChatActive]);
-
-  // Cleanup on unmount: deselect the Mari chat (but keep it — it's persistent)
-  useEffect(() => {
-    return () => {
-      if (mariChatIdRef.current && mariChatIdRef.current !== "pending") {
-        mariChatIdRef.current = null;
-        useChatStore.setState({ activeChatId: null, activeChat: null, swipeIndex: new Map() });
-      }
-    };
-  }, []);
+  }, [step, setSidebarOpen]);
 
   // Track the target element position (handles resize/scroll)
   const lastRectRef = useRef<Rect | null>(null);
