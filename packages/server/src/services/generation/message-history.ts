@@ -9,6 +9,7 @@ export async function findLastUserMessageIdBefore(
 ): Promise<string | null> {
   const rows = await chats.listMessages(chatId);
   const beforeIndex = beforeMessageId ? rows.findIndex((message) => message.id === beforeMessageId) : -1;
+  if (beforeMessageId && beforeIndex < 0) return null;
   const startIndex = beforeIndex >= 0 ? beforeIndex - 1 : rows.length - 1;
   for (let index = startIndex; index >= 0; index -= 1) {
     const message = rows[index];

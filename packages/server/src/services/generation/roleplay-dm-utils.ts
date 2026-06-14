@@ -12,12 +12,16 @@ function normalizeDmTargetName(value: string): string {
 }
 
 export function parseChatCharacterIdsForDm(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  if (Array.isArray(value)) {
+    return value
+      .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      .map((id) => id.trim());
+  }
   if (typeof value !== "string") return [];
   try {
     const parsed = JSON.parse(value) as unknown;
     return Array.isArray(parsed)
-      ? parsed.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      ? parsed.filter((id): id is string => typeof id === "string" && id.trim().length > 0).map((id) => id.trim())
       : [];
   } catch {
     return value.trim() ? [value.trim()] : [];
@@ -40,18 +44,19 @@ export function resolveRoleplayDmTarget(
   roleplayCharacters: Array<{ id: string; name: string }>,
   allCharacters: Array<{ id: string; data?: unknown }>,
 ): { id: string; name: string } | null {
+  const requestedId = requestedTarget.trim();
   const requestedKey = normalizeDmTargetName(requestedTarget);
   if (!requestedKey) return null;
 
   const roleplayTarget = roleplayCharacters.find(
-    (character) => character.id === requestedTarget || normalizeDmTargetName(character.name) === requestedKey,
+    (character) => character.id === requestedId || normalizeDmTargetName(character.name) === requestedKey,
   );
   if (roleplayTarget) return { id: roleplayTarget.id, name: roleplayTarget.name };
 
   for (const candidate of allCharacters) {
-    if (candidate.id === requestedTarget) {
+    if (candidate.id === requestedId) {
       const name = readCharacterNameFromRow(candidate).trim();
-      return { id: candidate.id, name: name || requestedTarget };
+      return { id: candidate.id, name: name || requestedId };
     }
     const candidateName = readCharacterNameFromRow(candidate);
     if (candidateName && normalizeDmTargetName(candidateName) === requestedKey) {

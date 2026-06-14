@@ -32,6 +32,18 @@ type GenerationPromptMessage = {
 
 type WrapFormat = "xml" | "markdown" | "none";
 
+function parseRecord(value: unknown): any {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function loadCharacterPromptInfo({
   chars,
   characterIds,
@@ -46,7 +58,7 @@ export async function loadCharacterPromptInfo({
     const charRow = await chars.getById(cid);
     if (!charRow) continue;
 
-    const charData = typeof charRow.data === "string" ? JSON.parse(charRow.data) : charRow.data;
+    const charData = parseRecord(charRow.data);
     let scenario: string = charData.scenario ?? "";
     if (chatMode !== "conversation" && charData.extensions?.isBuiltInAssistant) {
       scenario = scenario.replace(/<assistant_capabilities>[\s\S]*?<\/assistant_capabilities>/gi, "").trim();
@@ -179,8 +191,7 @@ export function injectIdentityFallbackMessages(args: {
   );
 
   if (args.persona?.personaStats) {
-    const pStats =
-      typeof args.persona.personaStats === "string" ? JSON.parse(args.persona.personaStats) : args.persona.personaStats;
+    const pStats = parseRecord(args.persona.personaStats);
     if (pStats?.rpgStats?.enabled) {
       const rpg = pStats.rpgStats as {
         attributes: Array<{ name: string; value: number }>;

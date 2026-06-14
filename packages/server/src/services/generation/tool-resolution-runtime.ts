@@ -212,9 +212,9 @@ async function loadToolDefinitions(args: {
     } catch (error) {
       registeredToolSources.delete(customTool.name);
       logger.warn(
-        '[tools] Skipping custom tool "%s" with invalid parameter schema: %s %s',
+        error,
+        '[tools] Skipping custom tool "%s" with invalid parameter schema: %s',
         customTool.name,
-        error instanceof Error ? error.message : "unknown error",
         String(customTool.parametersSchema),
       );
     }
@@ -373,7 +373,10 @@ export async function resolveGenerationTools({
   const enableChatTools = requestBody.enableTools === true || chatMetadata.enableTools === true;
   const enableAgentTools = resolvedAgents.some((agent) => {
     const agentSettings = parseSettings(agent.settings);
-    return Array.isArray(agentSettings.enabledTools) && agentSettings.enabledTools.length > 0;
+    return (
+      (Array.isArray(agentSettings.enabledTools) && agentSettings.enabledTools.length > 0) ||
+      (agent.type === "spotify" && (DEFAULT_AGENT_TOOLS.spotify?.length ?? 0) > 0)
+    );
   });
   const activeToolIds: string[] = Array.isArray(chatMetadata.activeToolIds)
     ? (chatMetadata.activeToolIds as string[])
@@ -440,9 +443,11 @@ export async function resolveGenerationTools({
     const normalizedQuery = query.toLowerCase();
     return entries
       .filter((entry: any) => {
-        const nameMatch = entry.name?.toLowerCase().includes(normalizedQuery);
-        const contentMatch = entry.content?.toLowerCase().includes(normalizedQuery);
-        const keyMatch = (entry.keys as string[])?.some((key: string) => key.toLowerCase().includes(normalizedQuery));
+        const nameMatch = typeof entry.name === "string" && entry.name.toLowerCase().includes(normalizedQuery);
+        const contentMatch = typeof entry.content === "string" && entry.content.toLowerCase().includes(normalizedQuery);
+        const keyMatch =
+          Array.isArray(entry.keys) &&
+          entry.keys.some((key: unknown) => typeof key === "string" && key.toLowerCase().includes(normalizedQuery));
         const categoryMatch = !category || entry.tag === category;
         return categoryMatch && (nameMatch || contentMatch || keyMatch);
       })
@@ -462,10 +467,13 @@ export async function resolveGenerationTools({
       emittedPatch = patch;
       return patch;
     });
-    const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : { ...chatMetadata, ...emittedPatch };
-    for (const key of Object.keys(chatMetadata)) {
-      if (!(key in updatedMeta)) {
-        delete chatMetadata[key];
+    const hasUpdatedMetadata = updatedChat && Object.prototype.hasOwnProperty.call(updatedChat, "metadata");
+    const updatedMeta = hasUpdatedMetadata ? parseExtra(updatedChat.metadata) : { ...chatMetadata, ...emittedPatch };
+    if (hasUpdatedMetadata) {
+      for (const key of Object.keys(chatMetadata)) {
+        if (!(key in updatedMeta)) {
+          delete chatMetadata[key];
+        }
       }
     }
     Object.assign(chatMetadata, updatedMeta);
@@ -548,7 +556,8 @@ export async function resolveGenerationTools({
               spotifyAgent.__spotifyPlayError = parsed.error;
             }
           } catch {
-            // Leave the raw tool result for the model; fallback validation handles explicit failures.
+            (agent as SpotifyRuntimeAgent).__spotifyPlayError = "spotify_play returned an unparseable response";
+            // Leave the raw tool result for the model; downstream fallback can now stop instead of replaying.
           }
         } else if (agent.type === "spotify" && spotifyToolNames.has(call.function.name)) {
           try {

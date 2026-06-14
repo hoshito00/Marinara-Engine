@@ -236,12 +236,19 @@ export async function injectGameGmPromptRuntime(args: {
   let perceptionHintsBlock: string | undefined;
   try {
     const latestSnapshot = await args.selectedGameStateSnapshotPromise;
-    const playerStats = latestSnapshot?.playerStats ? JSON.parse(latestSnapshot.playerStats as string) : null;
+    const parsedPlayerStats = latestSnapshot?.playerStats ? parseMaybeJson(latestSnapshot.playerStats) : null;
+    const playerStats =
+      parsedPlayerStats && typeof parsedPlayerStats === "object" && !Array.isArray(parsedPlayerStats)
+        ? (parsedPlayerStats as Record<string, any>)
+        : null;
     if (playerStats) {
-      const presentNpcs = latestSnapshot?.presentCharacters
-        ? JSON.parse(latestSnapshot.presentCharacters as string)
+      const parsedPresentCharacters = latestSnapshot?.presentCharacters
+        ? parseMaybeJson(latestSnapshot.presentCharacters)
+        : null;
+      const presentNpcs = Array.isArray(parsedPresentCharacters)
+        ? parsedPresentCharacters
             .map((character: { name?: string }) => character.name)
-            .filter(Boolean)
+            .filter((name): name is string => typeof name === "string" && name.length > 0)
         : [];
       const perceptionContext: PerceptionContext = {
         perceptionMod: playerStats.skills?.Perception ?? playerStats.skills?.perception ?? 0,

@@ -11,12 +11,13 @@ function inferSelfieContextFromResponse(response: string): string | undefined {
   if (!compact) return undefined;
   const bracketMatch = compact.match(/\[[^\]]*\b(?:selfie|photo|pic|picture)\b[^\]]*\]/i);
   const source = bracketMatch?.[0] ?? compact;
-  return source
+  const context = source
     .replace(/^\[/, "")
     .replace(/\]$/, "")
     .replace(/^.*?\b(?:selfie|photo|pic|picture)\b[:\s-]*/i, "")
     .trim()
     .slice(0, 240);
+  return context || undefined;
 }
 
 export function recoverImplicitSelfieCommand(args: {

@@ -1,4 +1,5 @@
 import type { DB } from "../../db/connection.js";
+import { logger } from "../../lib/logger.js";
 import { createJournal, type Journal } from "../game/journal.service.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { parseExtra } from "../../routes/generate/generate-route-utils.js";
@@ -18,7 +19,8 @@ export async function updateJournal(
     if (updated) {
       await chatsStore.updateMetadata(chatId, { ...meta, gameJournal: updated });
     }
-  } catch {
+  } catch (error) {
+    logger.warn(error, "[game] Journal auto-fill failed for chat %s", chatId);
     // Non-critical; generation should not fail because journal auto-fill failed.
   }
 }

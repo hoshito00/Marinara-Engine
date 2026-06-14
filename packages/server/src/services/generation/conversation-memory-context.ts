@@ -1,3 +1,5 @@
+import { logger } from "../../lib/logger.js";
+
 type CharactersStore = {
   getById(id: string): Promise<{ data: unknown } | null>;
   update(id: string, data: Record<string, unknown>): Promise<unknown>;
@@ -27,7 +29,15 @@ export async function mergeConversationCharacterMemories({
     const charRow = await chars.getById(characterId);
     if (!charRow) continue;
 
-    const charData = typeof charRow.data === "string" ? JSON.parse(charRow.data) : charRow.data;
+    let charData: Record<string, any>;
+    try {
+      const parsed = typeof charRow.data === "string" ? JSON.parse(charRow.data) : charRow.data;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      charData = parsed as Record<string, any>;
+    } catch (error) {
+      logger.warn(error, "[memory] Skipping malformed character data for %s", characterId);
+      continue;
+    }
     const memories: CharacterMemory[] = charData.extensions?.characterMemories ?? [];
     if (memories.length === 0) continue;
 

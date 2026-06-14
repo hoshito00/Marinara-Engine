@@ -64,6 +64,20 @@ function resolveAgentRuntimePhase(agentType: string, configuredPhase: string): s
   return configuredPhase;
 }
 
+function parseAgentSettings(settings: unknown): Record<string, unknown> {
+  if (!settings) return {};
+  if (typeof settings === "string") {
+    try {
+      const parsed = JSON.parse(settings) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch (error) {
+      logger.warn(error, "[generate] Ignoring malformed agent settings JSON");
+      return {};
+    }
+  }
+  return typeof settings === "object" && !Array.isArray(settings) ? (settings as Record<string, unknown>) : {};
+}
+
 async function resolveAgentConnectionProvider(args: {
   connections: ConnectionsStore;
   agentProviderCache: Map<string, AgentProviderCacheEntry>;
@@ -172,7 +186,7 @@ export async function resolveAgentPipelineAgents({
   for (const cfg of enabledConfigs) {
     if (hasPerChatAgentList && !perChatAgentSet.has(cfg.type)) continue;
 
-    const settings = cfg.settings ? JSON.parse(cfg.settings as string) : {};
+    const settings = parseAgentSettings(cfg.settings);
     if (cfg.type === "spotify" && (!Array.isArray(settings.enabledTools) || settings.enabledTools.length === 0)) {
       settings.enabledTools = DEFAULT_AGENT_TOOLS.spotify ?? [];
     }
@@ -289,7 +303,7 @@ export async function resolveAgentPipelineAgents({
       if (cfg) {
         const settings =
           "settings" in cfg && cfg.settings
-            ? JSON.parse(cfg.settings as string)
+            ? parseAgentSettings(cfg.settings)
             : getDefaultBuiltInAgentSettings("response-orchestrator");
         const requestedConnectionId = "connectionId" in cfg ? (cfg.connectionId as string | null) : null;
         const effectiveConnectionId = resolveAgentConnectionId({

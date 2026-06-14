@@ -49,9 +49,10 @@ export function normalizeAssistantPresetIdentifier(
   return candidate;
 }
 
-export function normalizeAssistantPresetVariableName(value: string, fallbackIndex: number, used: Set<string>): string {
+export function normalizeAssistantPresetVariableName(value: unknown, fallbackIndex: number, used: Set<string>): string {
+  const source = typeof value === "string" ? value : "";
   const base =
-    value
+    source
       .trim()
       .replace(/[^\w]+/g, "_")
       .replace(/^_+|_+$/g, "")
