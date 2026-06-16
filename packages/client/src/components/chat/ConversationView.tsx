@@ -289,6 +289,9 @@ export function ConversationView({
     return "Character";
   }, [characterMap, characterNames, chatCharIds, streamingCharacterId, typingCharacterName]);
   const liveTypingVerb = liveTypingName.includes(",") || liveTypingName.includes(" & ") ? "are" : "is";
+  // Single typer → tag the typing row so exclusive-mode card CSS can target it via
+  // `[data-card-css="<id>"] .mari-typing-*`. Multiple/unknown typers stay untagged.
+  const typingCardCssId = streamingCharacterId ?? (chatCharIds.length === 1 ? chatCharIds[0] : undefined);
 
   // Track whether the current generation has produced any content. When the stream
   // buffer clears (stream finished) but isStreaming hasn't cleared yet, this ref lets
@@ -1172,8 +1175,12 @@ export function ConversationView({
 
         {/* Typing indicator — classic mode only; bubble regen uses the draft row instead */}
         {showTypingIndicator && (
-          <div className="flex items-center gap-2 px-4 py-1.5 text-[0.8125rem] text-[var(--text-secondary)]">
-            <span className="flex gap-0.5">
+          <div
+            className="mari-typing-indicator flex items-center gap-2 px-4 py-1.5 text-[0.8125rem] text-[var(--text-secondary)]"
+            data-typing-name={liveTypingName}
+            data-card-css={typingCardCssId}
+          >
+            <span className="mari-typing-dots flex gap-0.5">
               <span
                 className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-secondary)]"
                 style={{ animationDelay: "0ms" }}
@@ -1187,7 +1194,7 @@ export function ConversationView({
                 style={{ animationDelay: "300ms" }}
               />
             </span>
-            <span className="italic">
+            <span className="mari-typing-text italic">
               {liveTypingName} {liveTypingVerb} typing...
             </span>
           </div>

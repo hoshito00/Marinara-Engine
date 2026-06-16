@@ -84,6 +84,8 @@ export function ConversationMessageGrouped({
         isStreaming && "bg-[var(--secondary)]/20",
         multiSelectMode && isSelected && "bg-[var(--destructive)]/10",
       )}
+      data-card-css={message.characterId ?? undefined}
+      data-grouped={isGrouped || undefined}
       onClick={handleMobileTap}
     >
       {/* Multi-select checkbox */}
