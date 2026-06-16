@@ -35,7 +35,8 @@ interface SearchResult {
 let ytApiPromise: Promise<void> | null = null;
 
 const MUSIC_NEUTRAL_BORDER_CLASS = "border-[var(--marinara-chat-chrome-panel-border)]";
-const MUSIC_NEUTRAL_BG_CLASS = "bg-[var(--marinara-chat-chrome-panel-bg)]";
+const MUSIC_NEUTRAL_SHELL_BORDER_CLASS = "border-[var(--marinara-music-player-shell-border)]";
+const MUSIC_NEUTRAL_SHELL_BG_CLASS = "bg-[var(--marinara-music-player-shell-bg)]";
 const MUSIC_NEUTRAL_BUTTON_BG_CLASS = "bg-[var(--marinara-chat-chrome-button-bg)]";
 const MUSIC_NEUTRAL_TILE_BG_CLASS = "bg-[var(--marinara-chat-chrome-highlight-bg)]";
 const MUSIC_NEUTRAL_TEXT_CLASS = "text-[var(--marinara-chat-chrome-panel-title)]";
@@ -93,17 +94,23 @@ function getMobileWidgetStyle(
 
 function getMobileExpandedPanelStyle(position: { x: number; y: number }): CSSProperties {
   if (typeof window === "undefined") return {};
+
   const width = Math.min(
     MOBILE_WIDGET_EXPANDED_MAX_WIDTH,
     window.innerWidth - MOBILE_WIDGET_EXPANDED_HORIZONTAL_GUTTER,
   );
+  const opensLeft =
+    position.x + width > window.innerWidth - MOBILE_WIDGET_VIEWPORT_PADDING ||
+    position.x + MOBILE_WIDGET_COLLAPSED_SIZE / 2 > window.innerWidth / 2;
+  const preferredLeft = opensLeft ? position.x + MOBILE_WIDGET_COLLAPSED_SIZE - width : position.x;
+  const clampedLeft = Math.max(
+    MOBILE_WIDGET_VIEWPORT_PADDING,
+    Math.min(window.innerWidth - width - MOBILE_WIDGET_VIEWPORT_PADDING, preferredLeft),
+  );
+
   return {
     width,
-    maxWidth: `calc(100vw - ${MOBILE_WIDGET_EXPANDED_HORIZONTAL_GUTTER}px)`,
-    transform:
-      position.x + width > window.innerWidth - MOBILE_WIDGET_VIEWPORT_PADDING
-        ? `translateX(-${Math.max(0, width - MOBILE_WIDGET_COLLAPSED_SIZE)}px)`
-        : undefined,
+    transform: `translateX(${Math.round(clampedLeft - position.x)}px)`,
   };
 }
 
@@ -479,8 +486,8 @@ export function YouTubePlayer({ mobile = false }: { mobile?: boolean } = {}) {
     <div
       className={cn(
         "fixed top-14 z-40 w-[calc(100vw-1rem)] max-w-80 overflow-hidden rounded-xl border shadow-[0_18px_50px_rgba(0,0,0,0.35)] transition-opacity",
-        MUSIC_NEUTRAL_BORDER_CLASS,
-        MUSIC_NEUTRAL_BG_CLASS,
+        MUSIC_NEUTRAL_SHELL_BORDER_CLASS,
+        MUSIC_NEUTRAL_SHELL_BG_CLASS,
         active && hasPlayerContent && showVideo ? "left-2 opacity-100" : "pointer-events-none -left-[9999px] opacity-0",
       )}
     >
@@ -521,8 +528,8 @@ export function YouTubePlayer({ mobile = false }: { mobile?: boolean } = {}) {
               <div
                 className={cn(
                   "flex h-12 w-12 items-center justify-center rounded-full border shadow-lg backdrop-blur-xl",
-                  MUSIC_NEUTRAL_BORDER_CLASS,
-                  MUSIC_NEUTRAL_BG_CLASS,
+                  MUSIC_NEUTRAL_SHELL_BORDER_CLASS,
+                  MUSIC_NEUTRAL_SHELL_BG_CLASS,
                 )}
               >
                 <MusicSourceGlyph source="youtube" className={cn("h-5 w-5", YOUTUBE_LOGO_CLASS)} />
@@ -531,8 +538,8 @@ export function YouTubePlayer({ mobile = false }: { mobile?: boolean } = {}) {
               <div
                 className={cn(
                   "rounded-xl border p-2 shadow-2xl backdrop-blur-xl",
-                  MUSIC_NEUTRAL_BORDER_CLASS,
-                  MUSIC_NEUTRAL_BG_CLASS,
+                  MUSIC_NEUTRAL_SHELL_BORDER_CLASS,
+                  MUSIC_NEUTRAL_SHELL_BG_CLASS,
                 )}
                 style={mobileExpandedPanelStyle}
               >
@@ -579,8 +586,8 @@ export function YouTubePlayer({ mobile = false }: { mobile?: boolean } = {}) {
         <div
           className={cn(
             "relative hidden h-10 min-w-0 max-w-[31rem] flex-1 items-center gap-2 overflow-hidden rounded-full border px-2.5 md:flex",
-            MUSIC_NEUTRAL_BORDER_CLASS,
-            MUSIC_NEUTRAL_BG_CLASS,
+            MUSIC_NEUTRAL_SHELL_BORDER_CLASS,
+            MUSIC_NEUTRAL_SHELL_BG_CLASS,
           )}
         >
           {compactBody}

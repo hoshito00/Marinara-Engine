@@ -38,6 +38,7 @@ import {
 import { cn } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useUpdateLorebookEntry, useDeleteLorebookEntry, useDuplicateLorebookEntry } from "../../hooks/use-lorebooks";
+import { MacroTextarea } from "../ui/MacroTextarea";
 import type {
   LorebookEntry,
   LorebookFilterMode,
@@ -129,10 +130,10 @@ const STATUS_GUIDE: Array<{ status: EntryStatus; description: string }> = [
 ];
 
 const ENTRY_AUTOSAVE_DELAY_MS = 850;
-const ENTRY_STATUS_MENU_WIDTH = 272;
-const ENTRY_STATUS_MENU_ESTIMATED_HEIGHT = 168;
-const ENTRY_STATUS_MENU_MARGIN = 12;
-const ENTRY_STATUS_MENU_GAP = 8;
+const ENTRY_STATUS_MENU_WIDTH = 224;
+const ENTRY_STATUS_MENU_ESTIMATED_HEIGHT = 126;
+const ENTRY_STATUS_MENU_MARGIN = 10;
+const ENTRY_STATUS_MENU_GAP = 6;
 
 const FILTER_MODE_LABEL: Record<LorebookFilterMode, string> = {
   any: "Any",
@@ -570,7 +571,7 @@ export function LorebookEntryRow({
               ref={statusMenuRef}
               role="menu"
               aria-label="Choose entry type"
-              className="fixed z-[120] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1.5 text-[var(--popover-foreground)] shadow-xl ring-1 ring-[var(--border)]"
+              className="fixed z-[120] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-xl ring-1 ring-[var(--border)]"
               style={{
                 left: statusMenuPosition.left,
                 top: statusMenuPosition.top,
@@ -592,16 +593,16 @@ export function LorebookEntryRow({
                       handleStatusChange(status);
                     }}
                     className={cn(
-                      "flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors focus:outline-none focus:ring-1 focus:ring-[var(--ring)]",
+                      "flex w-full items-start gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors focus:outline-none focus:ring-1 focus:ring-[var(--ring)]",
                       selected
                         ? "bg-[var(--accent)] text-[var(--foreground)]"
                         : "text-[var(--popover-foreground)] hover:bg-[var(--accent)]",
                     )}
                   >
-                    <span className={cn("mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full", STATUS_DOT_COLOR[status])} />
+                    <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", STATUS_DOT_COLOR[status])} />
                     <span className="min-w-0">
-                      <span className="block text-[0.75rem] font-semibold leading-tight">{STATUS_LABEL[status]}</span>
-                      <span className="mt-0.5 block text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                      <span className="block text-[0.6875rem] font-semibold leading-tight">{STATUS_LABEL[status]}</span>
+                      <span className="mt-0.5 block text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
                         {description}
                       </span>
                     </span>
@@ -1344,13 +1345,14 @@ function ExpandedDrawer({
           icon={FileText}
           help="Brief summary of what this entry is about. Used by the Knowledge Router agent to decide whether to inject this entry — not sent to the main AI as content."
         >
-          <textarea
+          <MacroTextarea
             value={form.description ?? ""}
-            onChange={(e) => update({ description: e.target.value })}
+            onChange={(value) => update({ description: value })}
             onBlur={flushAutosave}
             rows={3}
             className="w-full resize-y rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs leading-5 ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             placeholder="Brief summary for routing."
+            title="Edit Description"
           />
         </FieldGroup>
 
@@ -1476,6 +1478,7 @@ function ExpandedDrawer({
           rows={5}
           placeholder="The content that will be injected into the prompt when this entry activates…"
           title="Edit Content"
+          showMacroReference
         />
         <p className="mt-1 flex items-center gap-1 text-[0.625rem] text-[var(--muted-foreground)]">
           <Hash size="0.5625rem" />~{estimateTokens(form.content ?? "").toLocaleString()} tokens

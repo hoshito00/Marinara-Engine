@@ -15,10 +15,7 @@ import {
   Loader2,
   FileText,
   RefreshCw,
-  Bookmark,
-  Trash2,
   WandSparkles,
-  Dices,
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
@@ -28,7 +25,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useCreateMessage, useDeleteMessage, useUpdateMessageExtra, useChat, chatKeys } from "../../hooks/use-chats";
-import { characterKeys, usePersonas, useUpdatePersona } from "../../hooks/use-characters";
+import { characterKeys } from "../../hooks/use-characters";
 import {
   matchSlashCommand,
   getSlashCompletions,
@@ -49,6 +46,7 @@ import { GifPicker } from "../ui/GifPicker";
 import { SpeechToTextButton } from "../ui/SpeechToTextButton";
 import { SlashCommandFeedback } from "./SlashCommandFeedback";
 import { QuickReplyMenu, type QuickReplyAction } from "./QuickReplyMenu";
+import { getChatInputShellClass } from "./chat-input-styles";
 import { buildGuidedGenerationInstructionMessage, formatTextQuotes, type Message } from "@marinara-engine/shared";
 
 interface Attachment {
@@ -70,19 +68,10 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   "yml",
 ]);
 
-const SAVED_STATUS_LIMIT = 12;
-const SAVED_STATUS_MAX_LENGTH = 120;
 const CONVERSATION_HIDDEN_SLASH_COMMANDS = new Set(["impersonate", "impersonate_prompt"]);
 
 function isConversationHiddenSlashCommand(command: SlashCommand): boolean {
   return CONVERSATION_HIDDEN_SLASH_COMMANDS.has(command.name);
-}
-
-interface PersonaStatusRow {
-  id: string;
-  name?: string;
-  isActive?: string | boolean;
-  savedStatusOptions?: string | string[] | null;
 }
 
 function getFileExtension(fileName: string): string {
@@ -115,43 +104,6 @@ function isSupportedChatAttachment(file: File): boolean {
     return true;
   }
   return TEXT_ATTACHMENT_EXTENSIONS.has(getFileExtension(file.name));
-}
-
-function normalizeSavedStatus(value: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, SAVED_STATUS_MAX_LENGTH);
-}
-
-function parseSavedStatusOptions(value: PersonaStatusRow["savedStatusOptions"]): string[] {
-  const raw = (() => {
-    if (Array.isArray(value)) return value;
-    if (typeof value !== "string" || !value.trim()) return [];
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  })();
-
-  const byKey = new Map<string, string>();
-  for (const item of raw) {
-    if (typeof item !== "string") continue;
-    const normalized = normalizeSavedStatus(item);
-    if (!normalized) continue;
-    byKey.set(normalized.toLowerCase(), normalized);
-  }
-  return [...byKey.values()].slice(0, SAVED_STATUS_LIMIT);
-}
-
-function resolveActivePersona(
-  personas: PersonaStatusRow[] | undefined,
-  chat: { personaId?: string | null; mode?: string } | undefined | null,
-) {
-  if (!personas) return undefined;
-  const chatPersonaId = chat?.personaId ?? null;
-  if (chatPersonaId) return personas.find((p) => p.id === chatPersonaId);
-  if (chat?.mode === "game") return undefined;
-  return personas.find((p) => p.isActive === "true" || p.isActive === true);
 }
 
 function readFileAsDataUrl(file: Blob): Promise<string> {
@@ -200,18 +152,11 @@ export function ConversationInput({
   const [mentionStartPos, setMentionStartPos] = useState(0);
   const [charPickerOpen, setCharPickerOpen] = useState(false);
   const [charPickerPos, setCharPickerPos] = useState<{ left: number; top: number } | null>(null);
-  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
-  const [statusMenuPos, setStatusMenuPos] = useState<{ left: number; top: number } | null>(null);
-  const [diceMenuOpen, setDiceMenuOpen] = useState(false);
-  const [diceResult, setDiceResult] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
   const gifButtonRef = useRef<HTMLButtonElement>(null);
-  const statusButtonRef = useRef<HTMLButtonElement>(null);
-  const statusMenuRef = useRef<HTMLDivElement>(null);
-  const diceButtonRef = useRef<HTMLButtonElement>(null);
   const charPickerBtnRef = useRef<HTMLButtonElement>(null);
   const charPickerMenuRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
@@ -238,13 +183,9 @@ export function ConversationInput({
   const showQuickReplyGuide = useUIStore((s) => s.showQuickReplyGuide);
   const speechToTextEnabled = useUIStore((s) => s.speechToTextEnabled);
   const quoteFormat = useUIStore((s) => s.quoteFormat);
-  const userActivity = useUIStore((s) => s.userActivity);
-  const setUserActivity = useUIStore((s) => s.setUserActivity);
   const createMessage = useCreateMessage(activeChatId);
   const deleteMessage = useDeleteMessage(activeChatId);
   const updateMessageExtra = useUpdateMessageExtra(activeChatId);
-  const { data: allPersonas } = usePersonas();
-  const updatePersona = useUpdatePersona();
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingAttachmentReads = activeChatId ? (pendingAttachmentReadsByChat[activeChatId] ?? 0) : 0;
@@ -542,38 +483,6 @@ export function ConversationInput({
       el.focus();
     },
     [activeChatId, mentionStartPos, setInputDraft, syncInputState],
-  );
-
-  const parseDiceNotation = useCallback((notation: string) => {
-    const match = notation.trim().match(/^(\d+)?d(\d+)([+-]\d+)?$/i);
-    if (!match) return null;
-    return {
-      count: Number.parseInt(match[1] ?? "1", 10),
-      sides: Number.parseInt(match[2]!, 10),
-      modifier: match[3] ? Number.parseInt(match[3], 10) : 0,
-    };
-  }, []);
-
-  const rollDice = useCallback((count: number, sides: number) => {
-    const rolls: number[] = [];
-    for (let i = 0; i < count; i += 1) rolls.push(Math.floor(Math.random() * sides) + 1);
-    return rolls;
-  }, []);
-
-  const handleDiceRoll = useCallback(
-    (notation: string) => {
-      const parsed = parseDiceNotation(notation);
-      if (!parsed) {
-        toast.error(`Invalid dice notation: ${notation}`);
-        return;
-      }
-      const rolls = rollDice(parsed.count, parsed.sides);
-      const sum = rolls.reduce((a, b) => a + b, 0) + parsed.modifier;
-      const modStr = parsed.modifier > 0 ? `+${parsed.modifier}` : parsed.modifier < 0 ? `${parsed.modifier}` : "";
-      const detail = parsed.count > 1 ? ` [${rolls.join(", ")}]${modStr}` : modStr ? ` (${rolls[0]}${modStr})` : "";
-      setDiceResult(`🎲 ${notation} → ${sum}${detail}`);
-    },
-    [parseDiceNotation, rollDice],
   );
 
   const handleSend = useCallback(async () => {
@@ -1321,23 +1230,6 @@ export function ConversationInput({
   }, [charPickerOpen]);
 
   useEffect(() => {
-    if (!statusMenuOpen) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (
-        statusMenuRef.current &&
-        !statusMenuRef.current.contains(target) &&
-        statusButtonRef.current &&
-        !statusButtonRef.current.contains(target)
-      ) {
-        setStatusMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [statusMenuOpen]);
-
-  useEffect(() => {
     if (!charPickerOpen || !charPickerBtnRef.current) return;
     const rect = charPickerBtnRef.current.getBoundingClientRect();
     const inputBox = charPickerBtnRef.current.closest(".rounded-2xl") as HTMLElement | null;
@@ -1353,32 +1245,7 @@ export function ConversationInput({
   }, [charPickerOpen]);
 
   const showCharPicker = groupResponseOrder === "manual" && !!activeChatCharacters && activeChatCharacters.length > 1;
-  const activePersona = resolveActivePersona(
-    allPersonas as PersonaStatusRow[] | undefined,
-    activeChat as { personaId?: string | null; mode?: string } | undefined,
-  );
-  const savedStatusOptions = parseSavedStatusOptions(activePersona?.savedStatusOptions);
-  const normalizedUserActivity = normalizeSavedStatus(userActivity);
-  const canSaveCurrentStatus =
-    !!activePersona &&
-    !!normalizedUserActivity &&
-    !savedStatusOptions.some((option) => option.toLowerCase() === normalizedUserActivity.toLowerCase());
   const showDraftTranslateButton = chatMetadata.showInputTranslateButton === true;
-
-  useEffect(() => {
-    if (!statusMenuOpen || !statusButtonRef.current) return;
-    const rect = statusButtonRef.current.getBoundingClientRect();
-    const inputBox = statusButtonRef.current.closest(".rounded-2xl") as HTMLElement | null;
-    const anchorTop = inputBox ? inputBox.getBoundingClientRect().top : rect.top;
-    requestAnimationFrame(() => {
-      const menuEl = statusMenuRef.current;
-      const menuHeight = menuEl?.offsetHeight || 260;
-      const menuWidth = menuEl?.offsetWidth || 260;
-      let left = rect.right - menuWidth;
-      if (left < 8) left = 8;
-      setStatusMenuPos({ left, top: Math.max(8, anchorTop - menuHeight - 4) });
-    });
-  }, [statusMenuOpen, savedStatusOptions.length, canSaveCurrentStatus]);
 
   const handleTranslateDraft = useCallback(async () => {
     if (!activeChatId || isTranslatingDraft) return;
@@ -1400,47 +1267,6 @@ export function ConversationInput({
       setIsTranslatingDraft(false);
     }
   }, [activeChatId, isTranslatingDraft, quoteFormat, setInputDraft, syncInputState]);
-
-  const persistSavedStatusOptions = useCallback(
-    async (nextOptions: string[]) => {
-      if (!activePersona) {
-        toast.info("Choose a persona before saving status options.");
-        return;
-      }
-      await updatePersona.mutateAsync({
-        id: activePersona.id,
-        savedStatusOptions: JSON.stringify(nextOptions.slice(0, SAVED_STATUS_LIMIT)),
-      });
-    },
-    [activePersona, updatePersona],
-  );
-
-  const handleSaveCurrentStatus = useCallback(async () => {
-    if (!normalizedUserActivity || !activePersona) return;
-    const nextOptions = [
-      normalizedUserActivity,
-      ...savedStatusOptions.filter((option) => option.toLowerCase() !== normalizedUserActivity.toLowerCase()),
-    ];
-    await persistSavedStatusOptions(nextOptions);
-    toast.success("Saved status for this persona");
-  }, [activePersona, normalizedUserActivity, persistSavedStatusOptions, savedStatusOptions]);
-
-  const handleApplySavedStatus = useCallback(
-    (status: string) => {
-      setUserActivity(status);
-      setStatusMenuOpen(false);
-    },
-    [setUserActivity],
-  );
-
-  const handleDeleteSavedStatus = useCallback(
-    async (status: string) => {
-      const nextOptions = savedStatusOptions.filter((option) => option.toLowerCase() !== status.toLowerCase());
-      await persistSavedStatusOptions(nextOptions);
-      toast.success("Removed saved status");
-    },
-    [persistSavedStatusOptions, savedStatusOptions],
-  );
 
   const handleSpeechTranscript = useCallback(
     (transcript: string) => {
@@ -1575,10 +1401,11 @@ export function ConversationInput({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={cn(
-          "relative flex flex-wrap items-end gap-1 rounded-2xl border border-foreground/20 bg-[var(--card)] px-2 py-1.5 shadow-sm transition-all duration-200 focus-within:border-foreground/35 focus-within:ring-1 focus-within:ring-foreground/10 sm:flex-nowrap sm:items-center sm:gap-2 sm:px-4 sm:py-2.5 dark:bg-black/40",
-          isDragging ? "border-foreground/40 bg-foreground/10 shadow-lg shadow-black/10" : "",
-        )}
+        className={getChatInputShellClass({
+          dragging: isDragging,
+          hasContent: hasInput || attachments.length > 0,
+          layout: "conversation",
+        })}
       >
         {/* Attach button */}
         <input
@@ -1595,7 +1422,7 @@ export function ConversationInput({
         <button
           onClick={() => fileInputRef.current?.click()}
           className={cn(
-            "order-2 flex h-11 w-11 items-center justify-center rounded-xl transition-all active:scale-90 sm:order-none sm:h-8 sm:w-8",
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all active:scale-90 sm:h-8 sm:w-8",
             attachments.length
               ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
               : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
@@ -1608,7 +1435,7 @@ export function ConversationInput({
         {/* Quick Switchers — desktop: inline, mobile: chevron */}
         <QuickConnectionSwitcher className="hidden sm:flex" />
         <QuickPersonaSwitcher className="hidden sm:flex" />
-        <div className="order-2 sm:hidden">
+        <div className="flex shrink-0 sm:hidden">
           <QuickSwitcherMobile />
         </div>
 
@@ -1631,59 +1458,11 @@ export function ConversationInput({
           onInput={handleInput}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          className="order-1 max-h-[12.5rem] min-w-0 basis-full flex-1 resize-none bg-transparent py-0 text-[1rem] leading-normal text-foreground outline-none placeholder:text-foreground/30 sm:order-none sm:basis-auto"
+          className="max-h-[12.5rem] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[1rem] leading-tight text-foreground outline-none placeholder:text-foreground/30 sm:min-h-0 sm:px-0 sm:py-0 sm:leading-normal"
         />
 
         {/* Right actions */}
-        <div className="order-2 ml-auto flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-0.5 sm:order-none sm:flex-none sm:shrink-0">
-          <div className="relative">
-            <button
-              ref={diceButtonRef}
-              type="button"
-              onClick={() => {
-                setDiceMenuOpen((v) => !v);
-                setStatusMenuOpen(false);
-                setCharPickerOpen(false);
-              }}
-              className={cn(
-                "flex h-11 w-11 items-center justify-center rounded-full transition-colors sm:h-8 sm:w-8",
-                diceMenuOpen
-                  ? "bg-foreground/10 text-foreground/75"
-                  : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
-              )}
-              title="Roll dice"
-            >
-              <Dices size="1rem" />
-            </button>
-            {diceMenuOpen && (
-              <div className="absolute bottom-full right-0 z-[9999] mb-2 w-48 rounded-xl border border-[var(--border)] bg-[var(--card)] p-2 shadow-2xl">
-                <div className="mb-2 text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
-                  Quick Roll
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {['1d4', '1d6', '1d8', '1d10', '1d20', '2d6', '3d6', '1d100'].map((notation) => (
-                    <button
-                      key={notation}
-                      type="button"
-                      onClick={() => {
-                        handleDiceRoll(notation);
-                        setDiceMenuOpen(false);
-                      }}
-                      className="rounded-lg bg-[var(--secondary)] px-2 py-1.5 text-xs transition-colors hover:bg-[var(--accent)]"
-                    >
-                      {notation}
-                    </button>
-                  ))}
-                </div>
-                {diceResult && (
-                  <div className="mt-2 rounded-lg bg-[var(--secondary)]/60 px-2 py-1.5 text-[0.625rem] text-[var(--muted-foreground)]">
-                    {diceResult}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
+        <div className="ml-0 flex shrink-0 flex-nowrap items-center justify-end gap-0 sm:ml-auto sm:gap-0.5">
           <div className="relative">
             <button
               ref={gifButtonRef}
@@ -1692,7 +1471,7 @@ export function ConversationInput({
                 setEmojiOpen(false);
               }}
               className={cn(
-                "flex h-11 w-11 items-center justify-center rounded-full transition-colors sm:h-8 sm:w-8",
+                "flex h-9 w-9 items-center justify-center rounded-xl transition-colors sm:h-8 sm:w-8 sm:rounded-full",
                 gifOpen
                   ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
                   : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
@@ -1741,7 +1520,7 @@ export function ConversationInput({
               ref={charPickerBtnRef}
               onClick={() => setCharPickerOpen((v) => !v)}
               className={cn(
-                "flex h-11 w-11 items-center justify-center rounded-full transition-colors sm:h-8 sm:w-8",
+                "hidden h-11 w-11 items-center justify-center rounded-full transition-colors sm:flex sm:h-8 sm:w-8",
                 guideGenerations && hasInput
                   ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20 hover:bg-foreground/15"
                   : charPickerOpen
@@ -1762,7 +1541,7 @@ export function ConversationInput({
               onClick={() => void handleTranslateDraft()}
               disabled={!activeChatId || !hasInput || isTranslatingDraft}
               className={cn(
-                "flex h-11 w-11 items-center justify-center rounded-full transition-colors sm:h-8 sm:w-8",
+                "hidden h-11 w-11 items-center justify-center rounded-full transition-colors sm:flex sm:h-8 sm:w-8",
                 hasInput && !isTranslatingDraft
                   ? "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70"
                   : "text-foreground/25",
@@ -1777,34 +1556,18 @@ export function ConversationInput({
             <SpeechToTextButton
               disabled={!activeChatId}
               onTranscript={handleSpeechTranscript}
-              className="rounded-full"
+              className="hidden rounded-full sm:flex"
               iconSize={16}
             />
           )}
 
-          <button
-            ref={statusButtonRef}
-            type="button"
-            onClick={() => setStatusMenuOpen((v) => !v)}
-            disabled={!activePersona}
-            className={cn(
-              "flex h-11 w-11 items-center justify-center rounded-full transition-colors sm:h-8 sm:w-8",
-              statusMenuOpen
-                ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
-                : activePersona
-                  ? "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70"
-                  : "text-foreground/25",
-            )}
-            title={activePersona ? "Saved persona statuses" : "Choose a persona to save statuses"}
-          >
-            <Bookmark size="1rem" />
-          </button>
-
           {showQuickRepliesMenu && quickReplyActions.length > 0 && (
-            <QuickReplyMenu
-              actions={quickReplyActions}
-              disabled={!activeChatId || isReadingAttachments || (!hasInput && attachments.length === 0)}
-            />
+            <div className="hidden sm:block">
+              <QuickReplyMenu
+                actions={quickReplyActions}
+                disabled={!activeChatId || isReadingAttachments || (!hasInput && attachments.length === 0)}
+              />
+            </div>
           )}
 
           <button
@@ -1812,7 +1575,7 @@ export function ConversationInput({
             disabled={!isActuallyGenerating && (isReadingAttachments || !activeChatId || !canSubmit)}
             aria-label={sendButtonTitle}
             className={cn(
-              "flex h-11 w-11 items-center justify-center rounded-xl transition-all duration-200 sm:h-8 sm:w-8",
+              "flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-200 sm:h-8 sm:w-8",
               isActuallyGenerating
                 ? "text-foreground/75 hover:bg-foreground/10 hover:text-foreground/90"
                 : canSubmit && !isReadingAttachments
@@ -1831,70 +1594,6 @@ export function ConversationInput({
           </button>
         </div>
       </div>
-      {diceMenuOpen && (
-        <button
-          type="button"
-          aria-hidden="true"
-          tabIndex={-1}
-          className="fixed inset-0 z-[9998] cursor-default"
-          onClick={() => setDiceMenuOpen(false)}
-        />
-      )}
-      {statusMenuOpen &&
-        createPortal(
-          <div
-            ref={statusMenuRef}
-            className="fixed z-[9999] flex max-h-[320px] min-w-[240px] max-w-[300px] flex-col overflow-hidden rounded-xl border border-foreground/10 bg-[var(--card)] shadow-2xl"
-            style={
-              statusMenuPos ? { left: statusMenuPos.left, top: statusMenuPos.top } : { visibility: "hidden" as const }
-            }
-          >
-            <div className="border-b border-foreground/10 px-3 py-2">
-              <div className="truncate text-xs font-semibold">Saved Statuses</div>
-              <div className="truncate text-[0.625rem] text-foreground/45">
-                {activePersona?.name ?? "No persona selected"}
-              </div>
-            </div>
-            <div className="min-h-0 overflow-y-auto p-1">
-              {canSaveCurrentStatus && (
-                <button
-                  type="button"
-                  onClick={() => void handleSaveCurrentStatus()}
-                  disabled={updatePersona.isPending}
-                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-foreground/80 transition-colors hover:bg-foreground/10 disabled:opacity-50"
-                >
-                  <Plus size="0.875rem" className="shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">Save &quot;{normalizedUserActivity}&quot;</span>
-                </button>
-              )}
-              {savedStatusOptions.length > 0 ? (
-                savedStatusOptions.map((status) => (
-                  <div key={status} className="group flex items-center gap-1 rounded-lg hover:bg-foreground/10">
-                    <button
-                      type="button"
-                      onClick={() => handleApplySavedStatus(status)}
-                      className="min-w-0 flex-1 px-3 py-2 text-left text-xs"
-                    >
-                      <span className="block truncate">{status}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleDeleteSavedStatus(status)}
-                      disabled={updatePersona.isPending}
-                      className="mr-1 rounded-md p-1.5 text-foreground/45 opacity-70 transition-colors hover:text-[var(--destructive)] disabled:opacity-40 sm:opacity-0 sm:group-hover:opacity-100"
-                      title="Remove saved status"
-                    >
-                      <Trash2 size="0.75rem" />
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <div className="px-3 py-4 text-center text-[0.6875rem] text-foreground/45">No saved statuses yet</div>
-              )}
-            </div>
-          </div>,
-          document.body,
-        )}
       {showCharPicker &&
         charPickerOpen &&
         createPortal(

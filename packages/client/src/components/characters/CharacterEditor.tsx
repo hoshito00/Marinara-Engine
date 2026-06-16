@@ -65,7 +65,6 @@ import {
   Loader2,
   Swords,
   Crop,
-  Maximize2,
   ImageDown,
   Download,
   Eraser,
@@ -79,7 +78,7 @@ import { extractColorsFromImage } from "../../lib/avatar-color-extraction";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { api } from "../../lib/api-client";
 import { ColorPicker } from "../ui/ColorPicker";
-import { ExpandedTextarea } from "../ui/ExpandedTextarea";
+import { MacroTextarea } from "../ui/MacroTextarea";
 import { Modal } from "../ui/Modal";
 import { SpriteFrameEditor } from "../ui/SpriteFrameEditor";
 import { SpriteWandCleanupEditor } from "../ui/SpriteWandCleanupEditor";
@@ -1091,46 +1090,26 @@ function CharacterDescriptionTab({
   formData: CharacterData;
   updateField: <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => void;
 }) {
-  const [expandedField, setExpandedField] = useState(false);
-
   return (
     <div className="space-y-6">
       <div>
-        <div className="flex items-start justify-between gap-2 mb-4">
-          <SectionHeader
-            title="Description"
-            subtitle="The character's general description. This is sent in every prompt as part of the character's identity."
-            helpText={CHARACTER_DESCRIPTION_HELP}
-          />
-          <button
-            type="button"
-            onClick={() => setExpandedField(true)}
-            className="mt-0.5 shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Expand editor"
-          >
-            <Maximize2 size="0.875rem" />
-          </button>
-        </div>
-        <textarea
+        <SectionHeader
+          title="Description"
+          subtitle="The character's general description. This is sent in every prompt as part of the character's identity."
+          helpText={CHARACTER_DESCRIPTION_HELP}
+        />
+        <MacroTextarea
           value={formData.description}
-          onChange={(event) => updateField("description", event.target.value)}
+          onChange={(value) => updateField("description", value)}
           placeholder="Describe who this character is, their role, and their key traits…"
           rows={12}
+          title="Description"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
         />
         <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">
           {formData.description.length} characters
         </p>
       </div>
-
-      <ExpandedTextarea
-        open={expandedField}
-        onClose={() => setExpandedField(false)}
-        title="Description"
-        value={formData.description}
-        onChange={(value) => updateField("description", value)}
-        placeholder="Describe who this character is, their role, and their key traits…"
-      />
     </div>
   );
 }
@@ -1152,36 +1131,18 @@ function TextareaTab({
   placeholder: string;
   rows?: number;
 }) {
-  const [expanded, setExpanded] = useState(false);
   return (
     <div>
-      <div className="flex items-start justify-between gap-2 mb-4">
-        <SectionHeader title={title} subtitle={subtitle} helpText={helpText} />
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="mt-0.5 shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-          title="Expand editor"
-        >
-          <Maximize2 size="0.875rem" />
-        </button>
-      </div>
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={rows}
-        className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-      />
-      <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">{value.length} characters</p>
-      <ExpandedTextarea
-        open={expanded}
-        onClose={() => setExpanded(false)}
-        title={title}
+      <SectionHeader title={title} subtitle={subtitle} helpText={helpText} />
+      <MacroTextarea
         value={value}
         onChange={onChange}
         placeholder={placeholder}
+        rows={rows}
+        title={title}
+        className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
       />
+      <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">{value.length} characters</p>
     </div>
   );
 }
@@ -1359,19 +1320,20 @@ function MetadataTab({
       </div>
 
       {/* Creator Notes */}
-      <label className="block space-y-1.5">
+      <div className="block space-y-1.5">
         <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
           Creator Notes{" "}
           <HelpTooltip text="Private notes about this character — tips for use, known quirks, recommended settings. Not sent to the AI." />
         </span>
-        <textarea
+        <MacroTextarea
           value={formData.creator_notes}
-          onChange={(e) => updateField("creator_notes", e.target.value)}
+          onChange={(value) => updateField("creator_notes", value)}
           rows={4}
+          title="Creator Notes"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3 text-sm outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
           placeholder="Notes about this character, intended use, tips for best results…"
         />
-      </label>
+      </div>
     </div>
   );
 }
@@ -1621,9 +1583,17 @@ function DialogueTab({
   formData: CharacterData;
   updateField: <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => void;
 }) {
-  const [expandedField, setExpandedField] = useState<"first_mes" | "mes_example" | number | null>(null);
+  const greetingKeysRef = useRef<string[]>([]);
+
+  while (greetingKeysRef.current.length < formData.alternate_greetings.length) {
+    greetingKeysRef.current.push(generateClientId());
+  }
+  if (greetingKeysRef.current.length > formData.alternate_greetings.length) {
+    greetingKeysRef.current.length = formData.alternate_greetings.length;
+  }
 
   const addGreeting = () => {
+    greetingKeysRef.current.push(generateClientId());
     updateField("alternate_greetings", [...formData.alternate_greetings, ""]);
   };
 
@@ -1634,6 +1604,7 @@ function DialogueTab({
   };
 
   const removeGreeting = (i: number) => {
+    greetingKeysRef.current.splice(i, 1);
     updateField(
       "alternate_greetings",
       formData.alternate_greetings.filter((_, idx) => idx !== i),
@@ -1649,29 +1620,20 @@ function DialogueTab({
       />
 
       {/* First Message */}
-      <label className="block space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            First Message{" "}
-            <HelpTooltip text="The character's opening message when a new chat starts. Good first messages set the scene and establish the character's voice." />
-          </span>
-          <button
-            type="button"
-            onClick={() => setExpandedField("first_mes")}
-            className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Expand editor"
-          >
-            <Maximize2 size="0.875rem" />
-          </button>
-        </div>
-        <textarea
+      <div className="block space-y-1.5">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+          First Message{" "}
+          <HelpTooltip text="The character's opening message when a new chat starts. Good first messages set the scene and establish the character's voice." />
+        </span>
+        <MacroTextarea
           value={formData.first_mes}
-          onChange={(e) => updateField("first_mes", e.target.value)}
+          onChange={(value) => updateField("first_mes", value)}
           rows={6}
+          title="First Message"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
           placeholder="What does the character say when they first meet someone? Use *asterisks* for actions…"
         />
-      </label>
+      </div>
 
       {/* Alternate Greetings */}
       <div className="space-y-3">
@@ -1689,90 +1651,48 @@ function DialogueTab({
           </button>
         </div>
         {formData.alternate_greetings.map((g, i) => (
-          <div key={i} className="relative">
-            <textarea
-              value={g}
-              onChange={(e) => updateGreeting(i, e.target.value)}
-              rows={3}
-              className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3 pr-16 text-sm outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40"
-              placeholder={`Greeting #${i + 1}…`}
-            />
-            <div className="absolute right-2 top-2 flex items-center gap-0.5">
-              <button
-                type="button"
-                onClick={() => setExpandedField(i)}
-                className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-                title="Expand editor"
-              >
-                <Maximize2 size="0.75rem" />
-              </button>
+          <MacroTextarea
+            key={greetingKeysRef.current[i] ?? i}
+            value={g}
+            onChange={(value) => updateGreeting(i, value)}
+            rows={3}
+            title={`Alternate Greeting #${i + 1}`}
+            className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3 text-sm outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40"
+            placeholder={`Greeting #${i + 1}…`}
+            controlPaddingClassName="pr-14"
+            toolbarExtra={
               <button
                 type="button"
                 onClick={() => removeGreeting(i)}
-                className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:text-[var(--destructive)]"
+                className="rounded p-1 text-[var(--muted-foreground)] transition-colors hover:text-[var(--destructive)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                aria-label={`Remove alternate greeting ${i + 1}`}
+                title="Remove greeting"
               >
                 <Trash2 size="0.75rem" />
               </button>
-            </div>
-          </div>
+            }
+          />
         ))}
       </div>
 
       {/* Example Messages */}
-      <label className="block space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Example Dialogue{" "}
-            <HelpTooltip text="Sample conversations showing how the character talks. Helps the AI learn the character's speaking style, vocabulary, and mannerisms." />
-          </span>
-          <button
-            type="button"
-            onClick={() => setExpandedField("mes_example")}
-            className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Expand editor"
-          >
-            <Maximize2 size="0.875rem" />
-          </button>
-        </div>
+      <div className="block space-y-1.5">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+          Example Dialogue{" "}
+          <HelpTooltip text="Sample conversations showing how the character talks. Helps the AI learn the character's speaking style, vocabulary, and mannerisms." />
+        </span>
         <p className="text-[0.625rem] text-[var(--muted-foreground)]/70">
           {"Use <START> to separate exchanges. Use {{user}} and {{char}} as placeholders."}
         </p>
-        <textarea
+        <MacroTextarea
           value={formData.mes_example}
-          onChange={(e) => updateField("mes_example", e.target.value)}
+          onChange={(value) => updateField("mes_example", value)}
           rows={10}
+          title="Example Dialogue"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 font-mono text-xs leading-relaxed outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
           placeholder={"<START>\n{{user}}: Hello!\n{{char}}: *waves excitedly* Hey there!"}
         />
-      </label>
-
-      <ExpandedTextarea
-        open={expandedField === "first_mes"}
-        onClose={() => setExpandedField(null)}
-        title="First Message"
-        value={formData.first_mes}
-        onChange={(value) => updateField("first_mes", value)}
-        placeholder="What does the character say when they first meet someone? Use *asterisks* for actions…"
-      />
-      <ExpandedTextarea
-        open={expandedField === "mes_example"}
-        onClose={() => setExpandedField(null)}
-        title="Example Dialogue"
-        value={formData.mes_example}
-        onChange={(value) => updateField("mes_example", value)}
-        placeholder={"<START>\n{{user}}: Hello!\n{{char}}: *waves excitedly* Hey there!"}
-      />
-      {formData.alternate_greetings.map((g, i) => (
-        <ExpandedTextarea
-          key={i}
-          open={expandedField === i}
-          onClose={() => setExpandedField(null)}
-          title={`Alternate Greeting #${i + 1}`}
-          value={g}
-          onChange={(value) => updateGreeting(i, value)}
-          placeholder={`Greeting #${i + 1}…`}
-        />
-      ))}
+      </div>
     </div>
   );
 }
@@ -1787,7 +1707,6 @@ function AdvancedTab({
   updateExtension: (key: string, value: unknown) => void;
 }) {
   const depthPrompt = formData.extensions.depth_prompt ?? { prompt: "", depth: 4, role: "system" as const };
-  const [expandedField, setExpandedField] = useState<"system_prompt" | "post_history" | "depth_prompt" | null>(null);
 
   return (
     <div className="space-y-6">
@@ -1797,74 +1716,47 @@ function AdvancedTab({
         helpText={CHARACTER_ADVANCED_HELP}
       />
 
-      <label className="block space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            System Prompt{" "}
-            <HelpTooltip text="Character-specific instructions inserted by the prompt preset's character block or wherever the preset uses {{charSysInfo}}. This does not replace the chat's main system prompt." />
-          </span>
-          <button
-            type="button"
-            onClick={() => setExpandedField("system_prompt")}
-            className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Expand editor"
-          >
-            <Maximize2 size="0.875rem" />
-          </button>
-        </div>
-        <textarea
+      <div className="block space-y-1.5">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+          System Prompt{" "}
+          <HelpTooltip text="Character-specific instructions inserted by the prompt preset's character block or wherever the preset uses {{charSysInfo}}. This does not replace the chat's main system prompt." />
+        </span>
+        <MacroTextarea
           value={formData.system_prompt}
-          onChange={(e) => updateField("system_prompt", e.target.value)}
+          onChange={(value) => updateField("system_prompt", value)}
           rows={6}
+          title="System Prompt"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
           placeholder="Character-specific instructions inserted through {{charSysInfo}} or the character prompt block…"
         />
-      </label>
+      </div>
 
-      <label className="block space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Post-History Instructions{" "}
-            <HelpTooltip text="Text inserted after the chat history, right before the AI generates. Great for reminders like 'stay in character' or 'respond in 2 paragraphs'." />
-          </span>
-          <button
-            type="button"
-            onClick={() => setExpandedField("post_history")}
-            className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Expand editor"
-          >
-            <Maximize2 size="0.875rem" />
-          </button>
-        </div>
-        <textarea
+      <div className="block space-y-1.5">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+          Post-History Instructions{" "}
+          <HelpTooltip text="Text inserted after the chat history, right before the AI generates. Great for reminders like 'stay in character' or 'respond in 2 paragraphs'." />
+        </span>
+        <MacroTextarea
           value={formData.post_history_instructions}
-          onChange={(e) => updateField("post_history_instructions", e.target.value)}
+          onChange={(value) => updateField("post_history_instructions", value)}
           rows={4}
+          title="Post-History Instructions"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
           placeholder="Text inserted after the chat history but before generation…"
         />
-      </label>
+      </div>
 
       {/* Depth Prompt */}
       <div className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
-        <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1 text-xs font-semibold">
-            Depth Prompt{" "}
-            <HelpTooltip text="Injects text at a specific position in the chat history. Depth 0 = after the latest message, depth 4 = 4 messages back. Useful for persistent reminders." />
-          </span>
-          <button
-            type="button"
-            onClick={() => setExpandedField("depth_prompt")}
-            className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Expand editor"
-          >
-            <Maximize2 size="0.875rem" />
-          </button>
-        </div>
-        <textarea
+        <span className="inline-flex items-center gap-1 text-xs font-semibold">
+          Depth Prompt{" "}
+          <HelpTooltip text="Injects text at a specific position in the chat history. Depth 0 = after the latest message, depth 4 = 4 messages back. Useful for persistent reminders." />
+        </span>
+        <MacroTextarea
           value={depthPrompt.prompt}
-          onChange={(e) => updateExtension("depth_prompt", { ...depthPrompt, prompt: e.target.value })}
+          onChange={(value) => updateExtension("depth_prompt", { ...depthPrompt, prompt: value })}
           rows={4}
+          title="Depth Prompt"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3 text-sm outline-none focus:border-[var(--primary)]/40"
           placeholder="Prompt injected at a specific depth in the chat history…"
         />
@@ -1896,31 +1788,6 @@ function AdvancedTab({
           </label>
         </div>
       </div>
-
-      <ExpandedTextarea
-        open={expandedField === "system_prompt"}
-        onClose={() => setExpandedField(null)}
-        title="System Prompt"
-        value={formData.system_prompt}
-        onChange={(value) => updateField("system_prompt", value)}
-        placeholder="Character-specific instructions inserted through {{charSysInfo}} or the character prompt block…"
-      />
-      <ExpandedTextarea
-        open={expandedField === "post_history"}
-        onClose={() => setExpandedField(null)}
-        title="Post-History Instructions"
-        value={formData.post_history_instructions}
-        onChange={(value) => updateField("post_history_instructions", value)}
-        placeholder="Text inserted after the chat history but before generation…"
-      />
-      <ExpandedTextarea
-        open={expandedField === "depth_prompt"}
-        onClose={() => setExpandedField(null)}
-        title="Depth Prompt"
-        value={depthPrompt.prompt}
-        onChange={(value) => updateExtension("depth_prompt", { ...depthPrompt, prompt: value })}
-        placeholder="Prompt injected at a specific depth in the chat history…"
-      />
     </div>
   );
 }
@@ -2974,7 +2841,6 @@ function StatsTab({
               ))}
             </div>
           </div>
-
         </>
       )}
     </div>
@@ -3104,7 +2970,6 @@ function ColorsTab({
         label="Message Box Color"
         helpText="Background color for this character's chat message bubbles. Use a semi-transparent color for best results (e.g. rgba)."
       />
-
     </div>
   );
 }

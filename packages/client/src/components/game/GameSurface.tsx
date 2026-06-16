@@ -136,7 +136,11 @@ import {
 import { ChatGalleryDrawer } from "../chat/ChatGalleryDrawer";
 import { ChatBranchSelector } from "../chat/ChatBranchSelector";
 import { GameAssetsBrowserView } from "../game-assets/GameAssetsBrowserView";
-import { getChatToolbarButtonClass } from "../chat/ChatToolbarControls";
+import {
+  CHAT_TOOLBAR_ICON_GAP_CLASS,
+  CHAT_TOOLBAR_OVERFLOW_MENU_CLASS,
+  getChatToolbarButtonClass,
+} from "../chat/ChatToolbarControls";
 import {
   ROLEPLAY_POPOVER_HEADER,
   ROLEPLAY_POPOVER_SCROLL_AREA,
@@ -175,12 +179,12 @@ type GameAssetGenerationResult = {
 };
 
 const GAME_TOP_ICON_BUTTON = getChatToolbarButtonClass();
-const GAME_MOBILE_ROOT_BUTTON = getChatToolbarButtonClass();
+const GAME_MOBILE_ROOT_BUTTON = getChatToolbarButtonClass({ sizeClassName: "h-8 w-10" });
 const GAME_MOBILE_ICON_BUTTON = getChatToolbarButtonClass({ compact: true });
 const GAME_ACTION_MENU = cn(ROLEPLAY_POPOVER_SHELL, "flex w-72 max-w-[calc(100vw-2rem)] flex-col gap-1 p-1.5");
 const GAME_MOBILE_ACTIONS_MENU = cn(
-  ROLEPLAY_POPOVER_SHELL,
-  "absolute right-0 top-9 flex w-8 flex-col items-center gap-1 p-0.5",
+  CHAT_TOOLBAR_OVERFLOW_MENU_CLASS,
+  "absolute right-0 top-9",
 );
 const GAME_MOBILE_ACTION_MENU = cn(ROLEPLAY_POPOVER_SHELL, "flex w-72 max-w-[calc(100vw-4rem)] flex-col gap-1 p-1.5");
 const GAME_ACTION_MENU_ITEM =
@@ -8351,7 +8355,7 @@ export function GameSurface({
                 className={cn("pointer-events-none absolute right-3 z-30", topOverlayOffsetClass)}
               >
                 {/* Desktop controls */}
-                <div className="pointer-events-auto hidden items-center gap-1.5 md:flex">
+                <div className={cn("pointer-events-auto hidden items-center md:flex", CHAT_TOOLBAR_ICON_GAP_CLASS)}>
                   <ChatBranchSelector
                     activeChatId={activeChatId}
                     activeChatName={chat.name}

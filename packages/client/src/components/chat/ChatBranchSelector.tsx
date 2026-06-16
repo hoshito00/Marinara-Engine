@@ -169,11 +169,14 @@ export function ChatBranchSelector({
   useLayoutEffect(() => {
     if (!open || !buttonRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
-    const width = Math.max(rect.width, 360);
     const viewportPadding = 12;
+    const isMobile = window.innerWidth < 768;
+    const width = isMobile
+      ? Math.min(360, window.innerWidth - viewportPadding * 2)
+      : Math.max(rect.width, 360);
     const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
     setPosition({
-      top: rect.bottom + 8,
+      top: rect.bottom + (isMobile ? 0 : 8),
       left: Math.max(viewportPadding, Math.min(rect.right - width, maxLeft)),
       width,
     });

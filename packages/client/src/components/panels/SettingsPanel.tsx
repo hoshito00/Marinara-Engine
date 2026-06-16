@@ -7,6 +7,8 @@ import {
   TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR,
   useUIStore,
   getDefaultAppAccentColor,
+  getDefaultChatChromeTextColor,
+  getDefaultChatTextColor,
   getTrackerPanelWidthForProfile,
   type ConversationMessageStyle,
   type GameDialogueDisplayMode,
@@ -1714,6 +1716,9 @@ function AppearanceSettings() {
   const setTheme = useUIStore((s) => s.setTheme);
   const appAccentColor = useUIStore((s) => s.appAccentColor);
   const setAppAccentColor = useUIStore((s) => s.setAppAccentColor);
+  const defaultAppAccentColor = getDefaultAppAccentColor(theme);
+  const displayedAppAccentColor =
+    appAccentColor.trim().toLowerCase() === defaultAppAccentColor.toLowerCase() ? "" : appAccentColor;
   const visualTheme = useUIStore((s) => s.visualTheme);
   const setVisualTheme = useUIStore((s) => s.setVisualTheme);
   const chatBackground = useUIStore((s) => s.chatBackground);
@@ -1722,6 +1727,13 @@ function AppearanceSettings() {
   const setChatBackgroundBlur = useUIStore((s) => s.setChatBackgroundBlur);
   const activeChatId = useChatStore((s) => s.activeChatId);
   const updateMeta = useUpdateChatMetadata();
+  const handleAppAccentColorChange = useCallback(
+    (color: string) => {
+      const normalized = color.trim();
+      setAppAccentColor(normalized.toLowerCase() === defaultAppAccentColor.toLowerCase() ? "" : normalized);
+    },
+    [defaultAppAccentColor, setAppAccentColor],
+  );
   // Persist background changes to the active chat's metadata immediately so
   // a clear (or pick) survives chat switches and page reloads. The effect-based
   // persist in ChatArea covers other sources (agents/scene/slash commands), but
@@ -1778,6 +1790,8 @@ function AppearanceSettings() {
   // Text appearance
   const chatFontColor = useUIStore((s) => s.chatFontColor);
   const setChatFontColor = useUIStore((s) => s.setChatFontColor);
+  const chatChromeTextColor = useUIStore((s) => s.chatChromeTextColor);
+  const setChatChromeTextColor = useUIStore((s) => s.setChatChromeTextColor);
   const chatFontOpacity = useUIStore((s) => s.chatFontOpacity);
   const setChatFontOpacity = useUIStore((s) => s.setChatFontOpacity);
   const roleplayAvatarStyle = useUIStore((s) => s.roleplayAvatarStyle);
@@ -1796,8 +1810,6 @@ function AppearanceSettings() {
   const setTextStrokeWidth = useUIStore((s) => s.setTextStrokeWidth);
   const textStrokeColor = useUIStore((s) => s.textStrokeColor);
   const setTextStrokeColor = useUIStore((s) => s.setTextStrokeColor);
-  const [draftChatFontColor, setDraftChatFontColor] = useState(chatFontColor || "#c3c2c2");
-  const [draftStrokeColor, setDraftStrokeColor] = useState(textStrokeColor);
 
   // Custom fonts — query is pre-warmed in App.tsx, no fetch here
   const { data: customFonts } = useQuery<CustomFontFace[]>({
@@ -1932,13 +1944,15 @@ function AppearanceSettings() {
           </label>
 
           <ColorPicker
-            value={appAccentColor || getDefaultAppAccentColor(theme)}
-            onChange={setAppAccentColor}
+            value={displayedAppAccentColor}
+            onChange={handleAppAccentColorChange}
             gradient
             compact
             label="Accent Color"
             helpText="Colors the shared chat, roleplay, and game chrome: toolbar icons, button borders, focus rings, highlights, and panel outlines. Gradients unlock rainbow accents."
-            clearLabel="Use scheme default"
+            emptyText={`Default ${defaultAppAccentColor}`}
+            emptyPreviewValue={defaultAppAccentColor}
+            clearLabel="Reset to default"
           />
 
           <label className="flex flex-col gap-1">
@@ -2134,30 +2148,28 @@ function AppearanceSettings() {
             </div>
 
             {/* Chat Text Color */}
-            <div className="flex flex-col gap-1">
-              <span className="text-[0.6875rem] font-medium">Chat Text Color</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={draftChatFontColor}
-                  onChange={(e) => {
-                    setDraftChatFontColor(e.target.value);
-                    setChatFontColor(e.target.value);
-                  }}
-                  className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
-                />
-                <input
-                  type="text"
-                  value={draftChatFontColor}
-                  onChange={(e) => {
-                    setDraftChatFontColor(e.target.value);
-                    if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) setChatFontColor(e.target.value);
-                  }}
-                  onBlur={() => setDraftChatFontColor(chatFontColor || "#c3c2c2")}
-                  className="w-24 rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                />
-              </div>
-            </div>
+            <ColorPicker
+              value={chatFontColor}
+              onChange={setChatFontColor}
+              compact
+              label="Chat Text Color"
+              helpText="Controls the main chat message text color. Leave it on the scheme default to keep dark and light mode readable."
+              emptyText={`Scheme default ${getDefaultChatTextColor(theme)}`}
+              emptyPreviewValue={getDefaultChatTextColor(theme)}
+              clearLabel="Reset to default"
+            />
+
+            {/* Chat Chrome Text Color */}
+            <ColorPicker
+              value={chatChromeTextColor}
+              onChange={setChatChromeTextColor}
+              compact
+              label="Chat Chrome Text Color"
+              helpText="Controls text in tracker widgets, shared toolbar buttons, and windows opened from chat buttons. Leave it on the scheme default to swap automatically between dark and light mode."
+              emptyText={`Scheme default ${getDefaultChatChromeTextColor(theme)}`}
+              emptyPreviewValue={getDefaultChatChromeTextColor(theme)}
+              clearLabel="Reset to default"
+            />
 
             {/* Roleplay Messages Background Opacity */}
             <label className="flex flex-col gap-1">
@@ -2176,17 +2188,15 @@ function AppearanceSettings() {
                   {chatFontOpacity}%
                 </span>
               </div>
+              <button
+                type="button"
+                onClick={() => setChatFontOpacity(90)}
+                disabled={chatFontOpacity === 90}
+                className="self-start text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-45"
+              >
+                Reset opacity to default
+              </button>
             </label>
-            <button
-              onClick={() => {
-                setChatFontColor("");
-                setDraftChatFontColor("#c3c2c2");
-                setChatFontOpacity(90);
-              }}
-              className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
-            >
-              Reset to default
-            </button>
 
             {/* Text Stroke */}
             <div className="flex flex-col gap-1.5">
@@ -2194,43 +2204,36 @@ function AppearanceSettings() {
                 Text Outline / Stroke
                 <HelpTooltip text="Adds an outline around chat text for better readability over backgrounds. Set width to 0 to disable." />
               </span>
-              <div className="flex items-center gap-3">
-                <label className="flex flex-col gap-1 flex-1">
-                  <span className="text-[0.625rem] text-[var(--muted-foreground)]">Width</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min={0}
-                      max={5}
-                      step={0.5}
-                      value={textStrokeWidth}
-                      onChange={(e) => setTextStrokeWidth(Number(e.target.value))}
-                      className="flex-1 accent-[var(--primary)]"
-                    />
-                    <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-10 text-right">
-                      {textStrokeWidth}px
-                    </span>
-                  </div>
-                </label>
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="color"
-                      value={draftStrokeColor}
-                      onChange={(e) => {
-                        setDraftStrokeColor(e.target.value);
-                        setTextStrokeColor(e.target.value);
-                      }}
-                      className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
-                    />
-                  </div>
+              <ColorPicker
+                value={textStrokeColor || "#000000"}
+                onChange={(value) => setTextStrokeColor(value || "#000000")}
+                compact
+                label="Text Outline Color"
+                helpText="Controls the outline color used when text stroke width is above 0."
+                clearLabel="Reset to default"
+                clearValue="#000000"
+              />
+              <label className="flex flex-col gap-1">
+                <span className="text-[0.625rem] text-[var(--muted-foreground)]">Width</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={0}
+                    max={5}
+                    step={0.5}
+                    value={textStrokeWidth}
+                    onChange={(e) => setTextStrokeWidth(Number(e.target.value))}
+                    className="flex-1 accent-[var(--primary)]"
+                  />
+                  <span className="w-10 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
+                    {textStrokeWidth}px
+                  </span>
                 </div>
-              </div>
+              </label>
               <button
                 onClick={() => {
                   setTextStrokeWidth(0.5);
                   setTextStrokeColor("#000000");
-                  setDraftStrokeColor("#000000");
                 }}
                 className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
               >
@@ -3419,7 +3422,7 @@ function ThemesSettings() {
             <code className="rounded bg-[var(--secondary)] px-1">--primary</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--marinara-chat-chrome-accent</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--marinara-chat-chrome-accent-gradient</code>,{" "}
-            <code className="rounded bg-[var(--secondary)] px-1">--marinara-chat-chrome-button-bg</code>) or add custom
+            <code className="rounded bg-[var(--secondary)] px-1">--marinara-chat-chrome-surface-bg</code>) or add custom
             styles. JSON themes should have{" "}
             <code className="rounded bg-[var(--secondary)] px-1">{`{ "name": "...", "css": "..." }`}</code> format.
             Imported theme files sync to this Marinara server but do not auto-activate.
@@ -3460,22 +3463,31 @@ const CSS_TEMPLATE = `/* ══════════════════�
   /* ── Shared Chat / Roleplay / Game Chrome ── */
   /* --marinara-chat-chrome-accent: var(--foreground); */
   /* --marinara-chat-chrome-accent-gradient: linear-gradient(90deg, var(--marinara-chat-chrome-accent), var(--marinara-chat-chrome-accent)); */
-  /* --marinara-chat-chrome-button-bg: color-mix(in srgb, var(--card) 82%, transparent); */
-  /* --marinara-chat-chrome-button-bg-hover: color-mix(in srgb, var(--card) 94%, var(--foreground) 6%); */
-  /* --marinara-chat-chrome-button-bg-active: color-mix(in srgb, var(--card) 92%, var(--foreground) 8%); */
+  /* --marinara-chat-chrome-text: var(--foreground); */
+  /* --marinara-chat-chrome-button-text-base: var(--marinara-chat-chrome-accent); */
+  /* --marinara-chat-chrome-highlight-text-base: var(--marinara-chat-chrome-accent); */
+  /* --marinara-chat-chrome-surface-bg: var(--card); */
+  /* --marinara-chat-chrome-surface-bg-hover: color-mix(in srgb, var(--marinara-chat-chrome-surface-bg) 92%, var(--foreground) 8%); */
+  /* --marinara-chat-chrome-surface-bg-active: color-mix(in srgb, var(--marinara-chat-chrome-surface-bg) 88%, var(--foreground) 12%); */
+  /* --marinara-chat-chrome-button-bg: var(--marinara-chat-chrome-surface-bg); */
+  /* --marinara-chat-chrome-button-bg-hover: color-mix(in srgb, var(--marinara-chat-chrome-surface-bg-hover) 90%, var(--marinara-chat-chrome-accent) 10%); */
+  /* --marinara-chat-chrome-button-bg-active: color-mix(in srgb, var(--marinara-chat-chrome-surface-bg-active) 84%, var(--marinara-chat-chrome-accent) 16%); */
   /* --marinara-chat-chrome-button-border: color-mix(in srgb, var(--marinara-chat-chrome-accent) 12%, transparent); */
   /* --marinara-chat-chrome-button-border-hover: color-mix(in srgb, var(--marinara-chat-chrome-accent) 20%, transparent); */
   /* --marinara-chat-chrome-button-border-active: color-mix(in srgb, var(--marinara-chat-chrome-accent) 24%, transparent); */
-  /* --marinara-chat-chrome-button-text: color-mix(in srgb, var(--marinara-chat-chrome-accent) 64%, transparent); */
-  /* --marinara-chat-chrome-button-text-hover: color-mix(in srgb, var(--marinara-chat-chrome-accent) 92%, transparent); */
-  /* --marinara-chat-chrome-button-text-active: color-mix(in srgb, var(--marinara-chat-chrome-accent) 96%, transparent); */
-  /* --marinara-chat-chrome-panel-bg: color-mix(in srgb, var(--background) 88%, var(--card) 12%); */
+  /* --marinara-chat-chrome-button-text: color-mix(in srgb, var(--marinara-chat-chrome-button-text-base) 64%, transparent); */
+  /* --marinara-chat-chrome-button-text-hover: color-mix(in srgb, var(--marinara-chat-chrome-button-text-base) 92%, transparent); */
+  /* --marinara-chat-chrome-button-text-active: color-mix(in srgb, var(--marinara-chat-chrome-button-text-base) 96%, transparent); */
+  /* --marinara-chat-chrome-panel-bg: var(--marinara-chat-chrome-button-bg); */
   /* --marinara-chat-chrome-panel-border: color-mix(in srgb, var(--marinara-chat-chrome-accent) 16%, transparent); */
   /* --marinara-chat-chrome-panel-divider: color-mix(in srgb, var(--marinara-chat-chrome-accent) 13%, transparent); */
-  /* --marinara-chat-chrome-panel-text: color-mix(in srgb, var(--foreground) 90%, transparent); */
-  /* --marinara-chat-chrome-panel-muted: color-mix(in srgb, var(--foreground) 58%, transparent); */
+  /* --marinara-chat-chrome-panel-text: color-mix(in srgb, var(--marinara-chat-chrome-text) 90%, transparent); */
+  /* --marinara-chat-chrome-panel-title: color-mix(in srgb, var(--marinara-chat-chrome-text) 96%, transparent); */
+  /* --marinara-chat-chrome-panel-muted: color-mix(in srgb, var(--marinara-chat-chrome-text) 58%, transparent); */
   /* --marinara-chat-chrome-highlight-bg: color-mix(in srgb, var(--marinara-chat-chrome-accent) 9%, transparent); */
   /* --marinara-chat-chrome-highlight-bg-hover: color-mix(in srgb, var(--marinara-chat-chrome-accent) 13%, transparent); */
+  /* --marinara-chat-chrome-highlight-text: color-mix(in srgb, var(--marinara-chat-chrome-highlight-text-base) 94%, transparent); */
+  /* --marinara-chat-chrome-input-bg: var(--marinara-chat-chrome-surface-bg); */
 }
 
 /* Uncomment and edit the variables above.

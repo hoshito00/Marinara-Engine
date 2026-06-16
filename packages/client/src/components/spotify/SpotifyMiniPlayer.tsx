@@ -136,8 +136,9 @@ const spotifyKeys = {
 
 const SPOTIFY_GREEN_CLASS = "text-[oklch(0.72_0.18_145)]";
 const SPOTIFY_GREEN_BG_CLASS = "bg-[oklch(0.72_0.18_145)]";
+const MUSIC_PLAYER_SHELL_BORDER_CLASS = "border-[var(--marinara-music-player-shell-border)]";
+const MUSIC_PLAYER_SHELL_BG_CLASS = "bg-[var(--marinara-music-player-shell-bg)]";
 const MUSIC_PLAYER_BORDER_CLASS = "border-[var(--marinara-chat-chrome-panel-border)]";
-const MUSIC_PLAYER_BG_CLASS = "bg-[var(--marinara-chat-chrome-panel-bg)]";
 const MUSIC_PLAYER_BUTTON_BG_CLASS = "bg-[var(--marinara-chat-chrome-button-bg)]";
 const MUSIC_PLAYER_TILE_BG_CLASS = "bg-[var(--marinara-chat-chrome-highlight-bg)]";
 const MUSIC_PLAYER_TILE_RING_CLASS = "ring-[var(--marinara-chat-chrome-panel-border)]";
@@ -1023,8 +1024,8 @@ export function SpotifyMiniPlayer({
           <div
             className={cn(
               "flex h-12 w-12 items-center justify-center rounded-full border shadow-lg backdrop-blur-xl",
-              MUSIC_PLAYER_BORDER_CLASS,
-              MUSIC_PLAYER_BG_CLASS,
+              MUSIC_PLAYER_SHELL_BORDER_CLASS,
+              MUSIC_PLAYER_SHELL_BG_CLASS,
               SPOTIFY_GREEN_CLASS,
             )}
           >
@@ -1034,8 +1035,8 @@ export function SpotifyMiniPlayer({
           <div
             className={cn(
               "rounded-xl border p-2 shadow-2xl backdrop-blur-xl",
-              MUSIC_PLAYER_BORDER_CLASS,
-              MUSIC_PLAYER_BG_CLASS,
+              MUSIC_PLAYER_SHELL_BORDER_CLASS,
+              MUSIC_PLAYER_SHELL_BG_CLASS,
             )}
             style={mobileExpandedPanelStyle}
           >
@@ -1072,8 +1073,8 @@ export function SpotifyMiniPlayer({
     <div
       className={cn(
         "relative hidden h-10 min-w-0 max-w-[31rem] flex-1 items-center gap-2 overflow-hidden rounded-full border px-2.5 md:flex",
-        MUSIC_PLAYER_BORDER_CLASS,
-        MUSIC_PLAYER_BG_CLASS,
+        MUSIC_PLAYER_SHELL_BORDER_CLASS,
+        MUSIC_PLAYER_SHELL_BG_CLASS,
       )}
     >
       {compactBody}

@@ -20,7 +20,12 @@ import { ConversationInput } from "./ConversationInput";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
-import { ChatToolbarButton, ChatToolbarMenu, getChatToolbarButtonClass } from "./ChatToolbarControls";
+import {
+  CHAT_TOOLBAR_IDENTITY_PILL_SIZE_CLASS,
+  ChatToolbarButton,
+  ChatToolbarMenu,
+  getChatToolbarButtonClass,
+} from "./ChatToolbarControls";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
@@ -889,13 +894,14 @@ export function ConversationView({
             };
             const identityPillClass = getChatToolbarButtonClass({
               compact: true,
+              sizeClassName: CHAT_TOOLBAR_IDENTITY_PILL_SIZE_CLASS,
               className:
-                "w-auto min-w-0 max-w-[min(20rem,calc(100vw-8rem))] justify-start gap-2 px-2.5 text-[var(--foreground)]/80 hover:text-[var(--foreground)]/90",
+                "min-w-0 max-w-[min(20rem,calc(100vw-8rem))] justify-start gap-2 px-2.5 text-[var(--foreground)]/80 hover:text-[var(--foreground)]/90 max-md:max-w-[calc(100vw-5.75rem)]",
             });
             const avatarShellClass =
-              "relative block h-5 w-5 overflow-hidden rounded-full ring-1 ring-[var(--border)]/80";
+              "relative block h-5 w-5 overflow-hidden rounded-full ring-1 ring-[var(--border)]/80 max-md:h-6 max-md:w-6";
             const avatarFallbackClass =
-              "flex h-5 w-5 items-center justify-center rounded-full bg-[var(--foreground)]/10 text-[0.5rem] font-bold text-[var(--foreground)]/70 ring-1 ring-[var(--border)]/80";
+              "flex h-5 w-5 items-center justify-center rounded-full bg-[var(--foreground)]/10 text-[0.5rem] font-bold text-[var(--foreground)]/70 ring-1 ring-[var(--border)]/80 max-md:h-6 max-md:w-6 max-md:text-[0.5625rem]";
 
             if (chars.length === 1) {
               const c = chars[0]!;
@@ -974,7 +980,11 @@ export function ConversationView({
             );
           })()}
 
-          <ChatToolbarMenu desktopChildren={renderToolbarActions()} mobileChildren={renderToolbarActions(true)} />
+          <ChatToolbarMenu
+            className="flex-1"
+            desktopChildren={renderToolbarActions()}
+            mobileChildren={renderToolbarActions(true)}
+          />
         </div>
 
         {/* Load More */}

@@ -44,7 +44,12 @@ import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { CyoaChoices } from "./CyoaChoices";
 import { ChatBranchSelector } from "./ChatBranchSelector";
-import { ChatToolbarButton, ChatToolbarMenu, getChatToolbarButtonClass } from "./ChatToolbarControls";
+import {
+  CHAT_TOOLBAR_ICON_GAP_CLASS,
+  ChatToolbarButton,
+  ChatToolbarMenu,
+  getChatToolbarButtonClass,
+} from "./ChatToolbarControls";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { EndSceneBar } from "./SceneBanner";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
@@ -100,16 +105,33 @@ const AuthorNotesPanel = lazy(async () => {
   return { default: module.AuthorNotesPanel };
 });
 
-const PANEL_BACKDROP =
-  "fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]";
 const TRACKER_FOREGROUND_AVOIDANCE_CLASS =
   "md:pl-[var(--tracker-chat-avoid-left)] md:pr-[var(--tracker-chat-avoid-right)] md:transition-[padding] md:duration-200 md:ease-[cubic-bezier(0.16,1,0.3,1)]";
-const PANEL_CONTAINER = cn(
-  ROLEPLAY_POPOVER_SHELL,
-  ROLEPLAY_POPOVER_SCROLL_AREA,
-  "relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto p-3",
-);
 const roleplayNotificationSeenKeys = new Set<string>();
+const MOBILE_FLOATING_PANEL_PADDING = 8;
+
+type MobileFloatingPanelFrame = {
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
+};
+
+function getMobileFloatingPanelFrame(
+  button: HTMLElement | null,
+  preferredWidth: number,
+): MobileFloatingPanelFrame | null {
+  if (!button || typeof window === "undefined") return null;
+  const rect = button.getBoundingClientRect();
+  const width = Math.min(preferredWidth, window.innerWidth - MOBILE_FLOATING_PANEL_PADDING * 2);
+  const left = Math.max(
+    MOBILE_FLOATING_PANEL_PADDING,
+    Math.min(rect.right - width, window.innerWidth - width - MOBILE_FLOATING_PANEL_PADDING),
+  );
+  const top = Math.max(MOBILE_FLOATING_PANEL_PADDING, rect.bottom);
+  const maxHeight = Math.max(160, window.innerHeight - top - MOBILE_FLOATING_PANEL_PADDING);
+  return { top, left, width, maxHeight };
+}
 
 function WeatherEffectsConnected() {
   const gs = useGameStateStore((s) => s.current);
@@ -306,6 +328,10 @@ function ActiveContextLinksButton({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [mobileFrame, setMobileFrame] = useState<MobileFloatingPanelFrame | null>(null);
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
   const compact = useUIStore((s) => s.centerCompact);
   const { data: lorebooks } = useLorebooks();
   const { data: presets } = usePresets();
@@ -317,11 +343,25 @@ function ActiveContextLinksButton({
   useEffect(() => {
     if (!open) return;
     const handle = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (ref.current?.contains(target) || panelRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", handle);
     return () => document.removeEventListener("mousedown", handle);
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !isMobile) return;
+    const update = () => setMobileFrame(getMobileFloatingPanelFrame(buttonRef.current, 288));
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [isMobile, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -389,10 +429,88 @@ function ActiveContextLinksButton({
   const iconClassName = "shrink-0 text-[var(--marinara-chat-chrome-panel-muted)]";
   const entryClassName =
     "flex min-w-0 items-center gap-1.5 rounded-md bg-[var(--marinara-chat-chrome-highlight-bg)] px-2 py-1 text-[0.625rem] text-[var(--marinara-chat-chrome-panel-muted)] ring-1 ring-[var(--marinara-chat-chrome-panel-divider)]";
+  const activeContextContent = (
+    <>
+      <div className={cn(ROLEPLAY_POPOVER_TITLE, "px-2 pb-1")}>
+        <BookOpen size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+        Active Context
+      </div>
+      <div className="space-y-1">
+        {characterIds.map((id, index) => (
+          <button
+            key={id}
+            type="button"
+            role="menuitem"
+            className={itemClassName}
+            onClick={() => openCharacter(id)}
+          >
+            <User size="0.8125rem" className={iconClassName} />
+            <span className="min-w-0 flex-1 truncate">
+              {characterMap.get(id)?.name ?? `Character ${index + 1}`}
+            </span>
+            <span className="shrink-0 text-[0.625rem] text-foreground/45">Card</span>
+          </button>
+        ))}
+        {visibleLorebookIds.map((id, index) => {
+          const entries = triggeredEntriesByLorebook.get(id) ?? [];
+          const skippedEntries = skippedEntriesByLorebook.get(id) ?? [];
+          return (
+            <div key={id} className="space-y-1">
+              <button type="button" role="menuitem" className={itemClassName} onClick={() => openLorebook(id)}>
+                <BookOpen size="0.8125rem" className={iconClassName} />
+                <span className="min-w-0 flex-1 truncate">
+                  {lorebookNameById.get(id) ?? `Lorebook ${index + 1}`}
+                </span>
+                <span className="shrink-0 text-[0.625rem] text-foreground/45">
+                  {entries.length > 0 ? `${entries.length} hit${entries.length === 1 ? "" : "s"}` : "Lorebook"}
+                </span>
+              </button>
+              {entries.length > 0 && (
+                <div className="ml-6 space-y-1 border-l border-foreground/10 pl-2">
+                  {entries.map((entry) => (
+                    <div key={entry.id} className={entryClassName} title={entry.content || entry.name}>
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+                      <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                      {entry.constant && (
+                        <span className="shrink-0 rounded bg-amber-400/15 px-1 py-0.5 text-[0.5rem] font-semibold text-amber-300">
+                          CONST
+                        </span>
+                      )}
+                      <span className="shrink-0 text-foreground/40">#{entry.order}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {skippedEntries.length > 0 && (
+                <div className="ml-6 rounded-md bg-amber-500/10 px-2 py-1 text-[0.625rem] leading-relaxed text-amber-100/80 ring-1 ring-amber-500/20">
+                  {skippedEntries.length} matching {skippedEntries.length === 1 ? "entry was" : "entries were"} skipped
+                  by token budget.
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {activeLorebookScanLoading && visibleLorebookIds.length > 0 && (
+          <div className="flex items-center gap-2 px-2 py-1.5 text-[0.625rem] text-foreground/50">
+            <Loader2 size="0.6875rem" className="animate-spin" />
+            Scanning active lorebook entries...
+          </div>
+        )}
+        {promptPresetId && (
+          <button type="button" role="menuitem" className={itemClassName} onClick={() => openPreset(promptPresetId)}>
+            <FileText size="0.8125rem" className={iconClassName} />
+            <span className="min-w-0 flex-1 truncate">{presetName ?? "Prompt preset"}</span>
+            <span className="shrink-0 text-[0.625rem] text-foreground/45">Preset</span>
+          </button>
+        )}
+      </div>
+    </>
+  );
 
   return (
     <div className="relative" ref={ref} onClick={(event) => event.stopPropagation()}>
       <button
+        ref={buttonRef}
         onClick={() => setOpen((prev) => !prev)}
         className={getChatToolbarButtonClass({ compact, open })}
         title="Active Context"
@@ -402,95 +520,45 @@ function ActiveContextLinksButton({
       >
         <BookOpen size="0.875rem" />
       </button>
-      {open && (
-        <div
-          role="menu"
-          className={cn(
-            ROLEPLAY_POPOVER_SHELL,
-            ROLEPLAY_POPOVER_SCROLL_AREA,
-            "absolute right-0 top-full z-50 mt-2 max-h-[min(32rem,calc(100vh-6rem))] w-72 overflow-y-auto p-2",
-          )}
-        >
-          <div className={cn(ROLEPLAY_POPOVER_TITLE, "px-2 pb-1")}>
-            <BookOpen size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
-            Active Context
-          </div>
-          <div className="space-y-1">
-            {characterIds.map((id, index) => (
-              <button
-                key={id}
-                type="button"
-                role="menuitem"
-                className={itemClassName}
-                onClick={() => openCharacter(id)}
+      {open &&
+        (isMobile
+          ? createPortal(
+              <div
+                ref={panelRef}
+                role="menu"
+                className={cn(
+                  ROLEPLAY_POPOVER_SHELL,
+                  ROLEPLAY_POPOVER_SCROLL_AREA,
+                  "fixed z-[9999] overflow-y-auto p-2",
+                )}
+                style={
+                  mobileFrame
+                    ? {
+                        top: mobileFrame.top,
+                        left: mobileFrame.left,
+                        width: mobileFrame.width,
+                        maxHeight: mobileFrame.maxHeight,
+                      }
+                    : undefined
+                }
               >
-                <User size="0.8125rem" className={iconClassName} />
-                <span className="min-w-0 flex-1 truncate">
-                  {characterMap.get(id)?.name ?? `Character ${index + 1}`}
-                </span>
-                <span className="shrink-0 text-[0.625rem] text-foreground/45">Card</span>
-              </button>
-            ))}
-            {visibleLorebookIds.map((id, index) => {
-              const entries = triggeredEntriesByLorebook.get(id) ?? [];
-              const skippedEntries = skippedEntriesByLorebook.get(id) ?? [];
-              return (
-                <div key={id} className="space-y-1">
-                  <button type="button" role="menuitem" className={itemClassName} onClick={() => openLorebook(id)}>
-                    <BookOpen size="0.8125rem" className={iconClassName} />
-                    <span className="min-w-0 flex-1 truncate">
-                      {lorebookNameById.get(id) ?? `Lorebook ${index + 1}`}
-                    </span>
-                    <span className="shrink-0 text-[0.625rem] text-foreground/45">
-                      {entries.length > 0 ? `${entries.length} hit${entries.length === 1 ? "" : "s"}` : "Lorebook"}
-                    </span>
-                  </button>
-                  {entries.length > 0 && (
-                    <div className="ml-6 space-y-1 border-l border-foreground/10 pl-2">
-                      {entries.map((entry) => (
-                        <div key={entry.id} className={entryClassName} title={entry.content || entry.name}>
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
-                          <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                          {entry.constant && (
-                            <span className="shrink-0 rounded bg-amber-400/15 px-1 py-0.5 text-[0.5rem] font-semibold text-amber-300">
-                              CONST
-                            </span>
-                          )}
-                          <span className="shrink-0 text-foreground/40">#{entry.order}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {skippedEntries.length > 0 && (
-                    <div className="ml-6 rounded-md bg-amber-500/10 px-2 py-1 text-[0.625rem] leading-relaxed text-amber-100/80 ring-1 ring-amber-500/20">
-                      {skippedEntries.length} matching {skippedEntries.length === 1 ? "entry was" : "entries were"}{" "}
-                      skipped by token budget.
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {activeLorebookScanLoading && visibleLorebookIds.length > 0 && (
-              <div className="flex items-center gap-2 px-2 py-1.5 text-[0.625rem] text-foreground/50">
-                <Loader2 size="0.6875rem" className="animate-spin" />
-                Scanning active lorebook entries...
+                {activeContextContent}
+              </div>,
+              document.body,
+            )
+          : (
+              <div
+                ref={panelRef}
+                role="menu"
+                className={cn(
+                  ROLEPLAY_POPOVER_SHELL,
+                  ROLEPLAY_POPOVER_SCROLL_AREA,
+                  "absolute right-0 top-full z-50 mt-2 max-h-[min(32rem,calc(100vh-6rem))] w-72 overflow-y-auto p-2",
+                )}
+              >
+                {activeContextContent}
               </div>
-            )}
-            {promptPresetId && (
-              <button
-                type="button"
-                role="menuitem"
-                className={itemClassName}
-                onClick={() => openPreset(promptPresetId)}
-              >
-                <FileText size="0.8125rem" className={iconClassName} />
-                <span className="min-w-0 flex-1 truncate">{presetName ?? "Prompt preset"}</span>
-                <span className="shrink-0 text-[0.625rem] text-foreground/45">Preset</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+          ))}
     </div>
   );
 }
@@ -521,14 +589,51 @@ function SummaryButton({
   totalMessageCount: number;
 }) {
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [anchor, setAnchor] = useState<ComponentProps<typeof SummaryPopover>["anchor"]>(null);
   const compact = useUIStore((s) => s.centerCompact);
+
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) return;
+    const update = () => {
+      if (!buttonRef.current) return;
+      const rect = buttonRef.current.getBoundingClientRect();
+      setAnchor({
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        left: rect.left,
+        width: rect.width,
+      });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open]);
 
   if (!chatId) return null;
 
   return (
     <div className="relative" onClick={(e) => e.stopPropagation()}>
       <button
-        onClick={() => setOpen(!open)}
+        ref={buttonRef}
+        onClick={() => {
+          const rect = buttonRef.current?.getBoundingClientRect();
+          if (rect) {
+            setAnchor({
+              top: rect.top,
+              right: rect.right,
+              bottom: rect.bottom,
+              left: rect.left,
+              width: rect.width,
+            });
+          }
+          setOpen(!open);
+        }}
         className={getChatToolbarButtonClass({ active: !!summary, compact, open })}
         title="Chat Summary"
       >
@@ -548,6 +653,7 @@ function SummaryButton({
             summaryRunInterval={summaryRunInterval}
             automaticSummariesAvailable={automaticSummariesAvailable}
             totalMessageCount={totalMessageCount}
+            anchor={anchor}
             onClose={() => setOpen(false)}
           />
         </Suspense>
@@ -559,17 +665,34 @@ function SummaryButton({
 function AuthorNotesButton({ chatId, chatMeta }: { chatId: string | null; chatMeta: Record<string, any> }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [mobileFrame, setMobileFrame] = useState<MobileFloatingPanelFrame | null>(null);
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
   const compact = useUIStore((s) => s.centerCompact);
 
   useEffect(() => {
-    if (!open || isMobile) return;
+    if (!open) return;
     const handle = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (ref.current?.contains(target) || panelRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", handle);
     return () => document.removeEventListener("mousedown", handle);
-  }, [open, isMobile]);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !isMobile) return;
+    const update = () => setMobileFrame(getMobileFloatingPanelFrame(buttonRef.current, 288));
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [isMobile, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -587,6 +710,7 @@ function AuthorNotesButton({ chatId, chatMeta }: { chatId: string | null; chatMe
   return (
     <div className="relative" ref={ref} onClick={(e) => e.stopPropagation()}>
       <button
+        ref={buttonRef}
         onClick={() => setOpen(!open)}
         className={getChatToolbarButtonClass({ active: hasNotes, compact, open })}
         title="Author's Notes"
@@ -597,33 +721,45 @@ function AuthorNotesButton({ chatId, chatMeta }: { chatId: string | null; chatMe
         (isMobile ? (
           createPortal(
             <div
-              className={PANEL_BACKDROP}
+              ref={panelRef}
+              className={cn(
+                ROLEPLAY_POPOVER_SHELL,
+                ROLEPLAY_POPOVER_SCROLL_AREA,
+                "fixed z-[9999] overflow-y-auto p-3",
+              )}
+              style={
+                mobileFrame
+                  ? {
+                      top: mobileFrame.top,
+                      left: mobileFrame.left,
+                      width: mobileFrame.width,
+                      maxHeight: mobileFrame.maxHeight,
+                    }
+                  : undefined
+              }
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             >
-              <div className="absolute inset-0 bg-black/30" onClick={() => setOpen(false)} />
-              <div className={PANEL_CONTAINER} onClick={(e) => e.stopPropagation()}>
-                <Suspense
-                  fallback={
-                    <div className="flex items-center gap-2 py-4 text-xs text-[var(--muted-foreground)]">
-                      <Loader2 size="0.75rem" className="animate-spin" />
-                      Loading author's notes...
-                    </div>
-                  }
-                >
-                  <AuthorNotesPanel
-                    chatId={chatId}
-                    chatMeta={chatMeta}
-                    isMobile={isMobile}
-                    onClose={() => setOpen(false)}
-                  />
-                </Suspense>
-              </div>
+              <Suspense
+                fallback={
+                  <div className="flex items-center gap-2 py-4 text-xs text-[var(--muted-foreground)]">
+                    <Loader2 size="0.75rem" className="animate-spin" />
+                    Loading author's notes...
+                  </div>
+                }
+              >
+                <AuthorNotesPanel
+                  chatId={chatId}
+                  chatMeta={chatMeta}
+                  isMobile={isMobile}
+                  onClose={() => setOpen(false)}
+                />
+              </Suspense>
             </div>,
             document.body,
           )
         ) : (
-          <div className={cn(ROLEPLAY_POPOVER_SHELL, "absolute right-0 top-full z-50 mt-2 w-72 p-3")}>
+          <div ref={panelRef} className={cn(ROLEPLAY_POPOVER_SHELL, "absolute right-0 top-full z-50 mt-2 w-72 p-3")}>
             <Suspense
               fallback={
                 <div className="flex items-center gap-2 py-4 text-xs text-[var(--muted-foreground)]">
@@ -1060,7 +1196,12 @@ export function ChatRoleplaySurface({
                     </Suspense>
                   </div>
                 )}
-                <div className="pointer-events-auto ml-auto flex shrink-0 items-center gap-1.5">
+                <div
+                  className={cn(
+                    "pointer-events-auto ml-auto flex shrink-0 items-center",
+                    CHAT_TOOLBAR_ICON_GAP_CLASS,
+                  )}
+                >
                   <ChatBranchSelector
                     activeChatId={activeChatId}
                     activeChatName={chat?.name}
@@ -1121,28 +1262,30 @@ export function ChatRoleplaySurface({
               >
                 {chat && chatMeta.enableAgents && (
                   <div
-                    className="flex min-w-0 w-full items-center gap-1.5 overflow-x-auto pb-1 pt-2"
+                    className="flex w-full min-w-0 items-start justify-between gap-1.5 pb-1 pt-2"
                     style={{
                       paddingLeft: "calc(0.5rem + var(--tracker-panel-hud-clear-left, 0px))",
                       paddingRight: "calc(0.5rem + var(--tracker-panel-hud-clear-right, 0px))",
                     }}
                   >
-                    <Suspense fallback={null}>
-                      <RoleplayHUD
-                        chatId={chat.id}
-                        characterCount={chatCharIds.length}
-                        layout="top"
-                        isStreaming={isStreaming}
-                        onRetriggerTrackers={onRerunTrackers}
-                        onRetryFailedAgents={onRetryFailedAgents}
-                        onRerunSingleTracker={onRerunSingleTracker}
-                        enabledAgentTypes={enabledAgentTypes}
-                        manualTrackers={!!chatMeta.manualTrackers}
-                        mobileCompact
-                        injectionSourceMessages={messages}
-                      />
-                    </Suspense>
-                    <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="min-w-0 flex-1 overflow-x-auto">
+                      <Suspense fallback={null}>
+                        <RoleplayHUD
+                          chatId={chat.id}
+                          characterCount={chatCharIds.length}
+                          layout="top"
+                          isStreaming={isStreaming}
+                          onRetriggerTrackers={onRerunTrackers}
+                          onRetryFailedAgents={onRetryFailedAgents}
+                          onRerunSingleTracker={onRerunSingleTracker}
+                          enabledAgentTypes={enabledAgentTypes}
+                          manualTrackers={!!chatMeta.manualTrackers}
+                          mobileCompact
+                          injectionSourceMessages={messages}
+                        />
+                      </Suspense>
+                    </div>
+                    <div className={cn("ml-auto flex shrink-0 items-center", CHAT_TOOLBAR_ICON_GAP_CLASS)}>
                       <ChatToolbarMenu>
                         <ChatBranchSelector
                           activeChatId={activeChatId}
@@ -1199,7 +1342,12 @@ export function ChatRoleplaySurface({
                   </div>
                 )}
                 {chat && !chatMeta.enableAgents && (
-                  <div className="flex w-full items-center justify-end gap-1.5 px-2 pb-1 pt-2">
+                  <div
+                    className={cn(
+                      "flex w-full items-center justify-end px-2 pb-1 pt-2",
+                      CHAT_TOOLBAR_ICON_GAP_CLASS,
+                    )}
+                  >
                     <ChatToolbarMenu>
                       <ChatBranchSelector
                         activeChatId={activeChatId}
@@ -1267,7 +1415,7 @@ export function ChatRoleplaySurface({
                 data-chat-scroll
                 className={cn(
                   "rpg-chat-messages-mobile mari-messages-scroll relative h-full overflow-y-auto overflow-x-hidden",
-                  centerCompact ? "px-3" : "px-3 md:px-[15%]",
+                  centerCompact ? "px-3" : "px-3 md:px-8 lg:px-10 xl:px-12",
                 )}
                 style={{
                   paddingTop: Math.max(16, chromeHeights.top + 12),

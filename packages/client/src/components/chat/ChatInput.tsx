@@ -46,6 +46,7 @@ import { QuickPersonaSwitcher } from "./QuickPersonaSwitcher";
 import { QuickSwitcherMobile } from "./QuickSwitcherMobile";
 import { SlashCommandFeedback } from "./SlashCommandFeedback";
 import { QuickReplyMenu, type QuickReplyAction } from "./QuickReplyMenu";
+import { getChatInputShellClass } from "./chat-input-styles";
 
 interface Attachment {
   type: string; // MIME type
@@ -1358,15 +1359,11 @@ export const ChatInput = memo(function ChatInput({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={cn(
-          "mari-chat-input-box relative flex items-center gap-1 rounded-2xl border px-2 py-1.5 shadow-sm transition-all duration-200 focus-within:border-foreground/35 focus-within:ring-1 focus-within:ring-foreground/10 sm:gap-2 sm:px-4 sm:py-2.5",
-          "border-foreground/20 bg-[var(--card)]",
-          isDragging
-            ? "border-foreground/40 bg-foreground/10 shadow-lg shadow-black/10"
-            : hasInput || attachments.length
-              ? "shadow-md shadow-black/5"
-              : "",
-        )}
+        className={getChatInputShellClass({
+          dragging: isDragging,
+          hasContent: hasInput || attachments.length > 0,
+          layout: "roleplay",
+        })}
       >
         {/* Attachment button */}
         <input

@@ -315,6 +315,20 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
     };
   }, [echoChamberOpen, echoChamberSide]);
 
+  useEffect(() => {
+    if (!echoChamberOpen || !echoEnabled || (isMobile && hiddenOnMobile)) return;
+
+    let frame = window.requestAnimationFrame(() => {
+      frame = window.requestAnimationFrame(() => {
+        const scrollEl = scrollRef.current;
+        if (!scrollEl) return;
+        scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: "auto" });
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [echoChamberOpen, echoEnabled, hiddenOnMobile, isMobile]);
+
   if (!echoChamberOpen || !echoEnabled || (isMobile && hiddenOnMobile)) return null;
   const visibleMessages = echoMessages.slice(0, visibleCount);
 
@@ -323,7 +337,7 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
       className={cn(
         ROLEPLAY_POPOVER_SHELL,
         "absolute z-[60] flex flex-col",
-        "pointer-events-auto w-60 max-md:w-auto md:max-h-[22rem] max-md:max-h-28",
+        "pointer-events-auto w-[14.75rem] max-md:w-auto md:max-h-[22rem] max-md:max-h-28",
       )}
       style={posStyle}
     >

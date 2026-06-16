@@ -72,6 +72,15 @@ function getNextUnnamedFolderName(folders: Array<{ name: string }>) {
   return `unnamed ${index}`;
 }
 
+function parseDroppedCharacterIds(payload: string): unknown {
+  if (!payload) return undefined;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+}
+
 function getCharacterTags(char: ParsedCharacterRow): string[] {
   return Array.isArray(char.parsed.tags) ? (char.parsed.tags as string[]).filter(Boolean) : [];
 }
@@ -201,6 +210,11 @@ export function CharactersPanel() {
     }
     return map;
   }, [parsedCharacters]);
+
+  const parsedCharacterMap = useMemo(
+    () => new Map(parsedCharacters.map((character) => [character.id, character])),
+    [parsedCharacters],
+  );
 
   const filteredCharacters = useMemo(() => {
     let list = parsedCharacters;
@@ -492,15 +506,6 @@ export function CharactersPanel() {
     [editGroupName, updateGroup],
   );
 
-  const toggleGroupMember = useCallback(
-    (groupId: string, charId: string, currentMembers: string[]) => {
-      const isMember = currentMembers.includes(charId);
-      const newMembers = isMember ? currentMembers.filter((id) => id !== charId) : [...currentMembers, charId];
-      updateGroup.mutate({ id: groupId, characterIds: newMembers });
-    },
-    [updateGroup],
-  );
-
   const getDraggedCharacterIds = useCallback(
     (charId: string) =>
       selectionMode && selectedCharacterIds.has(charId) ? Array.from(selectedCharacterIds) : [charId],
@@ -535,9 +540,14 @@ export function CharactersPanel() {
   );
 
   const handleCharacterDrop = useCallback(
-    (folderId: string | null, charIds?: string[]) => {
-      if (!draggedCharacterId) return;
-      void moveCharactersToFolder(charIds ?? [draggedCharacterId], folderId);
+    (folderId: string | null, charIds?: unknown) => {
+      const ids = Array.isArray(charIds)
+        ? charIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+        : draggedCharacterId
+          ? [draggedCharacterId]
+          : [];
+      if (ids.length === 0) return;
+      void moveCharactersToFolder(ids, folderId);
       setDraggedCharacterId(null);
     },
     [draggedCharacterId, moveCharactersToFolder],
@@ -926,7 +936,7 @@ export function CharactersPanel() {
                 event.preventDefault();
                 event.stopPropagation();
                 const payload = event.dataTransfer.getData("application/x-marinara-character-ids");
-                handleCharacterDrop(group.id, payload ? (JSON.parse(payload) as string[]) : undefined);
+                handleCharacterDrop(group.id, parseDroppedCharacterIds(payload));
               }}
               className="flex flex-col rounded-lg transition-colors"
             >
@@ -1014,8 +1024,17 @@ export function CharactersPanel() {
                   {group.memberIds.map((memberId) => {
                     const member = charMap.get(memberId);
                     if (!member) return null;
+                    const fullMember = parsedCharacterMap.get(memberId);
                     const isBulkSelected = selectedCharacterIds.has(memberId);
-                    const memberTitle = getCharacterTitle(member);
+                    const memberName = fullMember?.parsed.name ?? member.name;
+                    const memberTitle = fullMember
+                      ? getCharacterTitle({ name: memberName, comment: fullMember.comment })
+                      : getCharacterTitle(member);
+                    const memberPreviewMetadata = fullMember ? getCharacterPreviewMetadata(fullMember) : null;
+                    const memberTags = fullMember ? getCharacterTags(fullMember) : [];
+                    const memberTokenEstimate = fullMember ? estimateCharacterCardTokens(fullMember.parsed) : null;
+                    const memberNameColor = (fullMember?.parsed.extensions?.nameColor as string) || undefined;
+                    const memberAvatarCrop = fullMember?.parsed.extensions?.avatarCrop as AvatarCropValue | undefined;
                     return (
                       <div
                         key={memberId}
@@ -1050,12 +1069,11 @@ export function CharactersPanel() {
                         onContextMenu={(e) => {
                           if (selectionMode) return;
                           e.preventDefault();
-                          const fullMember = parsedCharacters.find((c) => c.id === memberId);
                           setContextMenu({
                             x: e.clientX,
                             y: e.clientY,
                             charId: memberId,
-                            charName: member.name,
+                            charName: memberName,
                             firstMes: fullMember?.parsed?.first_mes as string | undefined,
                             altGreetings: (fullMember?.parsed?.alternate_greetings ?? []) as string[],
                           });
@@ -1091,9 +1109,10 @@ export function CharactersPanel() {
                             {member.avatarPath ? (
                               <img
                                 src={member.avatarPath}
-                                alt={member.name}
+                                alt={memberName}
                                 loading="lazy"
                                 className="h-full w-full object-cover"
+                                style={getAvatarCropStyle(memberAvatarCrop)}
                               />
                             ) : (
                               <div className="flex h-full w-full items-center justify-center">
@@ -1111,10 +1130,65 @@ export function CharactersPanel() {
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <span className="block truncate text-[0.6875rem]">{member.name}</span>
+                          <span
+                            className="block truncate text-[0.75rem] font-medium"
+                            style={
+                              memberNameColor
+                                ? memberNameColor.startsWith("linear-gradient")
+                                  ? {
+                                      background: memberNameColor,
+                                      backgroundRepeat: "no-repeat",
+                                      backgroundSize: "100% 100%",
+                                      WebkitBackgroundClip: "text",
+                                      WebkitTextFillColor: "transparent",
+                                      backgroundClip: "text",
+                                      color: "transparent",
+                                      display: "inline-block",
+                                    }
+                                  : { color: memberNameColor }
+                                : undefined
+                            }
+                          >
+                            {memberName}
+                          </span>
                           {memberTitle && (
                             <span className="block truncate text-[0.5625rem] italic text-[var(--muted-foreground)]">
                               {memberTitle}
+                            </span>
+                          )}
+                          {memberPreviewMetadata && (
+                            <span className="block truncate text-[0.5625rem] text-[var(--muted-foreground)]">
+                              {memberPreviewMetadata}
+                            </span>
+                          )}
+                          {memberTokenEstimate !== null && (
+                            <span
+                              className="flex items-center gap-1 text-[0.5625rem] text-[var(--muted-foreground)]"
+                              title="Estimated from character card text fields; actual tokenizer counts vary by model."
+                            >
+                              <Hash size="0.5rem" />
+                              {formatEstimatedTokens(memberTokenEstimate)}
+                            </span>
+                          )}
+                          {memberTags.length > 0 && (
+                            <span className="mt-0.5 flex flex-wrap gap-0.5">
+                              {memberTags.slice(0, 3).map((tag) => (
+                                <span
+                                  key={tag}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleIncludedTag(tag);
+                                  }}
+                                  className="cursor-pointer rounded-full bg-[var(--primary)]/8 px-1.5 py-px text-[0.5rem] font-medium text-[var(--primary)]/70 transition-all hover:bg-[var(--primary)]/15 hover:text-[var(--primary)]"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                              {memberTags.length > 3 && (
+                                <span className="rounded-full bg-[var(--secondary)] px-1.5 py-px text-[0.5rem] text-[var(--muted-foreground)]">
+                                  +{memberTags.length - 3}
+                                </span>
+                              )}
                             </span>
                           )}
                         </div>
@@ -1124,10 +1198,9 @@ export function CharactersPanel() {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                const fullMember = parsedCharacters.find((c) => c.id === memberId);
                                 handleStartNewChat(
                                   memberId,
-                                  member.name,
+                                  memberName,
                                   fullMember?.parsed?.first_mes as string | undefined,
                                   (fullMember?.parsed?.alternate_greetings ?? []) as string[],
                                 );
@@ -1135,14 +1208,14 @@ export function CharactersPanel() {
                               disabled={isStartingChat}
                               className="rounded p-0.5 text-[var(--muted-foreground)] opacity-0 transition-all hover:bg-[var(--primary)]/10 hover:text-[var(--primary)] group-hover/member:opacity-100 disabled:cursor-not-allowed disabled:opacity-50 max-md:opacity-100"
                               title="Start New Chat"
-                              aria-label={`Start New Chat with ${member.name}`}
+                              aria-label={`Start New Chat with ${memberName}`}
                             >
                               <MessageCircle size="0.6875rem" />
                             </button>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                toggleGroupMember(group.id, memberId, group.memberIds);
+                                void moveCharactersToFolder([memberId], null);
                               }}
                               className="rounded p-0.5 opacity-0 transition-all hover:bg-[var(--destructive)]/15 group-hover/member:opacity-100"
                               title="Remove from folder"
@@ -1199,13 +1272,18 @@ export function CharactersPanel() {
         onDrop={(event) => {
           event.preventDefault();
           const payload = event.dataTransfer.getData("application/x-marinara-character-ids");
-          handleCharacterDrop(null, payload ? (JSON.parse(payload) as string[]) : undefined);
+          handleCharacterDrop(null, parseDroppedCharacterIds(payload));
         }}
         className={cn(
           "stagger-children flex min-h-8 flex-col gap-1 rounded-xl transition-colors",
           draggedCharacterId && "ring-1 ring-[var(--primary)]/20",
         )}
       >
+        {draggedCharacterId && (
+          <div className="rounded-xl border border-dashed border-[var(--primary)]/35 bg-[var(--primary)]/5 px-3 py-2 text-[0.625rem] text-[var(--primary)]">
+            Drop here to move out of folder
+          </div>
+        )}
         {visibleRootCharacters.map((char) => {
           const charName = char.parsed.name ?? "Unnamed";
           const charTitle = getCharacterTitle({ name: charName, comment: char.comment });

@@ -37,7 +37,11 @@ import {
 import { TrackerLockProvider } from "../../features/tracker-panel/components/TrackerLockContext";
 import { useTrackerFieldLockUpdater } from "../../features/tracker-panel/hooks/use-tracker-field-lock-updater";
 import { ROLEPLAY_POPOVER_SCROLL_AREA, ROLEPLAY_POPOVER_SHELL } from "./roleplay-popover-styles";
-import { getChatToolbarButtonClass } from "./ChatToolbarControls";
+import {
+  CHAT_TOOLBAR_ICON_GAP_CLASS,
+  CHAT_TOOLBAR_MOBILE_OVERFLOW_HEIGHT_CLASS,
+  getChatToolbarButtonClass,
+} from "./ChatToolbarControls";
 import type {
   GameState,
   PresentCharacter,
@@ -275,195 +279,199 @@ export function RoleplayHUD({
       <div
         className={cn(
           "rpg-hud",
-          isVertical ? "flex flex-col items-center gap-1.5" : "flex items-center gap-1.5",
-          mobileCompact && "flex-1 min-w-0",
+          isVertical ? "flex flex-col items-center" : "flex items-center",
+          CHAT_TOOLBAR_ICON_GAP_CLASS,
+          mobileCompact && "min-w-0",
         )}
       >
-      {trackerPanelEnabled && !trackerPanelOpen && <TrackerPanelToggleButton onToggle={toggleTrackerPanel} />}
+        {trackerPanelEnabled && !trackerPanelOpen && <TrackerPanelToggleButton onToggle={toggleTrackerPanel} />}
 
-      {/* Actions (Agents + Clear) */}
-      <ActionsGroup
-        chatId={chatId}
-        injectionSourceMessages={injectionSourceMessages}
-        agentConfigs={agentConfigs}
-        isVertical={isVertical}
-        agentsOpen={agentsOpen}
-        setAgentsOpen={setAgentsOpen}
-        isAgentProcessing={isAgentProcessing}
-        isGenerationBusy={isTrackerBusy}
-        thoughtBubbles={thoughtBubbles}
-        clearThoughtBubbles={clearThoughtBubbles}
-        dismissThoughtBubble={dismissThoughtBubble}
-        enabledAgentTypes={enabledAgentTypes}
-        clearGameState={clearGameState}
-        onRetriggerTrackers={onRetriggerTrackers}
-        onRetryFailedAgents={onRetryFailedAgents}
-        failedAgentTypes={failedAgentTypes}
-        failedAgentFailures={failedAgentFailures}
-        showInjectionsTab={showInjectionsTab}
-        showSecretPlotTab={showSecretPlotTab}
-      />
+        {/* Actions (Agents + Clear) */}
+        <ActionsGroup
+          chatId={chatId}
+          injectionSourceMessages={injectionSourceMessages}
+          agentConfigs={agentConfigs}
+          isVertical={isVertical}
+          agentsOpen={agentsOpen}
+          setAgentsOpen={setAgentsOpen}
+          isAgentProcessing={isAgentProcessing}
+          isGenerationBusy={isTrackerBusy}
+          thoughtBubbles={thoughtBubbles}
+          clearThoughtBubbles={clearThoughtBubbles}
+          dismissThoughtBubble={dismissThoughtBubble}
+          enabledAgentTypes={enabledAgentTypes}
+          clearGameState={clearGameState}
+          onRetriggerTrackers={onRetriggerTrackers}
+          onRetryFailedAgents={onRetryFailedAgents}
+          failedAgentTypes={failedAgentTypes}
+          failedAgentFailures={failedAgentFailures}
+          showInjectionsTab={showInjectionsTab}
+          showSecretPlotTab={showSecretPlotTab}
+        />
 
-      {/* ── Mobile: combined widgets, centered ── */}
-      {showHudTrackerWidgets && (
-        <div className={cn("flex items-center gap-0.5 md:hidden", mobileCompact && "flex-1 justify-center")}>
-          {enabledAgentTypes.has("world-state") && (
-            <CombinedWorldWidget
-              location={location ?? ""}
-              date={date ?? ""}
-              time={time ?? ""}
-              weather={weather ?? ""}
-              temperature={temperature ?? ""}
-              trackerTemperatureUnit={trackerTemperatureUnit}
-              onSaveLocation={(v) => patchField("location", v)}
-              onSaveDate={(v) => patchField("date", v)}
-              onSaveTime={(v) => patchField("time", v)}
-              onSaveWeather={(v) => patchField("weather", v)}
-              onSaveTemperature={(v) => patchField("temperature", v)}
-              layout={layout}
-              onRerunSingleTracker={onRerunSingleTracker}
-              isTrackerRetryBusy={isTrackerBusy}
-            />
-          )}
+        {/* ── Mobile: combined widgets, grouped with tracker and agent controls ── */}
+        {showHudTrackerWidgets && (
+          <div
+            className={cn(
+              "flex items-center md:hidden",
+              CHAT_TOOLBAR_ICON_GAP_CLASS,
+              mobileCompact && "min-w-0 justify-start",
+            )}
+          >
+            {enabledAgentTypes.has("world-state") && (
+              <CombinedWorldWidget
+                location={location ?? ""}
+                date={date ?? ""}
+                time={time ?? ""}
+                weather={weather ?? ""}
+                temperature={temperature ?? ""}
+                trackerTemperatureUnit={trackerTemperatureUnit}
+                onSaveLocation={(v) => patchField("location", v)}
+                onSaveDate={(v) => patchField("date", v)}
+                onSaveTime={(v) => patchField("time", v)}
+                onSaveWeather={(v) => patchField("weather", v)}
+                onSaveTemperature={(v) => patchField("temperature", v)}
+                layout={layout}
+                onRerunSingleTracker={onRerunSingleTracker}
+                isTrackerRetryBusy={isTrackerBusy}
+              />
+            )}
 
-          {hasPlayerTrackerSections && (
-            <CombinedPlayerWidget
-              layout={layout}
-              showPersona={hasPersonaStatsTracker}
-              showCharacters={enabledAgentTypes.has("character-tracker")}
-              showQuests={enabledAgentTypes.has("quest")}
-              showCustomTracker={enabledAgentTypes.has("custom-tracker")}
-              personaStats={personaStatBars}
-              onUpdatePersonaStats={(bars) => patchField("personaStats", bars)}
-              personaStatus={personaStatus}
-              onUpdatePersonaStatus={(status) => patchPlayerStats("status", status)}
-              characters={presentCharacters}
-              onUpdateCharacters={(chars) => patchField("presentCharacters", chars)}
-              inventory={inventory}
-              onUpdateInventory={updateInventoryItems}
-              onRemoveInventoryItem={removeInventoryItem}
-              quests={activeQuests}
-              onUpdateQuests={(q) => patchPlayerStats("activeQuests", q)}
-              customTrackerFields={customTrackerFields}
-              onUpdateCustomTracker={(fields) => patchPlayerStats("customTrackerFields", fields)}
-              onRerunSingleTracker={onRerunSingleTracker}
-              isTrackerRetryBusy={isTrackerBusy}
-            />
-          )}
+            {hasPlayerTrackerSections && (
+              <CombinedPlayerWidget
+                layout={layout}
+                showPersona={hasPersonaStatsTracker}
+                showCharacters={enabledAgentTypes.has("character-tracker")}
+                showQuests={enabledAgentTypes.has("quest")}
+                showCustomTracker={enabledAgentTypes.has("custom-tracker")}
+                personaStats={personaStatBars}
+                onUpdatePersonaStats={(bars) => patchField("personaStats", bars)}
+                personaStatus={personaStatus}
+                onUpdatePersonaStatus={(status) => patchPlayerStats("status", status)}
+                characters={presentCharacters}
+                onUpdateCharacters={(chars) => patchField("presentCharacters", chars)}
+                inventory={inventory}
+                onUpdateInventory={updateInventoryItems}
+                onRemoveInventoryItem={removeInventoryItem}
+                quests={activeQuests}
+                onUpdateQuests={(q) => patchPlayerStats("activeQuests", q)}
+                customTrackerFields={customTrackerFields}
+                onUpdateCustomTracker={(fields) => patchPlayerStats("customTrackerFields", fields)}
+                onRerunSingleTracker={onRerunSingleTracker}
+                isTrackerRetryBusy={isTrackerBusy}
+              />
+            )}
 
-          {/* Manual tracker trigger button (mobile) */}
-          {manualTrackers && onRetriggerTrackers && (
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-                onRetriggerTrackers();
-              }}
-              disabled={isTrackerBusy}
-              className={cn(
-                MOBILE_HUD_BTN,
-                "justify-center text-[0.5625rem] font-medium",
-                isTrackerBusy ? "text-foreground/75" : "text-foreground/45 hover:text-foreground/70",
-              )}
-            >
-              <RefreshCw size="0.875rem" className={cn("shrink-0 h-4 w-4", isTrackerBusy && "animate-spin")} />
-            </button>
-          )}
-        </div>
-      )}
+            {/* Manual tracker trigger button (mobile) */}
+            {manualTrackers && onRetriggerTrackers && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  onRetriggerTrackers();
+                }}
+                disabled={isTrackerBusy}
+                className={cn(
+                  MOBILE_HUD_BTN,
+                  "justify-center text-[0.5625rem] font-medium",
+                  isTrackerBusy && "text-[var(--marinara-chat-chrome-button-text-active)]",
+                )}
+              >
+                <RefreshCw size="0.875rem" className={cn("shrink-0 h-4 w-4", isTrackerBusy && "animate-spin")} />
+              </button>
+            )}
+          </div>
+        )}
 
-      {/* ── Desktop: separate individual widgets ── */}
-      {showHudTrackerWidgets && (
-        <div className="hidden md:flex items-center gap-1.5">
-          {enabledAgentTypes.has("world-state") && (
-            <CombinedWorldWidget
-              location={location ?? ""}
-              date={date ?? ""}
-              time={time ?? ""}
-              weather={weather ?? ""}
-              temperature={temperature ?? ""}
-              trackerTemperatureUnit={trackerTemperatureUnit}
-              onSaveLocation={(v) => patchField("location", v)}
-              onSaveDate={(v) => patchField("date", v)}
-              onSaveTime={(v) => patchField("time", v)}
-              onSaveWeather={(v) => patchField("weather", v)}
-              onSaveTemperature={(v) => patchField("temperature", v)}
-              layout={layout}
-              onRerunSingleTracker={onRerunSingleTracker}
-              isTrackerRetryBusy={isTrackerBusy}
-            />
-          )}
+        {/* ── Desktop: separate individual widgets ── */}
+        {showHudTrackerWidgets && (
+          <div className={cn("hidden items-center md:flex", CHAT_TOOLBAR_ICON_GAP_CLASS)}>
+            {enabledAgentTypes.has("world-state") && (
+              <CombinedWorldWidget
+                location={location ?? ""}
+                date={date ?? ""}
+                time={time ?? ""}
+                weather={weather ?? ""}
+                temperature={temperature ?? ""}
+                trackerTemperatureUnit={trackerTemperatureUnit}
+                onSaveLocation={(v) => patchField("location", v)}
+                onSaveDate={(v) => patchField("date", v)}
+                onSaveTime={(v) => patchField("time", v)}
+                onSaveWeather={(v) => patchField("weather", v)}
+                onSaveTemperature={(v) => patchField("temperature", v)}
+                layout={layout}
+                onRerunSingleTracker={onRerunSingleTracker}
+                isTrackerRetryBusy={isTrackerBusy}
+              />
+            )}
 
-          {hasPersonaStatsTracker && (
-            <PersonaStatsWidget
-              bars={personaStatBars}
-              onUpdate={(bars) => patchField("personaStats", bars)}
-              status={personaStatus}
-              onUpdateStatus={(status) => patchPlayerStats("status", status)}
-              layout={layout}
-              onRerunSingleTracker={onRerunSingleTracker}
-              isTrackerRetryBusy={isTrackerBusy}
-            />
-          )}
+            {hasPersonaStatsTracker && (
+              <PersonaStatsWidget
+                bars={personaStatBars}
+                onUpdate={(bars) => patchField("personaStats", bars)}
+                status={personaStatus}
+                onUpdateStatus={(status) => patchPlayerStats("status", status)}
+                layout={layout}
+                onRerunSingleTracker={onRerunSingleTracker}
+                isTrackerRetryBusy={isTrackerBusy}
+              />
+            )}
 
-          {enabledAgentTypes.has("character-tracker") && (
-            <CharactersWidget
-              characters={presentCharacters}
-              onUpdate={(chars) => patchField("presentCharacters", chars)}
-              chatId={chatId}
-              layout={layout}
-              onRerunSingleTracker={onRerunSingleTracker}
-              isTrackerRetryBusy={isTrackerBusy}
-            />
-          )}
+            {enabledAgentTypes.has("character-tracker") && (
+              <CharactersWidget
+                characters={presentCharacters}
+                onUpdate={(chars) => patchField("presentCharacters", chars)}
+                chatId={chatId}
+                layout={layout}
+                onRerunSingleTracker={onRerunSingleTracker}
+                isTrackerRetryBusy={isTrackerBusy}
+              />
+            )}
 
-          {hasPersonaStatsTracker && (
-            <InventoryWidget
-              items={inventory}
-              onUpdate={updateInventoryItems}
-              onRemoveItem={removeInventoryItem}
-              layout={layout}
-            />
-          )}
+            {hasPersonaStatsTracker && (
+              <InventoryWidget
+                items={inventory}
+                onUpdate={updateInventoryItems}
+                onRemoveItem={removeInventoryItem}
+                layout={layout}
+              />
+            )}
 
-          {enabledAgentTypes.has("quest") && (
-            <QuestsWidget
-              quests={activeQuests}
-              onUpdate={(q) => patchPlayerStats("activeQuests", q)}
-              layout={layout}
-              onRerunSingleTracker={onRerunSingleTracker}
-              isTrackerRetryBusy={isTrackerBusy}
-            />
-          )}
+            {enabledAgentTypes.has("quest") && (
+              <QuestsWidget
+                quests={activeQuests}
+                onUpdate={(q) => patchPlayerStats("activeQuests", q)}
+                layout={layout}
+                onRerunSingleTracker={onRerunSingleTracker}
+                isTrackerRetryBusy={isTrackerBusy}
+              />
+            )}
 
-          {enabledAgentTypes.has("custom-tracker") && (
-            <CustomTrackerWidget
-              fields={customTrackerFields}
-              onUpdate={(fields) => patchPlayerStats("customTrackerFields", fields)}
-              layout={layout}
-              onRerunSingleTracker={onRerunSingleTracker}
-              isTrackerRetryBusy={isTrackerBusy}
-            />
-          )}
+            {enabledAgentTypes.has("custom-tracker") && (
+              <CustomTrackerWidget
+                fields={customTrackerFields}
+                onUpdate={(fields) => patchPlayerStats("customTrackerFields", fields)}
+                layout={layout}
+                onRerunSingleTracker={onRerunSingleTracker}
+                isTrackerRetryBusy={isTrackerBusy}
+              />
+            )}
 
-          {/* Manual tracker trigger button (desktop) */}
-          {manualTrackers && onRetriggerTrackers && (
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-                onRetriggerTrackers();
-              }}
-              disabled={isTrackerBusy}
-              className={cn(
-                WIDGET,
-                isTrackerBusy ? "text-foreground/75" : "text-foreground/45 hover:text-foreground/70",
-              )}
-              title={isTrackerBusy ? "Trackers running…" : "Run Trackers"}
-            >
-              <RefreshCw size="0.875rem" className={cn(isTrackerBusy && "animate-spin")} />
-            </button>
-          )}
-        </div>
-      )}
+            {/* Manual tracker trigger button (desktop) */}
+            {manualTrackers && onRetriggerTrackers && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  onRetriggerTrackers();
+                }}
+                disabled={isTrackerBusy}
+                className={cn(WIDGET, isTrackerBusy && "text-[var(--marinara-chat-chrome-button-text-active)]")}
+                title={isTrackerBusy ? "Trackers running…" : "Run Trackers"}
+              >
+                <RefreshCw size="0.875rem" className={cn(isTrackerBusy && "animate-spin")} />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </TrackerLockProvider>
   );
@@ -475,7 +483,7 @@ export function RoleplayHUD({
 
 /** Common mobile HUD button sizing – used by all four strip buttons */
 const HUD_ICON_BUTTON = getChatToolbarButtonClass({ compact: true });
-const MOBILE_HUD_BTN = cn(HUD_ICON_BUTTON, "cursor-pointer select-none");
+const MOBILE_HUD_BTN = cn(HUD_ICON_BUTTON, CHAT_TOOLBAR_MOBILE_OVERFLOW_HEIGHT_CLASS, "cursor-pointer select-none");
 
 function DeferredHUDPanelFallback({ label }: { label: string }) {
   return <div className="px-3 py-4 text-center text-[0.625rem] text-[var(--muted-foreground)]/60">{label}</div>;
@@ -498,7 +506,7 @@ function TrackerPanelToggleButton({ onToggle }: { onToggle: () => void }) {
     <button
       data-tracker-panel-toggle="roleplay-hud"
       onClick={onToggle}
-      className={cn(WIDGET, "text-foreground/50 hover:border-foreground/20 hover:text-foreground/75")}
+      className={WIDGET}
       title="Show Tracker Panel"
       aria-label="Show Tracker Panel"
     >
@@ -669,7 +677,7 @@ function ActionsGroup({
     );
 
   return (
-    <div className={cn("relative flex items-center gap-1", isVertical && "flex-col")}>
+    <div className={cn("relative flex items-center", CHAT_TOOLBAR_ICON_GAP_CLASS, isVertical && "flex-col")}>
       <button
         ref={btnRef}
         onClick={() => setAgentsOpen(!agentsOpen)}
@@ -677,7 +685,7 @@ function ActionsGroup({
           getChatToolbarButtonClass({
             compact: true,
             open: agentsOpen,
-            className: hasAgentCount ? "w-auto min-w-8 gap-1.5 px-2" : undefined,
+            className: cn(CHAT_TOOLBAR_MOBILE_OVERFLOW_HEIGHT_CLASS, hasAgentCount && "w-auto min-w-8 gap-1.5 px-2"),
           }),
           "group cursor-pointer select-none",
         )}
@@ -685,26 +693,15 @@ function ActionsGroup({
         aria-label={agentsLabel}
       >
         {isAgentProcessing ? (
-          <Loader2
-            size="0.875rem"
-            strokeWidth={2.5}
-            className="shrink-0 animate-spin text-foreground/75 transition-colors group-hover:text-foreground/80"
-          />
+          <Loader2 size="0.875rem" strokeWidth={2.5} className="shrink-0 animate-spin transition-colors" />
         ) : (
-          <Sparkles
-            size="0.875rem"
-            strokeWidth={2.5}
-            className={cn(
-              "shrink-0 transition-colors group-hover:text-foreground/75",
-              agentsOpen ? "text-foreground/75" : "text-foreground/55",
-            )}
-          />
+          <Sparkles size="0.875rem" strokeWidth={2.5} className="shrink-0 transition-colors" />
         )}
         {generatedAgentCount > 0 && (
           <span
             className={cn(
-              "shrink-0 rounded-full bg-[var(--foreground)]/10 px-1.5 py-0.5 text-[0.625rem] font-medium tabular-nums text-[var(--foreground)]/65",
-              agentsOpen && "text-[var(--foreground)]/75",
+              "shrink-0 rounded-full bg-[var(--marinara-chat-chrome-highlight-bg)] px-1.5 py-0.5 text-[0.625rem] font-medium tabular-nums text-[var(--marinara-chat-chrome-button-text-hover)]",
+              agentsOpen && "bg-[var(--marinara-chat-chrome-highlight-bg-hover)]",
             )}
             aria-hidden="true"
           >
@@ -778,14 +775,9 @@ function CombinedPlayerWidget({
 
   return (
     <div className="relative">
-      <button
-        ref={buttonRef}
-        onClick={() => setOpen(!open)}
-        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
-        title="Player & Tracker"
-      >
+      <button ref={buttonRef} onClick={() => setOpen(!open)} className={WIDGET} title="Player & Tracker">
         <div className="flex h-4 items-center justify-center shrink-0">
-          <Swords size="0.875rem" className="text-orange-400/70 max-md:h-4 max-md:w-4" />
+          <Swords size="0.875rem" className="max-md:h-4 max-md:w-4" />
         </div>
         <span className="sr-only">Tracker</span>
       </button>
@@ -960,12 +952,7 @@ function CharactersWidget({
 
   return (
     <div className="relative">
-      <button
-        ref={buttonRef}
-        onClick={() => setOpen(!open)}
-        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
-        title="Present Characters"
-      >
+      <button ref={buttonRef} onClick={() => setOpen(!open)} className={WIDGET} title="Present Characters">
         {characters.length > 0 ? (
           <div className="flex items-center -space-x-0.5">
             {characters.slice(0, 3).map((c, i) => (
@@ -980,10 +967,7 @@ function CharactersWidget({
             )}
           </div>
         ) : (
-          <Users
-            size="0.875rem"
-            className="text-foreground/45 transition-colors group-hover:text-foreground/70 max-md:h-3.5 max-md:w-3.5"
-          />
+          <Users size="0.875rem" className="transition-colors max-md:h-3.5 max-md:w-3.5" />
         )}
       </button>
 
@@ -1032,12 +1016,7 @@ function PersonaStatsWidget({
 
   return (
     <div className="relative">
-      <button
-        ref={buttonRef}
-        onClick={() => setOpen(!open)}
-        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
-        title="Persona Stats"
-      >
+      <button ref={buttonRef} onClick={() => setOpen(!open)} className={WIDGET} title="Persona Stats">
         {bars.length > 0 ? (
           <div className="flex w-6 max-md:w-8 flex-col justify-center gap-0.5 max-md:gap-px shrink-0">
             {bars.map((bar) => {
@@ -1059,7 +1038,7 @@ function PersonaStatsWidget({
             })}
           </div>
         ) : (
-          <BarChart3 size="0.875rem" className="text-sky-400/45 max-md:h-3.5 max-md:w-3.5" />
+          <BarChart3 size="0.875rem" className="max-md:h-3.5 max-md:w-3.5" />
         )}
         <span className="sr-only">Persona</span>
       </button>
@@ -1131,12 +1110,7 @@ function CustomTrackerWidget({
 
   return (
     <div className="relative">
-      <button
-        ref={buttonRef}
-        onClick={() => setOpen(!open)}
-        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
-        title="Custom Tracker"
-      >
+      <button ref={buttonRef} onClick={() => setOpen(!open)} className={WIDGET} title="Custom Tracker">
         {fields.length > 0 && currentField ? (
           <span
             key={animKey}
@@ -1217,12 +1191,7 @@ function InventoryWidget({
 
   return (
     <div className="relative">
-      <button
-        ref={buttonRef}
-        onClick={() => setOpen(!open)}
-        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
-        title="Inventory"
-      >
+      <button ref={buttonRef} onClick={() => setOpen(!open)} className={WIDGET} title="Inventory">
         {items.length > 0 && currentItem ? (
           <span
             key={animKey}
@@ -1232,7 +1201,7 @@ function InventoryWidget({
             {itemLabel}
           </span>
         ) : (
-          <Package size="0.875rem" className="text-amber-400/60 max-md:h-3 max-md:w-3" />
+          <Package size="0.875rem" className="max-md:h-3 max-md:w-3" />
         )}
       </button>
 
@@ -1244,11 +1213,7 @@ function InventoryWidget({
         className="w-64 max-h-80 overflow-y-auto"
       >
         <Suspense fallback={<DeferredHUDPanelFallback label="Loading inventory…" />}>
-          <InventoryPanel
-            items={items}
-            onUpdate={onUpdate}
-            onRemoveItem={onRemoveItem}
-          />
+          <InventoryPanel items={items} onUpdate={onUpdate} onRemoveItem={onRemoveItem} />
         </Suspense>
       </WidgetPopover>
     </div>
@@ -1280,12 +1245,7 @@ function QuestsWidget({
 
   return (
     <div className="relative">
-      <button
-        ref={buttonRef}
-        onClick={() => setOpen(!open)}
-        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
-        title="Active Quests"
-      >
+      <button ref={buttonRef} onClick={() => setOpen(!open)} className={WIDGET} title="Active Quests">
         {currentObjective ? (
           <span className="widget-scroll-text w-full px-0.5 text-center text-[0.375rem] font-semibold leading-[1.15] max-md:text-[0.5rem]">
             <span className="inline-flex animate-[widget-scroll_8s_linear_infinite] whitespace-nowrap">
@@ -1296,7 +1256,7 @@ function QuestsWidget({
             </span>
           </span>
         ) : (
-          <Scroll size="0.875rem" className="text-emerald-400/60 max-md:h-3 max-md:w-3" />
+          <Scroll size="0.875rem" className="max-md:h-3 max-md:w-3" />
         )}
       </button>
 
@@ -1326,7 +1286,8 @@ function QuestsWidget({
 
 const WIDGET = cn(
   HUD_ICON_BUTTON,
-  "group flex-col gap-0 overflow-hidden cursor-pointer select-none dark:border-foreground/15",
+  CHAT_TOOLBAR_MOBILE_OVERFLOW_HEIGHT_CLASS,
+  "group flex-col gap-0 overflow-hidden cursor-pointer select-none",
 );
 
 // ═══════════════════════════════════════════════
@@ -1367,7 +1328,6 @@ function CombinedWorldWidget({
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const weatherEmoji = weather ? getWeatherEmoji(weather) : "🌤️";
-  const pinColor = getLocationPinColor(location);
   const temperatureDisplay = getTemperatureGaugeDisplay(temperature, trackerTemperatureUnit);
   const tempNumeric = temperature ? parseTemperatureValue(temperature) : null;
   const temp = tempNumeric ?? (temperature ? getTemperatureKeywordHint(temperature) : null);
@@ -1393,30 +1353,25 @@ function CombinedWorldWidget({
         ref={buttonRef}
         onClick={() => setOpen(!open)}
         className={cn(
-          getChatToolbarButtonClass({ compact: true, open }),
+          getChatToolbarButtonClass({
+            compact: true,
+            open,
+            className: CHAT_TOOLBAR_MOBILE_OVERFLOW_HEIGHT_CLASS,
+          }),
           "cursor-pointer select-none",
           !sideLayout && "w-auto min-w-8 gap-1 px-2",
         )}
         title="World State"
       >
         {/* Location pin */}
-        <MapPin size="0.9375rem" className={cn(pinColor, "drop-shadow-sm shrink-0")} />
+        <MapPin size="0.9375rem" className="shrink-0 drop-shadow-sm" />
 
         {/* Mini calendar with day number */}
         {!sideLayout && (
           <>
             <svg viewBox="0 0 20 20" fill="none" className="shrink-0 h-4 w-4">
-              <rect
-                x="2"
-                y="4"
-                width="16"
-                height="14"
-                rx="2"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                className="text-zinc-300/70"
-              />
-              <line x1="2" y1="8" x2="18" y2="8" stroke="currentColor" strokeWidth="1.2" className="text-zinc-400/50" />
+              <rect x="2" y="4" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" opacity="0.7" />
+              <line x1="2" y1="8" x2="18" y2="8" stroke="currentColor" strokeWidth="1.2" opacity="0.5" />
               <line
                 x1="6"
                 y1="2"
@@ -1425,7 +1380,7 @@ function CombinedWorldWidget({
                 stroke="currentColor"
                 strokeWidth="1.5"
                 strokeLinecap="round"
-                className="text-zinc-300/70"
+                opacity="0.7"
               />
               <line
                 x1="14"
@@ -1435,7 +1390,7 @@ function CombinedWorldWidget({
                 stroke="currentColor"
                 strokeWidth="1.5"
                 strokeLinecap="round"
-                className="text-zinc-300/70"
+                opacity="0.7"
               />
               {dateParts.day && (
                 <text
@@ -1445,7 +1400,7 @@ function CombinedWorldWidget({
                   fill="currentColor"
                   fontSize="7"
                   fontWeight="700"
-                  className="text-zinc-100"
+                  opacity="0.95"
                 >
                   {dateParts.day}
                 </text>
@@ -1454,7 +1409,7 @@ function CombinedWorldWidget({
 
             {/* Mini clock with dynamic hands */}
             <svg viewBox="0 0 20 20" fill="none" className="shrink-0 h-4 w-4">
-              <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" className="text-amber-400/70" />
+              <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" opacity="0.7" />
               {hour >= 0 ? (
                 <>
                   <line
@@ -1465,7 +1420,7 @@ function CombinedWorldWidget({
                     stroke="currentColor"
                     strokeWidth="1.8"
                     strokeLinecap="round"
-                    className="text-amber-300"
+                    opacity="0.95"
                   />
                   <line
                     x1="10"
@@ -1475,7 +1430,7 @@ function CombinedWorldWidget({
                     stroke="currentColor"
                     strokeWidth="1.2"
                     strokeLinecap="round"
-                    className="text-amber-400/80"
+                    opacity="0.8"
                   />
                 </>
               ) : (
@@ -1488,7 +1443,7 @@ function CombinedWorldWidget({
                     stroke="currentColor"
                     strokeWidth="1.8"
                     strokeLinecap="round"
-                    className="text-amber-300"
+                    opacity="0.95"
                   />
                   <line
                     x1="10"
@@ -1498,11 +1453,11 @@ function CombinedWorldWidget({
                     stroke="currentColor"
                     strokeWidth="1.2"
                     strokeLinecap="round"
-                    className="text-amber-400/80"
+                    opacity="0.8"
                   />
                 </>
               )}
-              <circle cx="10" cy="10" r="1" fill="currentColor" className="text-amber-300" />
+              <circle cx="10" cy="10" r="1" fill="currentColor" opacity="0.95" />
             </svg>
 
             {/* Weather emoji */}
@@ -1561,7 +1516,7 @@ function CombinedWorldWidget({
             onSaveWeather={onSaveWeather}
             onSaveTemperature={onSaveTemperature}
             weatherEmoji={weatherEmoji}
-            pinColor={pinColor}
+            pinColor="text-[var(--marinara-chat-chrome-highlight-text)]"
             tempColor={tempColor}
             onClose={() => setOpen(false)}
             onRerunSingleTracker={onRerunSingleTracker}
@@ -1639,46 +1594,4 @@ function getWeatherEmoji(weather: string): string {
   if (w.includes("hot") || w.includes("swelter")) return "🥵";
   if (w.includes("cold") || w.includes("freez")) return "🥶";
   return "🌤️";
-}
-
-/** Categorise location text into a colour for the map-pin icon. */
-function getLocationPinColor(location: string): string {
-  const l = location.toLowerCase();
-  // Water
-  if (
-    /\b(sea|ocean|lake|river|pond|creek|bay|shore|beach|harbor|harbour|port|coast|marsh|swamp|waterfall|spring|well|dock|canal|dam|reef|lagoon|estuary|fjord|cove)\b/.test(
-      l,
-    )
-  )
-    return "text-blue-400";
-  // Mountains / rocky terrain
-  if (
-    /\b(mountain|hill|cliff|peak|ridge|canyon|gorge|cave|cavern|mine|quarry|summit|bluff|crag|volcano|crater|mesa|plateau|ravine|boulder)\b/.test(
-      l,
-    )
-  )
-    return "text-amber-700";
-  // Urban / city
-  if (
-    /\b(city|town|village|castle|palace|fortress|market|shop|inn|tavern|bar|pub|guild|district|quarter|bazaar|temple|church|cathedral|shrine|tower|gate|square|plaza|street|alley|arena|throne|court|capitol|capital|metro|subway)\b/.test(
-      l,
-    )
-  )
-    return "text-sky-400";
-  // Interior / indoors
-  if (
-    /\b(room|hall|chamber|dungeon|cellar|basement|attic|library|study|bedroom|kitchen|office|lab|laboratory|vault|corridor|passage|cabin|hut|tent|interior|house|home|building|apartment|manor|lodge|dormitor|warehouse|prison|cell|jail)\b/.test(
-      l,
-    )
-  )
-    return "text-amber-300";
-  // Nature / forest / fields (broadest — checked last)
-  if (
-    /\b(forest|wood|grove|jungle|garden|park|field|meadow|glade|clearing|plain|prairie|steppe|savanna|farm|ranch|orchard|vineyard|glen|vale|valley|thicket|copse|heath|moor|desert|tundra|waste|wild|trail|path|road)\b/.test(
-      l,
-    )
-  )
-    return "text-emerald-400";
-  // Default — the base emerald
-  return "text-emerald-400";
 }

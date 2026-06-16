@@ -36,7 +36,6 @@ import {
   Activity,
   Plus,
   X,
-  Maximize2,
   Tag,
   Image,
   Upload,
@@ -58,7 +57,7 @@ import { showConfirmDialog } from "../../lib/app-dialogs";
 import { extractColorsFromImage } from "../../lib/avatar-color-extraction";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { ColorPicker } from "../ui/ColorPicker";
-import { ExpandedTextarea } from "../ui/ExpandedTextarea";
+import { MacroTextarea } from "../ui/MacroTextarea";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
 import { api } from "../../lib/api-client";
@@ -2326,19 +2325,20 @@ function PersonaMetadataTab({
         </div>
       </div>
 
-      <label className="block space-y-1.5">
+      <div className="block space-y-1.5">
         <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
           Creator Notes{" "}
           <HelpTooltip text="Private notes about this persona — tips for use, known quirks, recommended settings. Not sent to the AI." />
         </span>
-        <textarea
+        <MacroTextarea
           value={formData.creatorNotes}
-          onChange={(e) => updateField("creatorNotes", e.target.value)}
+          onChange={(value) => updateField("creatorNotes", value)}
           rows={4}
+          title="Creator Notes"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3 text-sm outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
           placeholder="Notes about this persona, intended use, tips for best results..."
         />
-      </label>
+      </div>
     </div>
   );
 }
@@ -2707,51 +2707,27 @@ function DescriptionTab({
   updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
   setDirty: (v: boolean) => void;
 }) {
-  const [expandedField, setExpandedField] = useState(false);
-
   return (
     <div className="space-y-6">
       {/* Main description */}
       <div>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="inline-flex items-center gap-1.5 text-sm font-semibold">
-              Description
-              <HelpTooltip text={PERSONA_DESCRIPTION_HELP} side="bottom" wide size="0.8125rem" />
-            </h3>
-            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
-              Your general description. This is sent in every prompt so the AI knows who you are.
-            </p>
-          </div>
-          <button
-            type="button"
-          onClick={() => setExpandedField(true)}
-            className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Expand editor"
-          >
-            <Maximize2 size="0.875rem" />
-          </button>
-        </div>
-        <textarea
+        <SectionHeader
+          title="Description"
+          subtitle="Your general description. This is sent in every prompt so the AI knows who you are."
+          helpText={PERSONA_DESCRIPTION_HELP}
+        />
+        <MacroTextarea
           value={formData.description}
-          onChange={(e) => updateField("description", e.target.value)}
+          onChange={(value) => updateField("description", value)}
           placeholder="Describe who you are, your role in the story, and your key traits…"
           rows={12}
+          title="Description"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
         />
         <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">
           {formData.description.length} characters
         </p>
       </div>
-
-      <ExpandedTextarea
-        open={expandedField}
-        onClose={() => setExpandedField(false)}
-        title="Description"
-        value={formData.description}
-        onChange={(value) => updateField("description", value)}
-        placeholder="Describe who you are, your role in the story, and your key traits…"
-      />
     </div>
   );
 }
@@ -2795,36 +2771,18 @@ function TextareaTab({
   placeholder: string;
   rows?: number;
 }) {
-  const [expanded, setExpanded] = useState(false);
   return (
     <div>
-      <div className="flex items-start justify-between gap-2 mb-4">
-        <SectionHeader title={title} subtitle={subtitle} helpText={helpText} />
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="mt-0.5 shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-          title="Expand editor"
-        >
-          <Maximize2 size="0.875rem" />
-        </button>
-      </div>
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={rows}
-        className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
-      />
-      <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">{value.length} characters</p>
-      <ExpandedTextarea
-        open={expanded}
-        onClose={() => setExpanded(false)}
-        title={title}
+      <SectionHeader title={title} subtitle={subtitle} helpText={helpText} />
+      <MacroTextarea
         value={value}
         onChange={onChange}
         placeholder={placeholder}
+        rows={rows}
+        title={title}
+        className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
       />
+      <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">{value.length} characters</p>
     </div>
   );
 }

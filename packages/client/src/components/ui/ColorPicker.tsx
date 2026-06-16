@@ -19,8 +19,12 @@ interface ColorPickerProps {
   helpText?: string;
   /** Text shown when no color is set. */
   emptyText?: string;
+  /** Optional color/gradient shown in the preview when no explicit value is set. */
+  emptyPreviewValue?: string;
   /** Text shown for the clear/reset action. */
   clearLabel?: string;
+  /** Value restored by the clear/reset action. Defaults to empty string. */
+  clearValue?: string;
   /** Optional compact control shown beside the label. */
   headerAction?: ReactNode;
 }
@@ -89,7 +93,9 @@ export function ColorPicker({
   label,
   helpText,
   emptyText = "No color set — uses default",
+  emptyPreviewValue = "",
   clearLabel = "Clear",
+  clearValue = "",
   headerAction,
 }: ColorPickerProps) {
   const isGradient = isCssGradient(value);
@@ -162,14 +168,16 @@ export function ColorPicker({
   );
 
   const clearColor = useCallback(() => {
-    onChange("");
+    onChange(clearValue);
     setExpanded(false);
-  }, [onChange]);
+  }, [clearValue, onChange]);
 
-  const displayStyle = value
-    ? isCssGradient(value)
-      ? { background: value }
-      : { backgroundColor: value }
+  const previewValue = value || emptyPreviewValue;
+  const showClear = clearValue ? value !== clearValue : !!value;
+  const displayStyle = previewValue
+    ? isCssGradient(previewValue)
+      ? { background: previewValue }
+      : { backgroundColor: previewValue }
     : { backgroundColor: "transparent" };
 
   return (
@@ -181,7 +189,7 @@ export function ColorPicker({
           {headerAction}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {value && (
+          {showClear && (
             <button
               type="button"
               onClick={clearColor}
@@ -209,7 +217,7 @@ export function ColorPicker({
           className={cn("shrink-0 rounded-lg ring-1 ring-[var(--border)]", compact ? "h-6 w-6" : "h-8 w-8")}
           style={{
             ...displayStyle,
-            ...(!value && {
+            ...(!previewValue && {
               backgroundImage: "repeating-conic-gradient(var(--border) 0% 25%, transparent 0% 50%)",
               backgroundSize: "0.5rem 0.5rem",
             }),
@@ -274,7 +282,7 @@ export function ColorPicker({
                   <span
                     className="h-6 w-6 shrink-0 rounded-md ring-1 ring-[var(--border)]"
                     style={{
-                      backgroundColor: value && !isCssGradient(value) ? value : "#6c5ce7",
+                      backgroundColor: previewValue && !isCssGradient(previewValue) ? previewValue : "#6c5ce7",
                     }}
                   />
                   <span className="min-w-0 text-xs font-medium text-[var(--foreground)]">Pick color</span>
@@ -283,7 +291,7 @@ export function ColorPicker({
                     ref={nativeRef}
                     type="color"
                     aria-label={`Pick ${label} color`}
-                    value={value && !isCssGradient(value) ? getNativeColorValue(value) : "#6c5ce7"}
+                    value={!isCssGradient(previewValue) ? getNativeColorValue(previewValue) : "#6c5ce7"}
                     onChange={(e) => handleSolidChange(e.target.value)}
                     className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                   />

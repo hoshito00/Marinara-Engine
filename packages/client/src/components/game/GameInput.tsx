@@ -10,6 +10,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { translateDraftText } from "../../lib/draft-translation";
 import { formatTextQuotes, type DiceRollResult } from "@marinara-engine/shared";
+import { getChatInputShellClass } from "../chat/chat-input-styles";
 
 interface Attachment {
   type: string;
@@ -333,27 +334,18 @@ export function GameInput({
 
   const riskyInterrupt = interruptMode === "risky";
   const forceInterrupt = interruptMode === "force";
+  const forceInterruptStyle = forceInterrupt
+    ? {
+        boxShadow: "0 0 18px -6px rgba(32, 194, 14, 0.6)",
+        backgroundColor: "rgba(32, 194, 14, 0.04)",
+        ["--tw-ring-color" as never]: "rgba(32, 194, 14, 0.45)",
+      }
+    : undefined;
 
   return (
     <div
-      className={cn(
-        inline ? "" : "border-t border-foreground/10 bg-[var(--card)]",
-        riskyInterrupt &&
-          "rounded-xl ring-1 ring-red-500/40 bg-red-500/5 shadow-[0_0_18px_-6px_rgba(248,113,113,0.55)]",
-        forceInterrupt && "rounded-xl ring-1",
-      )}
-      style={
-        forceInterrupt
-          ? {
-              ...(inline ? {} : { minHeight: 61 }),
-              boxShadow: "0 0 18px -6px rgba(32, 194, 14, 0.6)",
-              backgroundColor: "rgba(32, 194, 14, 0.04)",
-              ["--tw-ring-color" as never]: "rgba(32, 194, 14, 0.45)",
-            }
-          : inline
-            ? undefined
-            : { minHeight: 61 }
-      }
+      className={cn(inline ? "" : "px-3 pb-3 pt-2")}
+      style={inline ? undefined : { minHeight: 61 }}
     >
       {/* Dice picker */}
       {showDice && (
@@ -445,7 +437,20 @@ export function GameInput({
       )}
 
       {/* Main input */}
-      <div ref={inputBarRef} className={cn("relative flex items-center gap-1.5", inline ? "px-0 py-1" : "px-4 py-3")}>
+      <div
+        ref={inputBarRef}
+        className={getChatInputShellClass({
+          className: cn(
+            riskyInterrupt &&
+              "ring-1 ring-red-500/40 bg-red-500/5 shadow-[0_0_18px_-6px_rgba(248,113,113,0.55)]",
+            forceInterrupt && "ring-1",
+          ),
+          hasContent: text.trim().length > 0 || attachments.length > 0 || !!queuedDice || !!pendingMoveLabel,
+          inline,
+          layout: "game",
+        })}
+        style={forceInterruptStyle}
+      >
         {/* Left: Address selector + Attach files */}
         <div className="relative shrink-0">
           {addressMenuOpen && (

@@ -51,7 +51,6 @@ import {
   X,
   AlertTriangle,
   Maximize2,
-  BookOpen,
   ListChecks,
   Shuffle,
   ToggleLeft,
@@ -60,9 +59,10 @@ import {
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
+import { MacroTextarea } from "../ui/MacroTextarea";
 import { api } from "../../lib/api-client";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
-import { SUPPORTED_MACROS, type WrapFormat, type MarkerType } from "@marinara-engine/shared";
+import { type WrapFormat, type MarkerType } from "@marinara-engine/shared";
 import { useQuoteFormatter } from "../../hooks/use-quote-formatter";
 import { EditorTabRail } from "../ui/EditorTabRail";
 
@@ -1977,8 +1977,6 @@ function SectionContentTextarea({
   onCommit: (v: string) => void;
 }) {
   const [local, setLocal] = useState(value);
-  const [expanded, setExpanded] = useState(false);
-  const [showMacroRef, setShowMacroRef] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedRef = useRef(false);
   const formatQuotes = useQuoteFormatter();
@@ -1989,12 +1987,16 @@ function SectionContentTextarea({
   }, [value]);
 
   const commit = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
     if (local !== value) onCommit(local);
   }, [local, value, onCommit]);
 
   // Debounced auto-save while typing (800ms)
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const nextValue = formatQuotes(e.target.value);
+  const handleChange = (nextRawValue: string) => {
+    const nextValue = formatQuotes(nextRawValue);
     setLocal(nextValue);
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
@@ -2005,10 +2007,6 @@ function SectionContentTextarea({
   // Commit on blur immediately
   const handleBlur = () => {
     focusedRef.current = false;
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
     commit();
   };
 
@@ -2025,71 +2023,16 @@ function SectionContentTextarea({
   );
 
   return (
-    <>
-      <div className="relative">
-        <textarea
-          value={local}
-          onChange={handleChange}
-          onBlur={handleBlur}
-          onFocus={handleFocus}
-          onKeyDown={(e) =>
-            handleTextareaTab(
-              e,
-              local,
-              (v) => {
-                setLocal(v);
-                if (timeoutRef.current) clearTimeout(timeoutRef.current);
-                timeoutRef.current = setTimeout(() => {
-                  if (v !== value) onCommit(v);
-                }, 800);
-              },
-              formatQuotes,
-            )
-          }
-          className="min-h-[7.5rem] w-full rounded-lg bg-[var(--secondary)] p-2.5 pr-8 font-mono text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-          placeholder="Prompt content… (supports {{user}}, {{char}}, {{// comment}}, {{trim}} macros)"
-        />
-        <div className="absolute right-1.5 top-1.5 flex flex-col gap-0.5">
-          <button
-            onClick={() => setExpanded(true)}
-            className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Expand editor"
-          >
-            <Maximize2 size="0.75rem" />
-          </button>
-          <button
-            onClick={() => setShowMacroRef(true)}
-            className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Macros reference"
-          >
-            <BookOpen size="0.75rem" />
-          </button>
-        </div>
-      </div>
-
-      {/* Macros reference modal */}
-      {showMacroRef && <MacrosReferenceModal onClose={() => setShowMacroRef(false)} />}
-
-      {/* Expanded editor modal */}
-      {expanded && (
-        <ExpandedEditorModal
-          title={sectionName ? `Edit: ${sectionName}` : "Edit Prompt"}
-          value={local}
-          onChange={(v) => {
-            const nextValue = formatQuotes(v);
-            setLocal(nextValue);
-            if (timeoutRef.current) clearTimeout(timeoutRef.current);
-            timeoutRef.current = setTimeout(() => {
-              if (nextValue !== value) onCommit(nextValue);
-            }, 800);
-          }}
-          onClose={() => {
-            setExpanded(false);
-            if (local !== value) onCommit(local);
-          }}
-        />
-      )}
-    </>
+    <MacroTextarea
+      value={local}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      onFocus={handleFocus}
+      onExpandedClose={commit}
+      title={sectionName ? `Edit: ${sectionName}` : "Edit Prompt"}
+      className="min-h-[7.5rem] w-full rounded-lg bg-[var(--secondary)] p-2.5 font-mono text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+      placeholder="Prompt content… (supports {{user}}, {{char}}, {{// comment}}, {{trim}} macros)"
+    />
   );
 }
 
@@ -2209,106 +2152,6 @@ function ExpandedEditorModal({
               className="rounded-xl bg-gradient-to-r from-purple-400 to-violet-500 px-4 py-1.5 text-xs font-medium text-white shadow-md hover:shadow-lg active:scale-[0.98]"
             >
               Done
-            </button>
-          </div>
-        </div>
-      </div>
-    </PresetModalPortal>
-  );
-}
-
-// ── Macros reference data ──
-const MACRO_REFERENCE = Array.from(
-  SUPPORTED_MACROS.reduce((categories, macro) => {
-    const macros = categories.get(macro.category) ?? [];
-    macros.push({ macro: macro.syntax, desc: macro.description });
-    categories.set(macro.category, macros);
-    return categories;
-  }, new Map<string, Array<{ macro: string; desc: string }>>()),
-  ([category, macros]) => ({ category, macros }),
-);
-
-// ── Macros Reference Modal ──
-function MacrosReferenceModal({ onClose }: { onClose: () => void }) {
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
-
-  return (
-    <PresetModalPortal>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-6 max-md:pt-[max(1.5rem,env(safe-area-inset-top))]">
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-        <div className="relative flex max-h-[80vh] w-full max-w-lg flex-col rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl shadow-black/50">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-            <div className="flex items-center gap-2">
-              <BookOpen size="1rem" className="text-purple-400" />
-              <h3 className="text-sm font-semibold">Macros Reference</h3>
-            </div>
-            <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-[var(--accent)]">
-              <X size="1rem" />
-            </button>
-          </div>
-          {/* Content */}
-          <div className="flex-1 space-y-4 overflow-y-auto p-4">
-            <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-              Use these macros in your prompt sections. They will be replaced with actual values at generation time.
-            </p>
-            <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-              In group chats, a bracketed block containing character macros like <code>{"{{char}}"}</code> and{" "}
-              <code>{"{{description}}"}</code> repeats once per character.
-            </p>
-            <div className="space-y-2 border-y border-[var(--border)] py-3">
-              <div>
-                <h4 className="text-[0.6875rem] font-semibold text-purple-400">Conditional blocks</h4>
-                <p className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
-                  Use <code>{"{{#if ...}}"}</code>, optional <code>{"{{else}}"}</code>, and <code>{"{{/if}}"}</code> to
-                  switch prompt text by the active speaker, user, or a preset variable.
-                </p>
-              </div>
-              <pre className="overflow-x-auto rounded-lg bg-[var(--secondary)] px-3 py-2 text-[0.625rem] leading-relaxed text-amber-300">
-                <code>{`{{#if character == "Dottore"}}
-Write this for Dottore.
-{{else}}
-Write this for anyone else.
-{{/if}}`}</code>
-              </pre>
-              <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                Supported comparisons: <code>==</code>, <code>!=</code>, and <code>contains</code>. Character checks
-                also work with <code>char</code> or <code>speaker</code>, and group chats evaluate them for the speaking
-                character. Straight and typographic quotes both work.
-              </p>
-            </div>
-            {MACRO_REFERENCE.map((cat) => (
-              <div key={cat.category}>
-                <h4 className="mb-1.5 text-[0.6875rem] font-semibold text-purple-400">{cat.category}</h4>
-                <div className="space-y-1">
-                  {cat.macros.map((m) => (
-                    <div
-                      key={m.macro}
-                      className="flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-[var(--accent)]"
-                    >
-                      <code className="shrink-0 rounded bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] font-medium text-amber-400">
-                        {m.macro}
-                      </code>
-                      <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{m.desc}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-          {/* Footer */}
-          <div className="border-t border-[var(--border)] px-4 py-2.5 text-center">
-            <button
-              onClick={onClose}
-              className="rounded-xl px-4 py-1.5 text-xs font-medium text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
-            >
-              Close
             </button>
           </div>
         </div>

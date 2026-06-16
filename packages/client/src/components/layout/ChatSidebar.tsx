@@ -577,8 +577,7 @@ export function ChatSidebar() {
   );
 
   const getDragChatIds = useCallback(
-    (chatId: string) =>
-      multiSelectMode && selectedChatIds.has(chatId) ? Array.from(selectedChatIds) : [chatId],
+    (chatId: string) => (multiSelectMode && selectedChatIds.has(chatId) ? Array.from(selectedChatIds) : [chatId]),
     [multiSelectMode, selectedChatIds],
   );
 
@@ -594,25 +593,22 @@ export function ChatSidebar() {
     [moveChatMut],
   );
 
-  const startTouchDrag = useCallback(
-    (chatId: string, event: React.PointerEvent<HTMLDivElement>) => {
-      if (event.pointerType === "mouse") return;
-      const drag = {
-        chatId,
-        timer: null as number | null,
-        active: false,
-        lastX: event.clientX,
-        lastY: event.clientY,
-      };
-      drag.timer = window.setTimeout(() => {
-        drag.active = true;
-        setDraggedChatId(chatId);
-      }, 420);
-      touchDragRef.current = drag;
-      event.currentTarget.setPointerCapture(event.pointerId);
-    },
-    [],
-  );
+  const startTouchDrag = useCallback((chatId: string, event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "mouse") return;
+    const drag = {
+      chatId,
+      timer: null as number | null,
+      active: false,
+      lastX: event.clientX,
+      lastY: event.clientY,
+    };
+    drag.timer = window.setTimeout(() => {
+      drag.active = true;
+      setDraggedChatId(chatId);
+    }, 420);
+    touchDragRef.current = drag;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, []);
 
   const updateTouchDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const drag = touchDragRef.current;
@@ -1588,9 +1584,12 @@ const STATUS_OPTIONS: Array<{
 function UserStatusFooter() {
   const userStatus = useUIStore((s) => s.userStatus);
   const userActivity = useUIStore((s) => s.userActivity);
+  const recentUserActivities = useUIStore((s) => s.recentUserActivities);
   const setUserStatusManual = useUIStore((s) => s.setUserStatusManual);
   const setUserActivity = useUIStore((s) => s.setUserActivity);
+  const rememberUserActivity = useUIStore((s) => s.rememberUserActivity);
   const [open, setOpen] = useState(false);
+  const [activityFocused, setActivityFocused] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   // Close on click outside
@@ -1604,6 +1603,27 @@ function UserStatusFooter() {
   }, [open]);
 
   const current = STATUS_OPTIONS.find((s) => s.value === userStatus) ?? STATUS_OPTIONS[0]!;
+  const recentActivitySuggestions = useMemo(() => {
+    const currentActivity = userActivity.replace(/\s+/g, " ").trim().toLowerCase();
+    return recentUserActivities
+      .filter((activity) => activity.trim() && activity.trim().toLowerCase() !== currentActivity)
+      .slice(0, 3);
+  }, [recentUserActivities, userActivity]);
+
+  const commitCurrentActivity = useCallback(() => {
+    const normalized = userActivity.replace(/\s+/g, " ").trim().slice(0, 120);
+    if (normalized !== userActivity) setUserActivity(normalized);
+    if (normalized) rememberUserActivity(normalized);
+  }, [rememberUserActivity, setUserActivity, userActivity]);
+
+  const applyRecentActivity = useCallback(
+    (activity: string) => {
+      setUserActivity(activity);
+      rememberUserActivity(activity);
+      setActivityFocused(false);
+    },
+    [rememberUserActivity, setUserActivity],
+  );
 
   return (
     <div ref={ref} className="relative border-t border-[var(--border)]/30 px-3 py-2">
@@ -1631,6 +1651,24 @@ function UserStatusFooter() {
           ))}
         </div>
       )}
+      {activityFocused && !open && recentActivitySuggestions.length > 0 && (
+        <div className="absolute bottom-full left-2 right-2 mb-1 rounded-xl bg-[var(--popover)] p-1.5 shadow-xl ring-1 ring-[var(--border)]/40">
+          <div className="px-2 pb-1 pt-0.5 text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+            Recent status
+          </div>
+          {recentActivitySuggestions.map((activity) => (
+            <button
+              key={activity}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => applyRecentActivity(activity)}
+              className="flex w-full min-w-0 items-center rounded-lg px-2 py-1.5 text-left text-xs text-[var(--sidebar-foreground)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <span className="truncate">{activity}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex min-w-0 items-center gap-1.5">
         <button
@@ -1645,6 +1683,19 @@ function UserStatusFooter() {
         <input
           value={userActivity}
           onChange={(event) => setUserActivity(event.target.value)}
+          onFocus={() => setActivityFocused(true)}
+          onBlur={() => {
+            commitCurrentActivity();
+            setActivityFocused(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            } else if (event.key === "Escape") {
+              setActivityFocused(false);
+              event.currentTarget.blur();
+            }
+          }}
           maxLength={120}
           placeholder="What are you doing?"
           aria-label="Custom activity"

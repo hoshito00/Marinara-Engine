@@ -51,7 +51,16 @@ interface SummaryPopoverProps {
   summaryRunInterval?: number;
   automaticSummariesAvailable?: boolean;
   totalMessageCount: number;
+  anchor?: SummaryPopoverAnchor | null;
   onClose: () => void;
+}
+
+interface SummaryPopoverAnchor {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+  width: number;
 }
 
 type SummarySourceMode = "last" | "range";
@@ -65,6 +74,20 @@ const MAX_AUTOMATIC_SUMMARY_INTERVAL = 200;
 const SUMMARY_TOKEN_WARNING_THRESHOLD = 1800;
 const SUMMARY_HEADING_PATTERN = /^(?:#{1,6}\s*)?(?:\*\*)?([^:\n]{3,80})(?:\*\*)?:\s*$/;
 const SUMMARY_BULLET_PATTERN = /^[-*•]\s+/;
+const MOBILE_SUMMARY_PADDING = 8;
+
+function getMobileSummaryFrame(anchor: SummaryPopoverAnchor | null | undefined) {
+  if (typeof window === "undefined") return null;
+  const width = Math.min(560, window.innerWidth - MOBILE_SUMMARY_PADDING * 2);
+  const fallbackLeft = (window.innerWidth - width) / 2;
+  const left = Math.max(
+    MOBILE_SUMMARY_PADDING,
+    Math.min((anchor?.right ?? fallbackLeft + width) - width, window.innerWidth - width - MOBILE_SUMMARY_PADDING),
+  );
+  const top = Math.max(MOBILE_SUMMARY_PADDING, anchor?.bottom ?? 56);
+  const maxHeight = Math.max(240, window.innerHeight - top - MOBILE_SUMMARY_PADDING);
+  return { top, left, width, maxHeight };
+}
 
 interface SummarySection {
   title: string | null;
@@ -178,6 +201,7 @@ export function SummaryPopover({
   summaryRunInterval,
   automaticSummariesAvailable = true,
   totalMessageCount,
+  anchor = null,
   onClose,
 }: SummaryPopoverProps) {
   const [expandedEntryIds, setExpandedEntryIds] = useState<Set<string>>(() => new Set());
@@ -659,6 +683,7 @@ export function SummaryPopover({
   const isGenerating = generateSummary.isPending;
 
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+  const mobileFrame = isMobile ? getMobileSummaryFrame(anchor) : null;
 
   const handlePanelMouseDown = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     event.stopPropagation();
@@ -669,22 +694,26 @@ export function SummaryPopover({
       ref={panelRef}
       onMouseDown={handlePanelMouseDown}
       className={cn(
-        isMobile
-          ? "fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]"
-          : "absolute right-0 top-full z-[100] mt-1",
+        isMobile ? "fixed z-[9999]" : "absolute right-0 top-full z-[100] mt-1",
       )}
+      style={
+        mobileFrame
+          ? {
+              top: mobileFrame.top,
+              left: mobileFrame.left,
+              width: mobileFrame.width,
+            }
+          : undefined
+      }
     >
-      {/* Mobile backdrop */}
-      {isMobile && <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />}
       <div
         className={cn(
           ROLEPLAY_POPOVER_SHELL,
           ROLEPLAY_POPOVER_SCROLL_AREA,
           "relative flex flex-col overflow-hidden p-3",
-          isMobile
-            ? "relative max-h-[calc(100dvh-2rem)] w-full max-w-lg"
-            : "max-h-[min(46rem,calc(100vh-5rem))] w-[36rem]",
+          isMobile ? "w-full" : "max-h-[min(46rem,calc(100vh-5rem))] w-[36rem]",
         )}
+        style={mobileFrame ? { maxHeight: mobileFrame.maxHeight } : undefined}
       >
         {/* Header */}
         <div className="mb-2 flex items-start justify-between gap-3">

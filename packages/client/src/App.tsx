@@ -11,7 +11,7 @@ import { AppDialogRenderer } from "./components/ui/AppDialogRenderer";
 import { ChibiProfessorMariEasterEgg } from "./components/ui/ChibiProfessorMariEasterEgg";
 import { CsrfOriginWarningBanner } from "./components/diagnostics/CsrfOriginWarningBanner";
 import { Toaster } from "sonner";
-import { useUIStore } from "./stores/ui.store";
+import { getDefaultChatChromeTextColor, useUIStore } from "./stores/ui.store";
 import { useSidecarStore } from "./stores/sidecar.store";
 import { api } from "./lib/api-client";
 import { forceRefreshSpa } from "./lib/browser-runtime";
@@ -93,6 +93,7 @@ export function App() {
   const visualTheme = useUIStore((s) => s.visualTheme);
   const fontFamily = useUIStore((s) => s.fontFamily);
   const appAccentColor = useUIStore((s) => s.appAccentColor);
+  const chatChromeTextColor = useUIStore((s) => s.chatChromeTextColor);
   const hasModalOpen = useUIStore((s) => s.modal !== null);
   useLegacyThemeMigration();
   useLegacyExtensionMigration();
@@ -171,6 +172,23 @@ export function App() {
       delete root.dataset.marinaraChatChromeAccentMode;
     }
   }, [appAccentColor]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const textColor = chatChromeTextColor.trim();
+    const variables = [
+      "--marinara-chat-chrome-text",
+      "--marinara-chat-chrome-button-text-base",
+      "--marinara-chat-chrome-highlight-text-base",
+    ];
+
+    if (textColor) {
+      const resolvedColor = getCssColorFallback(textColor, getDefaultChatChromeTextColor(theme));
+      variables.forEach((variable) => root.style.setProperty(variable, resolvedColor));
+    } else {
+      variables.forEach((variable) => root.style.removeProperty(variable));
+    }
+  }, [chatChromeTextColor, theme]);
 
   // Apply visual theme (default / sillytavern) to the document root
   useEffect(() => {

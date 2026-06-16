@@ -88,9 +88,9 @@ function formatAttributeModifier(score: number): string {
 
 const FIELD_LABEL_CLASS = "text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]";
 const TEXT_INPUT_CLASS =
-  "w-full rounded-lg border border-zinc-700/80 bg-zinc-950/70 px-3 py-2 text-sm text-[var(--foreground)] outline-none transition-colors focus:border-[var(--foreground)]/40";
+  "w-full rounded-lg border border-[var(--marinara-chat-chrome-input-border)] bg-[var(--marinara-chat-chrome-input-bg)] px-3 py-2 text-sm text-[var(--foreground)] outline-none transition-colors focus:border-[var(--marinara-chat-chrome-input-border-focus)]";
 const NUMBER_INPUT_CLASS =
-  "w-full rounded-lg border border-zinc-700/80 bg-zinc-950/70 px-2.5 py-1.5 text-sm text-[var(--foreground)] outline-none transition-colors focus:border-[var(--foreground)]/40";
+  "w-full rounded-lg border border-[var(--marinara-chat-chrome-input-border)] bg-[var(--marinara-chat-chrome-input-bg)] px-2.5 py-1.5 text-sm text-[var(--foreground)] outline-none transition-colors focus:border-[var(--marinara-chat-chrome-input-border-focus)]";
 
 function normalizeTextValue(value: unknown) {
   if (typeof value === "string") return value;
@@ -392,7 +392,7 @@ export function GameCharacterSheet({
       <div
         className={cn(
           NEUTRAL_SURFACE_VARIABLES,
-          "relative mx-4 flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-950/95 shadow-2xl",
+          "marinara-chat-popover relative mx-4 flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] shadow-2xl",
         )}
         onClick={(e) => e.stopPropagation()}
       >
@@ -403,14 +403,14 @@ export function GameCharacterSheet({
                 <button
                   onClick={handleCancelEdit}
                   disabled={isSaving}
-                  className="inline-flex h-8 items-center justify-center rounded-lg border border-zinc-700/80 bg-zinc-950/90 px-2.5 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-[var(--foreground)] disabled:opacity-60 sm:h-auto sm:px-3 sm:py-1.5"
+                  className="inline-flex h-8 items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-button-bg)] px-2.5 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)] disabled:opacity-60 sm:h-auto sm:px-3 sm:py-1.5"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => void handleSave()}
                   disabled={isSaving}
-                  className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg bg-zinc-900 px-2 text-xs font-semibold text-[var(--foreground)] ring-1 ring-zinc-700/80 transition-colors hover:bg-zinc-800 disabled:opacity-60 sm:h-auto sm:min-w-0 sm:px-3 sm:py-1.5"
+                  className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg bg-[var(--marinara-chat-chrome-highlight-bg)] px-2 text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--marinara-chat-chrome-panel-border)] transition-colors hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] disabled:opacity-60 sm:h-auto sm:min-w-0 sm:px-3 sm:py-1.5"
                   title={isSaving ? "Saving..." : "Save Sheet"}
                   aria-label={isSaving ? "Saving sheet" : "Save sheet"}
                 >
@@ -424,7 +424,7 @@ export function GameCharacterSheet({
                   <button
                     onClick={() => void handleRegenerate()}
                     disabled={isRegenerating || isSaving}
-                    className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-zinc-700/80 bg-zinc-950/90 px-2 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-[var(--foreground)] disabled:cursor-wait disabled:opacity-60 sm:h-auto sm:min-w-0 sm:px-3 sm:py-1.5"
+                    className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-button-bg)] px-2 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)] disabled:cursor-wait disabled:opacity-60 sm:h-auto sm:min-w-0 sm:px-3 sm:py-1.5"
                     title="Regenerate this sheet from character and current game context"
                     aria-label="Regenerate sheet"
                   >
@@ -436,7 +436,7 @@ export function GameCharacterSheet({
                   <button
                     onClick={() => setIsEditing(true)}
                     disabled={isRegenerating}
-                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-zinc-700/80 bg-zinc-950/90 p-0 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-[var(--foreground)] disabled:opacity-60 sm:h-auto sm:w-auto sm:min-w-0 sm:gap-1.5 sm:px-3 sm:py-1.5"
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-button-bg)] p-0 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)] disabled:opacity-60 sm:h-auto sm:w-auto sm:min-w-0 sm:gap-1.5 sm:px-3 sm:py-1.5"
                     title="Edit Sheet"
                     aria-label="Edit sheet"
                   >
@@ -451,17 +451,17 @@ export function GameCharacterSheet({
 
         <button
           onClick={onClose}
-          className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-lg p-0 text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-[var(--foreground)] sm:h-auto sm:w-auto sm:p-1.5"
+          className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-lg p-0 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)] sm:h-auto sm:w-auto sm:p-1.5"
           aria-label="Close character sheet"
           title="Close character sheet"
         >
           <X className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
         </button>
 
-        <div className="relative border-b border-zinc-700/80 bg-zinc-900/70 px-4 py-4 sm:px-5">
+        <div className="relative border-b border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-4 py-4 sm:px-5">
           <div className="flex items-center gap-3 sm:gap-4">
             {card.avatarUrl ? (
-              <span className="relative block h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 border-zinc-700/80 shadow-xl sm:h-20 sm:w-20">
+              <span className="relative block h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 border-[var(--marinara-chat-chrome-panel-border)] shadow-xl sm:h-20 sm:w-20">
                 <img
                   src={card.avatarUrl}
                   alt={card.title}
@@ -470,7 +470,7 @@ export function GameCharacterSheet({
                 />
               </span>
             ) : (
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl border-2 border-zinc-700/80 bg-zinc-900 text-xl font-bold text-[var(--muted-foreground)] sm:h-20 sm:w-20 sm:text-2xl">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl border-2 border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] text-xl font-bold text-[var(--muted-foreground)] sm:h-20 sm:w-20 sm:text-2xl">
                 {card.title[0]}
               </div>
             )}
@@ -501,7 +501,7 @@ export function GameCharacterSheet({
               )}
             </div>
             {card.level != null && (
-              <div className="mr-16 flex items-center gap-1 rounded border border-zinc-700/80 bg-zinc-950/70 px-1.5 py-0.5 sm:mr-0">
+              <div className="mr-16 flex items-center gap-1 rounded border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-input-bg)] px-1.5 py-0.5 sm:mr-0">
                 <span className="text-[0.4375rem] uppercase tracking-wider text-[var(--muted-foreground)]">LVL</span>
                 <span className="text-xs font-bold leading-none text-[var(--foreground)]">{card.level}</span>
               </div>
@@ -517,7 +517,7 @@ export function GameCharacterSheet({
         <div className="flex-1 overflow-y-auto">
           {isEditing && (
             <>
-              <div className="border-b border-zinc-700/80 px-5 py-4">
+              <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
                 <SectionHeader
                   icon={<Pencil size={12} />}
                   title="Sheet Details"
@@ -547,7 +547,7 @@ export function GameCharacterSheet({
                 </div>
               </div>
 
-              <div className="border-b border-zinc-700/80 px-5 py-4">
+              <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
                 <div className="mb-2.5 flex items-center justify-between gap-3">
                   <SectionHeader
                     icon={<Shield size={12} />}
@@ -609,7 +609,7 @@ export function GameCharacterSheet({
                           />
                           <button
                             onClick={() => removeAttribute(index)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700/80 px-2 text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-red-400"
+                            className="inline-flex items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] px-2 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-red-400"
                             title="Remove attribute"
                           >
                             <Trash2 size={13} />
@@ -618,7 +618,7 @@ export function GameCharacterSheet({
                       ))}
                       <button
                         onClick={addAttribute}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-zinc-700/80 px-3 py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-[var(--foreground)]"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--marinara-chat-chrome-panel-border)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)]"
                       >
                         <Plus size={13} />
                         Add Attribute
@@ -632,7 +632,7 @@ export function GameCharacterSheet({
                 )}
               </div>
 
-              <div className="border-b border-zinc-700/80 px-5 py-4">
+              <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
                 <div className="mb-2.5 flex items-center justify-between gap-3">
                   <SectionHeader
                     icon={<Zap size={12} />}
@@ -641,7 +641,7 @@ export function GameCharacterSheet({
                   />
                   <button
                     onClick={() => addListItem("abilities")}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-zinc-700/80 px-3 py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-[var(--foreground)]"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--marinara-chat-chrome-panel-border)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)]"
                   >
                     <Plus size={13} />
                     Add
@@ -659,7 +659,7 @@ export function GameCharacterSheet({
                       />
                       <button
                         onClick={() => removeListItem("abilities", index)}
-                        className="inline-flex items-center justify-center rounded-lg border border-zinc-700/80 px-2 text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-red-400"
+                        className="inline-flex items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] px-2 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-red-400"
                         title="Remove ability"
                       >
                         <Trash2 size={13} />
@@ -669,7 +669,7 @@ export function GameCharacterSheet({
                 </div>
               </div>
 
-              <div className="border-b border-zinc-700/80 px-5 py-4">
+              <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <div className="mb-2.5 flex items-center justify-between gap-3">
@@ -680,7 +680,7 @@ export function GameCharacterSheet({
                       />
                       <button
                         onClick={() => addListItem("strengths")}
-                        className="inline-flex items-center gap-1 rounded-lg border border-dashed border-zinc-700/80 px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-[var(--foreground)]"
+                        className="inline-flex items-center gap-1 rounded-lg border border-dashed border-[var(--marinara-chat-chrome-panel-border)] px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)]"
                       >
                         <Plus size={12} />
                         Add
@@ -698,7 +698,7 @@ export function GameCharacterSheet({
                           />
                           <button
                             onClick={() => removeListItem("strengths", index)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700/80 px-2 text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-red-400"
+                            className="inline-flex items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] px-2 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-red-400"
                             title="Remove strength"
                           >
                             <Trash2 size={13} />
@@ -716,7 +716,7 @@ export function GameCharacterSheet({
                       />
                       <button
                         onClick={() => addListItem("weaknesses")}
-                        className="inline-flex items-center gap-1 rounded-lg border border-dashed border-zinc-700/80 px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-[var(--foreground)]"
+                        className="inline-flex items-center gap-1 rounded-lg border border-dashed border-[var(--marinara-chat-chrome-panel-border)] px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)]"
                       >
                         <Plus size={12} />
                         Add
@@ -734,7 +734,7 @@ export function GameCharacterSheet({
                           />
                           <button
                             onClick={() => removeListItem("weaknesses", index)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700/80 px-2 text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-red-400"
+                            className="inline-flex items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] px-2 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-red-400"
                             title="Remove weakness"
                           >
                             <Trash2 size={13} />
@@ -746,7 +746,7 @@ export function GameCharacterSheet({
                 </div>
               </div>
 
-              <div className="border-b border-zinc-700/80 px-5 py-4">
+              <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
                 <div className="mb-2.5 flex items-center justify-between gap-3">
                   <SectionHeader
                     icon={<Info size={12} />}
@@ -755,7 +755,7 @@ export function GameCharacterSheet({
                   />
                   <button
                     onClick={addExtraEntry}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-zinc-700/80 px-3 py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-[var(--foreground)]"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--marinara-chat-chrome-panel-border)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)]"
                   >
                     <Plus size={13} />
                     Add Detail
@@ -786,7 +786,7 @@ export function GameCharacterSheet({
                       />
                       <button
                         onClick={() => removeExtraEntry(index)}
-                        className="inline-flex items-center justify-center rounded-lg border border-zinc-700/80 px-2 text-[var(--muted-foreground)] transition-colors hover:bg-zinc-900 hover:text-red-400 max-sm:h-10"
+                        className="inline-flex items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] px-2 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-red-400 max-sm:h-10"
                         title="Remove detail"
                       >
                         <Trash2 size={13} />
@@ -799,7 +799,7 @@ export function GameCharacterSheet({
           )}
 
           {!isEditing && hasRpgStats && previewGameCard?.rpgStats && (
-            <div className="border-b border-zinc-700/80 px-5 py-4">
+            <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
               <SectionHeader
                 icon={<Shield size={12} />}
                 title="Attributes"
@@ -810,7 +810,7 @@ export function GameCharacterSheet({
                   {previewGameCard.rpgStats.attributes.map((attr) => (
                     <div
                       key={attr.name}
-                      className="flex flex-col items-center rounded-lg border border-zinc-700/80 bg-zinc-900/70 px-2 py-1.5"
+                      className="flex flex-col items-center rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-2 py-1.5"
                     >
                       <span className="text-[0.5625rem] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
                         {attr.name}
@@ -835,7 +835,7 @@ export function GameCharacterSheet({
                           {hpValue}/{hpMax}
                         </span>
                       </div>
-                      <div className="h-2.5 overflow-hidden rounded-full bg-zinc-900 ring-1 ring-zinc-700/80">
+                      <div className="h-2.5 overflow-hidden rounded-full bg-[var(--marinara-chat-chrome-highlight-bg)] ring-1 ring-[var(--marinara-chat-chrome-panel-border)]">
                         <div
                           className="h-full rounded-full transition-all"
                           style={{
@@ -851,7 +851,7 @@ export function GameCharacterSheet({
           )}
 
           {card.stats && card.stats.length > 0 && (
-            <div className="border-b border-zinc-700/80 px-5 py-4">
+            <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
               <SectionHeader icon={<Shield size={12} />} title="Stats" className="text-[var(--muted-foreground)]" />
               <div className="space-y-2">
                 {card.stats.map((stat) => {
@@ -866,7 +866,7 @@ export function GameCharacterSheet({
                           {value}/{max}
                         </span>
                       </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-zinc-900 ring-1 ring-zinc-700/80">
+                      <div className="h-2 overflow-hidden rounded-full bg-[var(--marinara-chat-chrome-highlight-bg)] ring-1 ring-[var(--marinara-chat-chrome-panel-border)]">
                         <div
                           className="h-full rounded-full transition-all"
                           style={{
@@ -883,13 +883,13 @@ export function GameCharacterSheet({
           )}
 
           {!isEditing && previewGameCard && previewGameCard.abilities.length > 0 && (
-            <div className="border-b border-zinc-700/80 px-5 py-4">
+            <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
               <SectionHeader icon={<Zap size={12} />} title="Abilities" className="text-[var(--muted-foreground)]" />
               <div className="space-y-1">
                 {previewGameCard.abilities.map((ability, index) => (
                   <div
                     key={`${ability}-${index}`}
-                    className="rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs text-[var(--foreground)]/80"
+                    className="rounded-lg bg-[var(--marinara-chat-chrome-highlight-bg)] px-2.5 py-1.5 text-xs text-[var(--foreground)]/80"
                   >
                     {ability}
                   </div>
@@ -901,7 +901,7 @@ export function GameCharacterSheet({
           {!isEditing &&
             previewGameCard &&
             (previewGameCard.strengths.length > 0 || previewGameCard.weaknesses.length > 0) && (
-              <div className="border-b border-zinc-700/80 px-5 py-4">
+              <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
                 <div className="grid grid-cols-2 gap-3">
                   {previewGameCard.strengths.length > 0 && (
                     <div>
@@ -936,7 +936,7 @@ export function GameCharacterSheet({
             )}
 
           {!isEditing && previewGameCard && Object.keys(previewGameCard.extra).length > 0 && (
-            <div className="border-b border-zinc-700/80 px-5 py-4">
+            <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
               <SectionHeader icon={<Info size={12} />} title="Details" className="text-[var(--muted-foreground)]" />
               <div className="space-y-1.5 text-xs">
                 {Object.entries(previewGameCard.extra).map(([key, value]) => (
@@ -952,13 +952,13 @@ export function GameCharacterSheet({
           )}
 
           {card.inventory && card.inventory.length > 0 && (
-            <div className="border-b border-zinc-700/80 px-5 py-4">
+            <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
               <SectionHeader icon={<Swords size={12} />} title="Inventory" className="text-[var(--muted-foreground)]" />
               <div className="space-y-1">
                 {card.inventory.map((item) => (
                   <div
                     key={`${item.name}-${item.location ?? "bag"}`}
-                    className="flex items-center justify-between rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs"
+                    className="flex items-center justify-between rounded-lg bg-[var(--marinara-chat-chrome-highlight-bg)] px-2.5 py-1.5 text-xs"
                   >
                     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                       <span className="min-w-0 whitespace-normal break-words text-[var(--foreground)]/80 [overflow-wrap:anywhere]">
@@ -980,7 +980,7 @@ export function GameCharacterSheet({
           )}
 
           {card.customFields && Object.keys(card.customFields).length > 0 && (
-            <div className="border-b border-zinc-700/80 px-5 py-4">
+            <div className="border-b border-[var(--marinara-chat-chrome-panel-border)] px-5 py-4">
               <SectionHeader icon={<Sparkles size={12} />} title="Traits" className="text-[var(--muted-foreground)]" />
               <div className="space-y-1.5 text-xs">
                 {Object.entries(card.customFields).map(([key, value]) => (

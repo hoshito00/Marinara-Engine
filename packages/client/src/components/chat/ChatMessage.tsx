@@ -1689,8 +1689,10 @@ export const ChatMessage = memo(function ChatMessage({
         <div
           ref={msgRef}
           className={cn(
-            "mari-message group mb-4 flex gap-3 px-2",
+            "mari-message mari-roleplay-message-row group mb-4 flex justify-center gap-3 px-2",
             isUser ? "mari-message-user flex-row-reverse" : "mari-message-assistant",
+            useCompactRectangleAvatar && "mari-roleplay-message-row--rect-avatar",
+            (hideRoleplayAvatars || showRoleplayAvatarPanel) && "mari-roleplay-message-row--wide",
             multiSelectMode && isSelected && "ring-2 ring-[var(--destructive)]/50 rounded-lg bg-[var(--destructive)]/5",
           )}
           data-message-id={message.id}
@@ -1702,7 +1704,7 @@ export const ChatMessage = memo(function ChatMessage({
         >
           {/* Multi-select checkbox */}
           {multiSelectMode && (
-            <div className="flex items-start pt-2 flex-shrink-0">
+            <div className="mari-roleplay-selection-toggle flex items-start pt-2 flex-shrink-0">
               <button
                 type="button"
                 role="checkbox"
@@ -1797,14 +1799,16 @@ export const ChatMessage = memo(function ChatMessage({
           )}
 
           {/* Spacer if grouped (no avatar) */}
-          {isGrouped && !hideRoleplayAvatars && <div className={cn("flex-shrink-0", compactAvatarSpacerClass)} />}
+          {isGrouped && !hideRoleplayAvatars && (
+            <div className={cn("mari-roleplay-avatar-spacer flex-shrink-0", compactAvatarSpacerClass)} />
+          )}
 
           {/* Content */}
           <div
             className={cn(
-              "mari-message-body flex min-w-0 max-w-[82%] flex-col gap-0.5",
+              "mari-message-body mari-roleplay-message-body flex min-w-0 flex-col gap-0.5",
               isUser && "items-end",
-              editing && "w-[82%]",
+              editing && "mari-roleplay-message-body--editing",
             )}
           >
             {/* Name + time (only if not grouped) */}

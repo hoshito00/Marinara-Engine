@@ -61,6 +61,7 @@ import {
   useDeleteKnowledgeSource,
 } from "../../hooks/use-knowledge-sources";
 import { cn } from "../../lib/utils";
+import { MacroTextarea } from "../ui/MacroTextarea";
 import {
   getAgentRunIntervalMeta,
   getCadenceInputValue,
@@ -1750,32 +1751,36 @@ export function AgentEditor() {
                 Illustrator image connection from Settings → Connections, if one is configured.
               </p>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <label className="flex flex-col gap-1.5">
+                <div className="flex flex-col gap-1.5">
                   <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
                     Positive prompt / tags
                   </span>
-                  <textarea
+                  <MacroTextarea
                     value={localImagePositivePrompt}
-                    onChange={(e) => {
-                      setLocalImagePositivePrompt(e.target.value);
+                    onChange={(value) => {
+                      setLocalImagePositivePrompt(value);
                       markDirty();
                     }}
                     placeholder="masterpiece, best quality, detailed lighting"
+                    rows={3}
+                    title="Positive prompt / tags"
                     className="min-h-[5rem] resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/45 focus:border-[var(--primary)]/50"
                   />
-                </label>
-                <label className="flex flex-col gap-1.5">
+                </div>
+                <div className="flex flex-col gap-1.5">
                   <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Negative prompt</span>
-                  <textarea
+                  <MacroTextarea
                     value={localImageNegativePrompt}
-                    onChange={(e) => {
-                      setLocalImageNegativePrompt(e.target.value);
+                    onChange={(value) => {
+                      setLocalImageNegativePrompt(value);
                       markDirty();
                     }}
                     placeholder="lowres, bad anatomy, text artifacts"
+                    rows={3}
+                    title="Negative prompt"
                     className="min-h-[5rem] resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/45 focus:border-[var(--primary)]/50"
                   />
-                </label>
+                </div>
               </div>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 Saved on the Illustrator agent. Positive tags are appended after the generated prompt; negative tags are
@@ -3191,13 +3196,14 @@ export function AgentEditor() {
                 </span>
               </div>
             ) : (
-              <textarea
+              <MacroTextarea
                 value={localPrompt}
-                onChange={(e) => {
-                  setLocalPrompt(e.target.value);
+                onChange={(value) => {
+                  setLocalPrompt(value);
                   markDirty();
                 }}
                 rows={16}
+                title="Prompt Template"
                 placeholder="Write the system prompt for this agent…"
                 className="w-full resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)] max-h-[60vh] overflow-y-auto"
               />
@@ -3263,12 +3269,11 @@ export function AgentEditor() {
                         className="mb-2 w-full rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-xs ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                         placeholder="Short description shown in Chat Settings"
                       />
-                      <textarea
+                      <MacroTextarea
                         value={option.promptTemplate}
-                        onChange={(e) =>
-                          handleUpdatePromptTemplate(option.id, { promptTemplate: e.target.value })
-                        }
+                        onChange={(value) => handleUpdatePromptTemplate(option.id, { promptTemplate: value })}
                         rows={7}
+                        title={option.name ? `${option.name} Prompt` : `Prompt Option ${index + 1}`}
                         className="w-full resize-y rounded-lg bg-[var(--background)] px-3 py-2 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                         placeholder="Write the prompt template for this option…"
                       />

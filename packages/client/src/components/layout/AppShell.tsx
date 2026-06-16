@@ -826,7 +826,7 @@ export function AppShell() {
               data-component="TrackerDataSidebarMobile"
               aria-label="Tracker data panel"
               className={cn(
-                "mari-tracker-panel !fixed inset-y-0 z-50 w-[calc(100vw-0.5rem)] max-w-[24rem] overflow-hidden bg-zinc-950/95 pt-[env(safe-area-inset-top)] shadow-2xl ring-1 ring-zinc-700/80 backdrop-blur-xl",
+                "mari-tracker-panel !fixed inset-y-0 z-50 h-[100dvh] w-screen max-w-none overflow-hidden bg-zinc-950/95 pt-[env(safe-area-inset-top)] shadow-2xl ring-1 ring-zinc-700/80 backdrop-blur-xl",
                 trackerPanelSide === "left" ? "left-0" : "right-0",
               )}
               style={trackerPanelBackgroundStyle}
