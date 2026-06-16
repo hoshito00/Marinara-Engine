@@ -12,12 +12,18 @@ Paste a `<style>` block into your character's **Creator Notes** field (in the ch
 <style>
   [data-card-css] {
     border-left: 3px solid #ff69b4;
-    background: linear-gradient(90deg, rgba(255, 105, 180, 0.08) 0%, transparent 40%);
+  }
+  [data-card-css] .mari-message-name {
+    color: #ff8fd4;
+    text-shadow: 0 0 8px rgba(255, 105, 180, 0.5);
+  }
+  [data-card-css] .mari-message-content {
+    color: #ffd6f0;
   }
 </style>
 ```
 
-This gives your character a pink accent on their messages.
+This gives the character a pink accent border, a glowing pink name, and soft pink message text — and it works in both roleplay and conversation.
 
 > Card theming is **off by default**. Open **Chat Settings → Card Theming** and pick a mode (it only appears once an active character actually has CSS in its creator notes). See the modes below.
 
@@ -30,7 +36,7 @@ When a character with CSS in their creator notes is active, Marinara:
 1. Extracts every `<style>` block from the creator notes,
 2. Sanitizes the CSS (strips anything dangerous — see [What You Cannot Style](#what-you-cannot-style)),
 3. Scopes it so it can only affect the chat, and
-4. Injects it into the page inside an `@layer card-css` layer.
+4. Injects it into the page so its scoped selectors override the app's own message styling.
 
 Users choose how it's applied via **Chat Settings → Card Theming** (per chat):
 
@@ -127,6 +133,23 @@ Roleplay messages can contain HTML, so you have the most creative freedom — st
 | `[data-grouped]`                                | Present on consecutive (continuation) messages from the same character              |
 
 Works well: HTML structures, CSS animations (`@keyframes`, transitions), pseudo-elements (`::before`/`::after`), backgrounds, borders, shadows, gradients, and custom fonts (system/web-safe stacks, or embedded `@font-face` with font `data:` URIs).
+
+**Example — style the message itself (no custom HTML needed):**
+
+```css
+[data-card-css] .mari-message-bubble {
+  border: 1px solid rgba(255, 105, 180, 0.4);
+  border-radius: 12px;
+  background: rgba(255, 105, 180, 0.08);
+}
+[data-card-css] .mari-message-name {
+  color: #ff8fd4;
+  text-shadow: 0 0 8px rgba(255, 105, 180, 0.5);
+}
+[data-card-css] .mari-message-content {
+  color: #ffe3f4;
+}
+```
 
 ### Conversation Mode
 
@@ -234,7 +257,7 @@ These are stripped by the sanitizer for security:
 | `!important`                    | Stripped, so card CSS can't force-override app styles.                                                                                                                                                                           |
 | App theme tokens                | Declarations like `--primary: blue` or `--background: red` are stripped so card CSS can't repaint the app UI.                                                                                                                    |
 
-Because card CSS is injected in an `@layer card-css` layer, a rule that fights a style the app already applies may not win — prefer properties the UI doesn't already set (borders, shadows, backgrounds the element lacks, opacity, custom colors).
+Card CSS is injected with scoped selectors that out-specify the app's own message styles, so it can recolor text, swap backgrounds, change borders and fonts, and so on within the chat. The only things it can't override are what the sanitizer strips (above), anything outside the chat scope, and styles the app applies inline or with `!important` (for example your global chat font color/size) — card CSS can't use `!important` itself.
 
 **Custom fonts** — embed with base64 `data:` URIs, or use system/web-safe stacks:
 
