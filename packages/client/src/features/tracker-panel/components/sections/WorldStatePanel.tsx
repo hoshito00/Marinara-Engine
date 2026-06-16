@@ -6,10 +6,12 @@ import type { TrackerPanelSizeProfile, TrackerTemperatureUnit } from "../../../.
 import { cn } from "../../../../lib/utils";
 import {
   getWorldAmbienceStyle,
-  getWorldDashboardGridClass,
   getWorldDateDisplay,
+  getWorldTimeDisplay,
   WORLD_FREEFORM_DATE_GRID_BASE_CLASS,
+  WORLD_FREEFORM_DATE_GRID_PHRASE_TIME_CLASS,
   WORLD_GRID_BASE_CLASS,
+  WORLD_GRID_PHRASE_TIME_CLASS,
 } from "../../lib/world-state-display";
 import { SectionHeader } from "../controls/SectionControls";
 import { WorldDateTile, WorldTimeTile } from "./WorldDateTimeTiles";
@@ -35,9 +37,14 @@ export function WorldStatePanel({
 }) {
   const dateDisplay = getWorldDateDisplay(state?.date);
   const hasFreeformDate = dateDisplay.kind === "freeform";
-  const dashboardGridClass = getWorldDashboardGridClass(state?.weather, state?.temperature, state?.location, {
-    hasFreeformDate,
-  });
+  const hasPhraseTime = getWorldTimeDisplay(state?.time).kind === "phrase";
+  const gridColumnsClass = hasFreeformDate
+    ? hasPhraseTime
+      ? WORLD_FREEFORM_DATE_GRID_PHRASE_TIME_CLASS
+      : WORLD_FREEFORM_DATE_GRID_BASE_CLASS
+    : hasPhraseTime
+      ? WORLD_GRID_PHRASE_TIME_CLASS
+      : WORLD_GRID_BASE_CLASS;
 
   return (
     <div
@@ -56,11 +63,7 @@ export function WorldStatePanel({
 
       {!collapsed && (
         <div
-          className={cn(
-            "relative grid gap-px p-1 @min-[380px]:gap-1 @min-[380px]:p-1.5",
-            hasFreeformDate ? WORLD_FREEFORM_DATE_GRID_BASE_CLASS : WORLD_GRID_BASE_CLASS,
-            dashboardGridClass,
-          )}
+          className={cn("relative grid gap-px p-1 @min-[380px]:gap-1 @min-[380px]:p-1.5", gridColumnsClass)}
         >
           <WorldDateTile
             value={state?.date}
@@ -86,7 +89,7 @@ export function WorldStatePanel({
           <WorldLocationPlate
             value={state?.location}
             onSave={(value) => onSaveField("location", value || null)}
-            className="col-span-3 @min-[380px]:col-span-1"
+            className="col-span-full"
             lockKey={worldTrackerLockKey("location")}
           />
         </div>

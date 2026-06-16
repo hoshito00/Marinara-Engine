@@ -44,7 +44,7 @@ export function WorldDateTile({
               {display.main}
             </span>
             {display.detail && (
-              <span className="mt-0.5 line-clamp-1 max-w-full break-words text-[0.4375rem] font-semibold leading-[0.55rem] text-[var(--muted-foreground)]/78 [overflow-wrap:anywhere]">
+              <span className="mt-0.5 line-clamp-1 max-w-full break-words text-[0.5rem] font-semibold leading-[0.625rem] text-[var(--muted-foreground)]/82 [overflow-wrap:anywhere]">
                 {display.detail}
               </span>
             )}
@@ -106,6 +106,8 @@ export function WorldTimeTile({
 }) {
   const lock = useTrackerFieldLock(lockKey);
   const display = getWorldTimeDisplay(value);
+  const isPhraseTime = display.kind === "phrase";
+
   return (
     <WorldTileShell label="Time">
       <WorldRenderedEdit
@@ -113,24 +115,42 @@ export function WorldTimeTile({
         value={display.raw || value}
         onSave={onSave}
         placeholder="Set time"
-        className="grid grid-rows-[minmax(0,1fr)_0.625rem] px-1 pb-0.5 pt-0.5 text-center"
+        className={cn(
+          "overflow-hidden text-center",
+          isPhraseTime
+            ? "flex flex-col items-center justify-center px-0.5 py-1"
+            : "grid grid-rows-[minmax(0,1fr)_0.625rem] px-1 pb-0.5 pt-0.5",
+        )}
         inputClassName="text-center"
         showEditHint={false}
         {...lock}
       >
-        <div className="flex min-h-0 items-center justify-center overflow-visible">
-          <WorldClockFace hour={display.hour} minute={display.minute} />
-        </div>
-        <div className="flex min-w-0 max-w-full translate-y-px items-baseline justify-center gap-0.5">
-          <span className="truncate text-[0.5625rem] font-black leading-[0.625rem] text-[var(--foreground)]">
-            {display.main}
-          </span>
-          {display.suffix && (
-            <span className="shrink-0 text-[0.4375rem] font-bold leading-none text-[var(--muted-foreground)]">
-              {display.suffix}
+        {isPhraseTime ? (
+          <>
+            <span className="mb-0.5 max-w-full truncate text-[0.4375rem] font-bold uppercase leading-none text-[var(--muted-foreground)]/75">
+              Time
             </span>
-          )}
-        </div>
+            <span className="line-clamp-3 max-w-full whitespace-normal break-words text-center text-[0.625rem] font-black leading-[0.7rem] text-[var(--foreground)]">
+              {display.main}
+            </span>
+          </>
+        ) : (
+          <>
+            <div className="flex min-h-0 items-center justify-center overflow-visible">
+              <WorldClockFace hour={display.hour} minute={display.minute} />
+            </div>
+            <div className="flex min-w-0 max-w-full translate-y-px items-baseline justify-center gap-0.5">
+              <span className="truncate text-[0.5625rem] font-black leading-[0.625rem] text-[var(--foreground)]">
+                {display.main}
+              </span>
+              {display.suffix && (
+                <span className="shrink-0 text-[0.4375rem] font-bold leading-none text-[var(--muted-foreground)]">
+                  {display.suffix}
+                </span>
+              )}
+            </div>
+          </>
+        )}
       </WorldRenderedEdit>
     </WorldTileShell>
   );

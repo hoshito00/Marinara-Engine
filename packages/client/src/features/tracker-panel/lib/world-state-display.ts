@@ -3,53 +3,17 @@ import type { GameState } from "@marinara-engine/shared";
 import type { TrackerTemperatureUnit } from "../../../stores/ui.store";
 import { visibleText } from "./tracker-display";
 
+// Row 1 holds Date / Time / Forecast; the forecast column flexes to fill the
+// remaining width so weather is never squeezed. Location renders on its own
+// full-width row below (see WorldStatePanel), so no per-tile width balancing is
+// needed. Word-based times ("Afternoon") get a wider Time column so the word
+// stays readable and wraps on spaces instead of shrinking; clock times keep the
+// compact 2.5rem column.
 export const WORLD_GRID_BASE_CLASS = "grid-cols-[2.5rem_2.5rem_minmax(0,1fr)]";
+export const WORLD_GRID_PHRASE_TIME_CLASS = "grid-cols-[2.5rem_4.5rem_minmax(0,1fr)]";
 export const WORLD_FREEFORM_DATE_GRID_BASE_CLASS = "grid-cols-[minmax(3.8rem,4.45rem)_2.5rem_minmax(0,1fr)]";
-export const WORLD_GRID_BALANCED_CLASS =
-  "@min-[380px]:grid-cols-[2.5rem_2.5rem_minmax(6.25rem,1fr)_minmax(7.5rem,1.35fr)]";
-export const WORLD_GRID_FORECAST_HEAVY_CLASS =
-  "@min-[380px]:grid-cols-[2.5rem_2.5rem_minmax(7rem,1.05fr)_minmax(7.25rem,1.2fr)]";
-export const WORLD_GRID_LOCATION_HEAVY_CLASS =
-  "@min-[380px]:grid-cols-[2.5rem_2.5rem_minmax(7rem,0.95fr)_minmax(9rem,1.45fr)]";
-export const WORLD_FREEFORM_DATE_GRID_BALANCED_CLASS =
-  "@min-[380px]:grid-cols-[minmax(4.1rem,4.7rem)_2.5rem_minmax(5rem,0.86fr)_minmax(7.25rem,1.35fr)]";
-export const WORLD_FREEFORM_DATE_GRID_FORECAST_HEAVY_CLASS =
-  "@min-[380px]:grid-cols-[minmax(4.1rem,4.7rem)_2.5rem_minmax(5.75rem,1fr)_minmax(6.75rem,1.1fr)]";
-export const WORLD_FREEFORM_DATE_GRID_LOCATION_HEAVY_CLASS =
-  "@min-[380px]:grid-cols-[minmax(4.1rem,4.7rem)_2.5rem_minmax(5rem,0.75fr)_minmax(8.25rem,1.45fr)]";
-
-type WorldDashboardGridClassOptions = {
-  hasFreeformDate?: boolean;
-};
-
-export function getWorldTileTextNeed(value: string | null | undefined, fallback: string) {
-  const text = visibleText(value, fallback).replace(/\s+/g, " ");
-  const longestWord = text.split(" ").reduce((longest, word) => Math.max(longest, word.length), 0);
-  return text.length + longestWord * 0.7;
-}
-
-export function getWorldDashboardGridClass(
-  weather: string | null | undefined,
-  temperature: string | null | undefined,
-  location: string | null | undefined,
-  options: WorldDashboardGridClassOptions = {},
-) {
-  const { hasFreeformDate = false } = options;
-  const forecastNeed =
-    getWorldTileTextNeed(weather, "Set weather") + Math.min(8, getWorldTileTextNeed(temperature, "--") * 0.35);
-  const locationNeed = getWorldTileTextNeed(location, "Set location");
-  const hasLocation = visibleText(location, "").length > 0;
-  if (hasLocation && locationNeed >= forecastNeed + 2) {
-    return hasFreeformDate ? WORLD_FREEFORM_DATE_GRID_LOCATION_HEAVY_CLASS : WORLD_GRID_LOCATION_HEAVY_CLASS;
-  }
-  if (forecastNeed >= locationNeed + 4) {
-    return hasFreeformDate ? WORLD_FREEFORM_DATE_GRID_FORECAST_HEAVY_CLASS : WORLD_GRID_FORECAST_HEAVY_CLASS;
-  }
-  if (locationNeed >= forecastNeed + 6) {
-    return hasFreeformDate ? WORLD_FREEFORM_DATE_GRID_LOCATION_HEAVY_CLASS : WORLD_GRID_LOCATION_HEAVY_CLASS;
-  }
-  return hasFreeformDate ? WORLD_FREEFORM_DATE_GRID_BALANCED_CLASS : WORLD_GRID_BALANCED_CLASS;
-}
+export const WORLD_FREEFORM_DATE_GRID_PHRASE_TIME_CLASS =
+  "grid-cols-[minmax(3.8rem,4.45rem)_4.5rem_minmax(0,1fr)]";
 
 export const WORLD_MONTH_LABELS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 export const WORLD_MONTH_ALIASES: Record<string, number> = {
@@ -204,7 +168,7 @@ export type WorldDateDisplay = ReturnType<typeof getWorldDateDisplay>;
 
 export function getWorldTimeDisplay(time: string | null | undefined) {
   const text = (time ?? "").trim();
-  if (!text) return { main: "--:--", suffix: "", raw: "", hour: null, minute: null };
+  if (!text) return { kind: "empty" as const, main: "--:--", suffix: "", raw: "", hour: null, minute: null };
 
   const meridiem = text.match(/\b(1[0-2]|0?\d)(?::([0-5]\d))?\s*([ap])\.?m?\.?\b/i);
   if (meridiem) {
@@ -213,6 +177,7 @@ export function getWorldTimeDisplay(time: string | null | undefined) {
     const marker = meridiem[3]!.toLowerCase();
     const hour = marker === "p" ? (displayHour % 12) + 12 : displayHour % 12;
     return {
+      kind: "clock" as const,
       main: `${meridiem[1]!.padStart(2, "0")}:${meridiem[2] ?? "00"}`,
       suffix: `${meridiem[3]!.toUpperCase()}M`,
       hour,
@@ -226,6 +191,7 @@ export function getWorldTimeDisplay(time: string | null | undefined) {
     const hour = Number(twentyFourHour[1]);
     const minute = Number(twentyFourHour[2]);
     return {
+      kind: "clock" as const,
       main: `${twentyFourHour[1]!.padStart(2, "0")}:${twentyFourHour[2]}`,
       suffix: "",
       hour,
@@ -234,7 +200,9 @@ export function getWorldTimeDisplay(time: string | null | undefined) {
     };
   }
 
-  return { main: text, suffix: "", raw: text, hour: null, minute: null };
+  // Word-based time ("Late", "Midnight", "Just before dawn") — no clock face,
+  // shown as a wrapped phrase so it is never truncated to "Late...".
+  return { kind: "phrase" as const, main: text, suffix: "", raw: text, hour: null, minute: null };
 }
 
 export function getWeatherEmoji(weather: string | null | undefined) {
