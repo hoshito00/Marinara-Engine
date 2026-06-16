@@ -14,6 +14,7 @@ import {
   usePersonaGalleryImages,
   useUploadPersonaGalleryImage,
   useDeletePersonaGalleryImage,
+  useTagPersonaGalleryImage,
   type PersonaGalleryImage,
 } from "../../hooks/use-characters";
 import { useConnections } from "../../hooks/use-connections";
@@ -55,6 +56,7 @@ import { HelpTooltip } from "../ui/HelpTooltip";
 import { ColorPicker } from "../ui/ColorPicker";
 import { ExpandedTextarea } from "../ui/ExpandedTextarea";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
+import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
 import { api } from "../../lib/api-client";
 import { parseTrackerCardColorConfig, serializeTrackerCardColorConfig } from "../../lib/tracker-card-colors";
 import {
@@ -186,6 +188,7 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
   const { data: images, isLoading } = usePersonaGalleryImages(personaId);
   const upload = useUploadPersonaGalleryImage(personaId);
   const remove = useDeletePersonaGalleryImage(personaId);
+  const tag = useTagPersonaGalleryImage(personaId);
   const [lightbox, setLightbox] = useState<PersonaGalleryImage | null>(null);
 
   const handleUpload = useCallback(
@@ -250,6 +253,7 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
               key={image.id}
               className="group relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md"
             >
+              <CustomEmojiTagButton image={image} onApply={(patch) => tag.mutate({ imageId: image.id, patch })} />
               <button
                 type="button"
                 className="block aspect-square w-full bg-[var(--secondary)]"

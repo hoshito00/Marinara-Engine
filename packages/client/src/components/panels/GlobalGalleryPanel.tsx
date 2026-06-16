@@ -7,12 +7,14 @@ import { toast } from "sonner";
 import { cn } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
+import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
 import {
   useGlobalGalleryImages,
   useGalleryFolders,
   useUploadGlobalGalleryImages,
   useDeleteGlobalGalleryImage,
   useMoveGlobalGalleryImage,
+  useTagGlobalGalleryImage,
   useCreateGalleryFolder,
   useRenameGalleryFolder,
   useDeleteGalleryFolder,
@@ -28,6 +30,7 @@ export function GlobalGalleryPanel() {
   const upload = useUploadGlobalGalleryImages();
   const removeImage = useDeleteGlobalGalleryImage();
   const moveImage = useMoveGlobalGalleryImage();
+  const tag = useTagGlobalGalleryImage();
   const createFolder = useCreateGalleryFolder();
   const renameFolder = useRenameGalleryFolder();
   const deleteFolder = useDeleteGalleryFolder();
@@ -338,6 +341,7 @@ export function GlobalGalleryPanel() {
                 dragImageId === image.id && "opacity-50",
               )}
             >
+              <CustomEmojiTagButton image={image} onApply={(patch) => tag.mutate({ imageId: image.id, patch })} />
               <button
                 type="button"
                 className="block aspect-square w-full bg-[var(--secondary)]"

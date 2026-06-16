@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
+import type { CustomKind, CustomTagPatch } from "../lib/custom-emoji";
 
 export interface GlobalGalleryImage {
   id: string;
@@ -13,6 +14,8 @@ export interface GlobalGalleryImage {
   model: string;
   width: number | null;
   height: number | null;
+  customKind: CustomKind | null;
+  customName: string | null;
   createdAt: string;
   url: string;
 }
@@ -99,6 +102,17 @@ export function useMoveGlobalGalleryImage() {
       if (context?.previous) qc.setQueryData(globalGalleryKeys.images, context.previous);
     },
     onSettled: () => {
+      qc.invalidateQueries({ queryKey: globalGalleryKeys.images });
+    },
+  });
+}
+
+export function useTagGlobalGalleryImage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ imageId, patch }: { imageId: string; patch: CustomTagPatch }) =>
+      api.patch<GlobalGalleryImage>(`/global-gallery/${imageId}/tag`, patch),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: globalGalleryKeys.images });
     },
   });
