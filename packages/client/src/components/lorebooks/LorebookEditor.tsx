@@ -2048,15 +2048,22 @@ export function LorebookEditor() {
                       ref={entryListRef}
                       className={cn(
                         "space-y-1.5",
-                        // Highlight the zone when an entry from another
-                        // container is being dragged toward it.
-                        draggingEntryIdx !== null &&
-                          dragSourceContainer !== null &&
-                          dropTargetContainer === null &&
+                        // Highlight while an entry from another container, or a nested
+                        // folder being un-nested, is dragged toward this root zone.
+                        ((draggingEntryIdx !== null && dragSourceContainer !== null && dropTargetContainer === null) ||
+                          (draggingFolderIdx !== null && folderRootDropActive)) &&
                           "rounded-xl ring-1 ring-amber-400/40 bg-amber-400/5 transition-colors",
                       )}
-                      onDragOver={handleRootListDragOver}
-                      onDrop={commitEntryDrop}
+                      onDragOver={(e) => {
+                        // Dragging a folder down into the root-entries area un-nests it to
+                        // the top level (the root entries already live there).
+                        if (draggingFolderIdx !== null) handleFolderRootDragOver(e);
+                        else handleRootListDragOver(e);
+                      }}
+                      onDrop={(e) => {
+                        if (draggingFolderIdx !== null) commitFolderDrop(e);
+                        else commitEntryDrop(e);
+                      }}
                     >
                       {(entriesByContainer.get(null) ?? []).length === 0 && (
                         <p
@@ -2065,12 +2072,16 @@ export function LorebookEditor() {
                             // Only call out the empty-root zone while the user
                             // is actively dragging an entry from a folder; in
                             // the steady state it would just be visual noise.
-                            draggingEntryIdx !== null && dragSourceContainer !== null ? "opacity-100" : "opacity-50",
+                            draggingFolderIdx !== null || (draggingEntryIdx !== null && dragSourceContainer !== null)
+                              ? "opacity-100"
+                              : "opacity-50",
                           )}
                         >
-                          {draggingEntryIdx !== null && dragSourceContainer !== null
-                            ? "Drop here to move out of the folder"
-                            : "No entries at the root level"}
+                          {draggingFolderIdx !== null
+                            ? "Drop here to move the folder to the top level"
+                            : draggingEntryIdx !== null && dragSourceContainer !== null
+                              ? "Drop here to move out of the folder"
+                              : "No entries at the root level"}
                         </p>
                       )}
                       {(entriesByContainer.get(null) ?? []).map((entry, idx) => {
@@ -2116,10 +2127,13 @@ export function LorebookEditor() {
                               onDragHandleMouseUp={() => setEntryDragReadyIdx(null)}
                               onDragStart={(e) => handleEntryDragStart(null, idx, entry.id, e)}
                               onDragOver={(e) => {
+                                // Let folder drags fall through to the root list (un-nest).
+                                if (draggingFolderIdx !== null) return;
                                 e.stopPropagation();
                                 handleEntryDragOver(null, idx, e);
                               }}
                               onDrop={(e) => {
+                                if (draggingFolderIdx !== null) return;
                                 e.stopPropagation();
                                 commitEntryDrop(e);
                               }}
