@@ -54,6 +54,8 @@ import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useGameAssetStore } from "../../stores/game-asset.store";
 import { useGameModeStore } from "../../stores/game-mode.store";
 import { useUIStore } from "../../stores/ui.store";
+import { useChatStore } from "../../stores/chat.store";
+import { parseChatMetadata } from "../../lib/chat-display";
 import { createMessageMacroResolver, findCharacterByName } from "../../lib/chat-macros";
 import { animateTextHtml } from "./AnimatedText";
 import { ttsService } from "../../lib/tts-service";
@@ -958,6 +960,7 @@ export function GameNarration({
 }: GameNarrationProps) {
   const { translations, translating } = useTranslate();
   const { applyToAIOutput } = useApplyRegex();
+  const scopedRegexMode = useChatStore((s) => parseChatMetadata(s.activeChat?.metadata).scopedRegexMode);
   const [activeIndex, setActiveIndex] = useState(0);
   const [visibleChars, setVisibleChars] = useState(0);
   const [logsOpen, setLogsOpen] = useState(false);
@@ -1078,6 +1081,13 @@ export function GameNarration({
     for (let index = messages.length - 1, depth = 0; index >= 0; index--, depth++) {
       byId.set(messages[index]!.id, depth);
     }
+    return byId;
+  }, [messages]);
+
+  // Per-message speaker, so scoped regex can match a segment's character in exclusive mode.
+  const messageCharacterById = useMemo(() => {
+    const byId = new Map<string, string | null>();
+    for (const m of messages) byId.set(m.id, m.characterId ?? null);
     return byId;
   }, [messages]);
 
@@ -1342,9 +1352,11 @@ export function GameNarration({
       return applyToAIOutput(text, {
         depth: sourceMessageId ? messageDepthById.get(sourceMessageId) : undefined,
         resolveMacros: resolveMacrosForText,
+        scopedMode: scopedRegexMode,
+        characterId: sourceMessageId ? messageCharacterById.get(sourceMessageId) : undefined,
       });
     },
-    [applyToAIOutput, messageDepthById],
+    [applyToAIOutput, messageDepthById, messageCharacterById, scopedRegexMode],
   );
 
   const prepareSegmentText = useCallback(
