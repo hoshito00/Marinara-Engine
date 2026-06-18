@@ -2,11 +2,13 @@
 // Shared utilities, helpers, and types used across
 // the ConversationMessage* family of components.
 // ──────────────────────────────────────────────
-import { type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useMemo, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { ChevronRight, EyeOff, FileText, X } from "lucide-react";
 import type { MessageExtra, QuoteFormat } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
+import { renderInlineWithCustomEmojis } from "../../lib/custom-emoji-render";
+import { useCustomEmojis } from "../../hooks/use-custom-emojis";
 import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { ImagePromptPanel } from "./ImagePromptPanel";
 import { SwipeJumpControl } from "./SwipeJumpControl";
@@ -337,6 +339,12 @@ export function MessageContent({
   mentionNames?: string[];
   onImageOpen: (url: string) => void;
 }) {
+  const { data: customEmojis } = useCustomEmojis();
+  const emojiMap = useMemo(
+    () => new Map((customEmojis ?? []).map((emoji) => [emoji.name, emoji.url] as const)),
+    [customEmojis],
+  );
+
   if (IMAGE_URL_RE.test(content.trim())) {
     const url = content.trim();
     return (
@@ -346,9 +354,13 @@ export function MessageContent({
     );
   }
   const compacted = content.replace(/\n{3,}/g, "\n\n");
-  const renderInline = mentionNames?.length
+  const baseInline = mentionNames?.length
     ? (text: string, kp: string) => highlightMentions(applyInlineMarkdown(text, kp), mentionNames, kp)
     : applyInlineMarkdown;
+  const renderInline =
+    emojiMap.size > 0
+      ? (text: string, kp: string) => renderInlineWithCustomEmojis(text, kp, emojiMap, baseInline)
+      : baseInline;
   return <>{renderMarkdownBlocks(compacted, renderInline)}</>;
 }
 
