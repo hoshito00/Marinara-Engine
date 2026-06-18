@@ -96,6 +96,7 @@ import {
   scoreMusic,
   scoreAmbient,
   serializeResolvedSkillCheckTag,
+  parseTrackerFieldLocks,
 } from "@marinara-engine/shared";
 import { mergeCustomParameters } from "./generate/generate-route-utils.js";
 import {
@@ -7701,22 +7702,31 @@ export async function gameRoutes(app: FastifyInstance) {
     });
     if (!restoreMsg) throw new Error("Failed to create restore message");
 
-    // Clone the snapshot state onto the new message
-    await stateStore.create({
-      chatId: input.chatId,
-      messageId: restoreMsg.id,
-      swipeIndex: 0,
-      date: snapshot.date,
-      time: snapshot.time,
-      location: snapshot.location,
-      weather: snapshot.weather,
-      temperature: snapshot.temperature,
-      presentCharacters: JSON.parse((snapshot.presentCharacters as string) ?? "[]"),
-      recentEvents: JSON.parse((snapshot.recentEvents as string) ?? "[]"),
-      playerStats: snapshot.playerStats ? JSON.parse(snapshot.playerStats as string) : null,
-      personaStats: snapshot.personaStats ? JSON.parse(snapshot.personaStats as string) : null,
-      committed: true,
-    });
+    // Clone the snapshot state onto the new message, preserving tracker field
+    // locks and manual overrides so they keep protecting fields after a restore.
+    const manualOverrides =
+      typeof snapshot.manualOverrides === "string"
+        ? (JSON.parse(snapshot.manualOverrides) as Record<string, string>)
+        : null;
+    await stateStore.create(
+      {
+        chatId: input.chatId,
+        messageId: restoreMsg.id,
+        swipeIndex: 0,
+        date: snapshot.date,
+        time: snapshot.time,
+        location: snapshot.location,
+        weather: snapshot.weather,
+        temperature: snapshot.temperature,
+        presentCharacters: JSON.parse((snapshot.presentCharacters as string) ?? "[]"),
+        recentEvents: JSON.parse((snapshot.recentEvents as string) ?? "[]"),
+        playerStats: snapshot.playerStats ? JSON.parse(snapshot.playerStats as string) : null,
+        personaStats: snapshot.personaStats ? JSON.parse(snapshot.personaStats as string) : null,
+        fieldLocks: parseTrackerFieldLocks(snapshot.fieldLocks),
+        committed: true,
+      },
+      manualOverrides,
+    );
 
     // Restore chat metadata fields from checkpoint
     const chat = await chats.getById(input.chatId);
