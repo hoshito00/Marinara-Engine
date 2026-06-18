@@ -810,6 +810,11 @@ class FileTableStore {
   private migratedFromSqlite: TableSnapshotManifest["migratedFromSqlite"];
   private legacyRepair: TableSnapshotManifest["legacyRepair"];
   private loadedManifest: TableSnapshotManifest | null = null;
+  // Copy-on-write rollback state for the active transaction: a table is cloned
+  // into activeTxSnapshots the first time the transaction mutates it (tracked in
+  // activeTxDirtyTables). Null when no transaction is in flight.
+  private activeTxSnapshots: Map<string, Row[]> | null = null;
+  private activeTxDirtyTables: Set<string> | null = null;
 
   constructor(
     private readonly rootDir: string,
@@ -846,20 +851,51 @@ class FileTableStore {
   }
 
   async transaction<T>(fn: (tx: FileNativeDB) => Promise<T> | T, tx: FileNativeDB): Promise<T> {
-    const tableSnapshot = new Map<string, Row[]>(
-      Array.from(this.tables, ([table, rows]) => [table, rows.map((row) => ({ ...row }))]),
-    );
+    // Copy-on-write rollback: instead of cloning every table up front (O(total
+    // rows) per call, on the per-turn setMemories hot path) and restoring the
+    // whole map on throw (which also dropped concurrent writes to untouched
+    // tables), snapshot each table only on its first mutation and restore only
+    // those. Nested calls reuse the outermost call's tracking.
+    const isOutermost = this.activeTxSnapshots === null;
     const dirtySnapshot = this.dirty;
     const dirtyTablesSnapshot = new Set(this.dirtyTables);
+    if (isOutermost) {
+      this.activeTxSnapshots = new Map();
+      this.activeTxDirtyTables = new Set();
+    }
 
     try {
       return await fn(tx);
     } catch (err) {
-      this.tables = tableSnapshot;
+      if (isOutermost && this.activeTxDirtyTables && this.activeTxSnapshots) {
+        for (const tableName of this.activeTxDirtyTables) {
+          const snapshot = this.activeTxSnapshots.get(tableName);
+          if (snapshot) this.tables.set(tableName, snapshot);
+        }
+      }
       this.dirty = dirtySnapshot;
       this.dirtyTables = dirtyTablesSnapshot;
       throw err;
+    } finally {
+      if (isOutermost) {
+        this.activeTxSnapshots = null;
+        this.activeTxDirtyTables = null;
+      }
     }
+  }
+
+  /**
+   * Snapshot a table's current rows the first time the active transaction mutates
+   * it, so a rollback can restore just that table. No-op outside a transaction or
+   * after the table has already been snapshotted this transaction. Must be called
+   * BEFORE the in-place mutation so the snapshot captures the pre-mutation state.
+   */
+  private recordTxMutation(tableName: string) {
+    if (!this.activeTxSnapshots || !this.activeTxDirtyTables) return;
+    if (this.activeTxDirtyTables.has(tableName)) return;
+    const currentRows = this.tables.get(tableName);
+    this.activeTxSnapshots.set(tableName, currentRows ? currentRows.map((row) => ({ ...row })) : []);
+    this.activeTxDirtyTables.add(tableName);
   }
 
   select(projection?: Projection): SelectFromBuilder {
@@ -877,6 +913,7 @@ class FileTableStore {
             const conflictColumns = normalizeConflictTargets(onConflict?.target);
             const inputRows = Array.isArray(rows) ? rows : [rows];
             const target = this.rows(meta.name);
+            this.recordTxMutation(meta.name);
             for (const input of inputRows) {
               const row = prepareInsertRow(meta, input);
               const duplicateIndex = findDuplicateIndex(meta, target, row, conflictColumns);
@@ -914,6 +951,7 @@ class FileTableStore {
           executable(async () => {
             const target = this.rows(meta.name);
             let changed = false;
+            this.recordTxMutation(meta.name);
             target.forEach((row, index) => {
               const ctx = this.contextForRow(meta, row, index);
               if (!evaluateCondition(condition, ctx)) return;
@@ -1027,6 +1065,7 @@ class FileTableStore {
       }
     });
     if (deleted.length === 0) return;
+    this.recordTxMutation(meta.name);
     this.tables.set(meta.name, kept);
     this.markDirty(meta.name);
     this.applyCascades(meta.name as FileBackedTable, deleted);
