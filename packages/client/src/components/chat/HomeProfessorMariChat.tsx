@@ -2097,7 +2097,7 @@ export function HomeProfessorMariChat({
                 animate={{ opacity: 1, y: 0, rotateX: 0, transformOrigin: "top center" }}
                 exit={{ opacity: 0, y: 12, rotateX: 8, transformOrigin: "bottom center" }}
                 transition={PROFESSOR_MARI_PANE_TRANSITION}
-                className="min-w-0"
+                className={cn("min-w-0", mobileFocusMode && "h-full")}
               >
                 <ProfessorMariSkillsMenu
                   skills={skills}
@@ -2116,6 +2116,11 @@ export function HomeProfessorMariChat({
                   onSave={() => void handleSaveSkill()}
                   onDelete={(id) => void handleDeleteSkill(id)}
                   onToggle={(skill) => void handleToggleSkill(skill)}
+                  className={
+                    mobileFocusMode
+                      ? "h-full rounded-none border-0 bg-[var(--background)] sm:h-[clamp(24rem,70dvh,31rem)] sm:rounded-lg sm:border sm:bg-[var(--background)]/70"
+                      : undefined
+                  }
                 />
               </motion.div>
             ) : (

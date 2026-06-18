@@ -297,10 +297,6 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
     };
 
     update();
-    if (!isTop) {
-      window.addEventListener("resize", update);
-      return () => window.removeEventListener("resize", update);
-    }
 
     let frame = 0;
     let discoveryObserver: MutationObserver | null = null;
