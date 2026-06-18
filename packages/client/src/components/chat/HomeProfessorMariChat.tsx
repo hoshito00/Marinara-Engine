@@ -1320,32 +1320,33 @@ function ProfessorMariSkillsDrawer({
             skills.map((skill) => {
               const active = selectedSkill?.id === skill.id;
               return (
-                <button
+                <div
                   key={skill.id}
-                  type="button"
-                  onClick={() => onSelect(skill.id)}
                   className={cn(
-                    "group flex w-full min-w-0 items-center gap-2 rounded-lg border px-2 py-2 text-left transition-colors",
+                    "group flex w-full min-w-0 items-stretch gap-1 rounded-lg border transition-colors",
                     active
                       ? "border-[var(--primary)]/45 bg-[var(--primary)]/10"
                       : "border-[var(--border)]/70 bg-[var(--card)]/70 hover:bg-[var(--accent)]/70",
                   )}
                 >
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <span className="truncate text-[0.75rem] font-semibold text-[var(--foreground)]">{skill.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => onSelect(skill.id)}
+                    className="flex min-w-0 flex-1 items-center px-2 py-2 text-left"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-[0.75rem] font-semibold text-[var(--foreground)]">{skill.name}</span>
+                      </span>
+                      <span className="mt-0.5 block truncate text-[0.65rem] text-[var(--muted-foreground)]">
+                        {skill.description}
+                      </span>
                     </span>
-                    <span className="mt-0.5 block truncate text-[0.65rem] text-[var(--muted-foreground)]">
-                      {skill.description}
-                    </span>
-                  </span>
-                  <span className="flex shrink-0 items-center gap-1">
+                  </button>
+                  <span className="flex shrink-0 items-center pr-1">
                     <button
                       type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onToggle(skill);
-                      }}
+                      onClick={() => onToggle(skill)}
                       disabled={saving}
                       className={cn(
                         "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
@@ -1360,7 +1361,7 @@ function ProfessorMariSkillsDrawer({
                       {skill.enabled ? <ToggleRight size="1rem" /> : <ToggleLeft size="1rem" />}
                     </button>
                   </span>
-                </button>
+                </div>
               );
             })
           ) : (

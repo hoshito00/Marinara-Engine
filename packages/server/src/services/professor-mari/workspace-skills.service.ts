@@ -37,6 +37,7 @@ type SkillUpdate = {
 
 const MAX_SKILL_CONTENT_LENGTH = 200_000;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
+const SAFE_SKILL_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 function rootDir() {
   return join(DATA_DIR, ".mari-workspace", "skills");
@@ -87,6 +88,23 @@ function normalizeSkillName(value: string | null | undefined, fallback = "custom
     .slice(0, 64)
     .replace(/^-+|-+$/g, "");
   return normalized || "custom-skill";
+}
+
+function normalizeSkillId(value: string | null | undefined, fallback = "skill") {
+  return normalizeSkillName(value, fallback);
+}
+
+function assertSafeSkillId(id: string) {
+  if (!SAFE_SKILL_ID_PATTERN.test(id)) {
+    throw new Error("Invalid skill id");
+  }
+  return id;
+}
+
+function appendSkillIdSuffix(baseId: string, suffix: number) {
+  const suffixText = `-${suffix}`;
+  const prefix = baseId.slice(0, 64 - suffixText.length).replace(/-+$/g, "") || "skill";
+  return `${prefix}${suffixText}`;
 }
 
 function titleFromFileName(fileName: string | null | undefined) {
@@ -201,8 +219,9 @@ export class ProfessorMariWorkspaceSkillsService {
 
   async update(id: string, input: SkillUpdate): Promise<MariWorkspaceSkillDetail> {
     await this.ensureStorage();
+    const safeId = assertSafeSkillId(id);
     const records = await this.readRecords();
-    const index = records.findIndex((record) => record.id === id);
+    const index = records.findIndex((record) => record.id === safeId);
     if (index < 0) throw new Error("Skill not found");
     const current = records[index]!;
 
@@ -228,11 +247,12 @@ export class ProfessorMariWorkspaceSkillsService {
 
   async delete(id: string): Promise<void> {
     await this.ensureStorage();
+    const safeId = assertSafeSkillId(id);
     const records = await this.readRecords();
-    const record = records.find((entry) => entry.id === id);
+    const record = records.find((entry) => entry.id === safeId);
     if (!record) throw new Error("Skill not found");
-    await rm(skillDir(id), { recursive: true, force: true });
-    await this.writeRecords(records.filter((entry) => entry.id !== id));
+    await rm(skillDir(record.id), { recursive: true, force: true });
+    await this.writeRecords(records.filter((entry) => entry.id !== record.id));
   }
 
   async loadPiSkills(): Promise<LoadSkillsResult> {
@@ -255,10 +275,19 @@ export class ProfessorMariWorkspaceSkillsService {
     try {
       const parsed = JSON.parse(await readFile(indexPath(), "utf8")) as unknown;
       if (!Array.isArray(parsed)) return [];
-      return parsed
-        .filter((entry): entry is Partial<SkillRecord> => !!entry && typeof entry === "object")
-        .map((entry) => ({
-          id: typeof entry.id === "string" ? entry.id : normalizeSkillName(entry.name, "skill"),
+      const records: SkillRecord[] = [];
+      const usedIds = new Set<string>();
+      for (const entry of parsed.filter((entry): entry is Partial<SkillRecord> => !!entry && typeof entry === "object")) {
+        const baseId = normalizeSkillId(typeof entry.id === "string" ? entry.id : entry.name, "skill");
+        let id = baseId;
+        let suffix = 2;
+        while (usedIds.has(id)) {
+          id = appendSkillIdSuffix(baseId, suffix);
+          suffix += 1;
+        }
+        usedIds.add(id);
+        records.push({
+          id,
           name: normalizeSkillName(entry.name, "skill"),
           description:
             typeof entry.description === "string" && entry.description.trim()
@@ -267,7 +296,9 @@ export class ProfessorMariWorkspaceSkillsService {
           enabled: entry.enabled !== false,
           createdAt: typeof entry.createdAt === "string" ? entry.createdAt : now(),
           updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : now(),
-        }));
+        });
+      }
+      return records;
     } catch (err) {
       logger.warn(err, "[Professor Mari] failed to read workspace skill index");
       return [];
@@ -284,7 +315,7 @@ export class ProfessorMariWorkspaceSkillsService {
     let id = baseName;
     let suffix = 2;
     while (existing.has(id)) {
-      id = `${baseName}-${suffix}`;
+      id = appendSkillIdSuffix(baseName, suffix);
       suffix += 1;
     }
     return id;

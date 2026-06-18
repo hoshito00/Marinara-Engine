@@ -360,6 +360,8 @@ export class FandomMediaWikiClient {
       let truncation: WikiTruncation | undefined;
 
       if (content === "source" && args.section) {
+        const pageSelector =
+          args.pageId !== undefined ? `--page-id ${args.pageId}` : `--title ${JSON.stringify(title ?? "")}`;
         const parsed = await this.parsePage(wiki, {
           title,
           pageId: args.pageId,
@@ -367,7 +369,11 @@ export class FandomMediaWikiClient {
           props: "wikitext|sections|displaytitle|categories|links",
         });
         const source = stringValue(parsed.parse?.wikitext) ?? "";
-        const truncated = truncateUtf8(source, this.contentMaxBytes, `call mari wiki get-page --wiki ${wiki.host} --title ${JSON.stringify(title ?? "")} --content source --section ${args.section}`);
+        const truncated = truncateUtf8(
+          source,
+          this.contentMaxBytes,
+          `call mari wiki get-page --wiki ${wiki.host} ${pageSelector} --content source --section ${JSON.stringify(args.section)}`,
+        );
         truncation = truncated.truncation;
         pageData = this.pageDataFromParse(wiki, parsed, content, truncated.text, "source");
       } else if (content === "source") {
