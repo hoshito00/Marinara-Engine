@@ -16,7 +16,7 @@ import {
 import { useUpdateChat, useCreateMessage, chatKeys } from "../../hooks/use-chats";
 import { useStartChatFromCharacter } from "../../hooks/use-start-chat-from-character";
 import { api } from "../../lib/api-client";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import { useChatStore } from "../../stores/chat.store";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import { useQueryClient } from "@tanstack/react-query";
@@ -562,6 +562,24 @@ export function CharactersPanel() {
     [editGroupName, updateGroup],
   );
 
+  const handleDeleteGroup = useCallback(
+    async (group: ParsedGroupRow) => {
+      const memberCount = group.memberIds.length;
+      const ok = await confirmNonEmptyFolderDelete(memberCount, {
+        title: "Delete Folder",
+        message: `Delete "${group.name}"? Its ${memberCount} character${
+          memberCount === 1 ? "" : "s"
+        } will stay in the library and move out of the folder.`,
+        confirmLabel: "Delete",
+        tone: "destructive",
+      });
+      if (!ok) return;
+      deleteGroup.mutate(group.id);
+      if (expandedGroupId === group.id) setExpandedGroupId(null);
+    },
+    [deleteGroup, expandedGroupId],
+  );
+
   const getDraggedCharacterIds = useCallback(
     (charId: string) =>
       selectionMode && selectedCharacterIds.has(charId) ? Array.from(selectedCharacterIds) : [charId],
@@ -1003,7 +1021,7 @@ export function CharactersPanel() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      deleteGroup.mutate(group.id);
+                      void handleDeleteGroup(group);
                     }}
 	                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
 	                    title="Delete folder"

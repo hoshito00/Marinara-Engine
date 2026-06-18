@@ -35,7 +35,7 @@ import {
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { api } from "../../lib/api-client";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SelectionActionBar } from "../ui/SelectionActionBar";
 import {
@@ -978,8 +978,18 @@ export function PresetsPanel() {
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        deletePresetFolder.mutate(folder.id);
-                        if (expandedFolderId === folder.id) setExpandedFolderId(null);
+                        void confirmNonEmptyFolderDelete(folder.itemIds.length, {
+                          title: "Delete Folder",
+                          message: `Delete "${folder.name}"? Its ${folder.itemIds.length} preset${
+                            folder.itemIds.length === 1 ? "" : "s"
+                          } will move out of the folder.`,
+                          confirmLabel: "Delete",
+                          tone: "destructive",
+                        }).then((ok) => {
+                          if (!ok) return;
+                          deletePresetFolder.mutate(folder.id);
+                          if (expandedFolderId === folder.id) setExpandedFolderId(null);
+                        });
                       }}
                       className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
                       title="Delete folder"

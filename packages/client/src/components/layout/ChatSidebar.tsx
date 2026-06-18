@@ -41,7 +41,7 @@ import {
 } from "../../hooks/use-chat-folders";
 import { useCharacters } from "../../hooks/use-characters";
 import { useChatStore } from "../../stores/chat.store";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import { useUIStore, type UserStatus } from "../../stores/ui.store";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
@@ -364,6 +364,18 @@ export function ChatSidebar() {
     }
     return { unfiledChats: unfiled, folderChatsMap: map };
   }, [displayChats]);
+  const folderChatCounts = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const chat of modeChats) {
+      const folderId = chat.folderId;
+      if (!folderId) continue;
+      const key = chat.groupId ?? chat.id;
+      const ids = map.get(folderId) ?? new Set<string>();
+      ids.add(key);
+      map.set(folderId, ids);
+    }
+    return new Map(Array.from(map, ([folderId, ids]) => [folderId, ids.size]));
+  }, [modeChats]);
   const chatListFilterActive = searchQuery.trim().length > 0 || activeTag !== null;
 
   const [localFolderOrder, setLocalFolderOrder] = useState<string[]>([]);
@@ -595,16 +607,15 @@ export function ChatSidebar() {
   );
 
   const handleDeleteFolder = useCallback(
-    async (id: string) => {
-      if (
-        await showConfirmDialog({
-          title: "Delete Folder",
-          message: "Delete this folder? Chats will be moved to the top level.",
-          confirmLabel: "Delete",
-          tone: "destructive",
-        })
-      ) {
-        deleteFolderMut.mutate(id);
+    async (folder: ChatFolder, chatCount: number) => {
+      const ok = await confirmNonEmptyFolderDelete(chatCount, {
+        title: "Delete Folder",
+        message: `Delete "${folder.name}"? Its ${chatCount} chat${chatCount === 1 ? "" : "s"} will move to the top level.`,
+        confirmLabel: "Delete",
+        tone: "destructive",
+      });
+      if (ok) {
+        deleteFolderMut.mutate(folder.id);
       }
     },
     [deleteFolderMut],
@@ -1287,12 +1298,14 @@ export function ChatSidebar() {
                 const folder = modeFolders.find((f) => f.id === folderId);
                 if (!folder) return null;
                 const folderEntries = folderChatsMap.get(folderId) ?? [];
+                const folderChatCount = folderChatCounts.get(folderId) ?? folderEntries.length;
                 if (chatListFilterActive && folderEntries.length === 0) return null;
                 return (
                   <FolderRow
                     key={folderId}
                     folder={folder}
                     entries={folderEntries}
+                    chatCount={folderChatCount}
                     forceExpanded={chatListFilterActive && folderEntries.length > 0}
                     renderChatRow={renderChatRow}
                     onToggleCollapse={handleToggleCollapse}
@@ -1377,6 +1390,7 @@ export function ChatSidebar() {
 function FolderRow({
   folder,
   entries,
+  chatCount,
   forceExpanded = false,
   renderChatRow,
   onToggleCollapse,
@@ -1387,11 +1401,12 @@ function FolderRow({
 }: {
   folder: ChatFolder;
   entries: { chat: any; branchCount: number }[];
+  chatCount: number;
   forceExpanded?: boolean;
   renderChatRow: (entry: any) => React.ReactNode;
   onToggleCollapse: (folder: ChatFolder) => void;
   onRename: (id: string, name: string) => void;
-  onDelete: (id: string) => void;
+  onDelete: (folder: ChatFolder, chatCount: number) => void;
   draggedChatId: string | null;
   onDropChat: (chatIds: string[], folderId: string | null) => void;
 }) {
@@ -1527,7 +1542,7 @@ function FolderRow({
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onDelete(folder.id);
+            onDelete(folder, chatCount);
           }}
           className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--destructive)]/20 group-hover:opacity-100 max-md:opacity-100"
         >

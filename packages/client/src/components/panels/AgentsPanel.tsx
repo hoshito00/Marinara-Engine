@@ -40,7 +40,7 @@ import {
   normalizeAgentPhaseValue,
   type AgentCategory,
 } from "@marinara-engine/shared";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import { cn } from "../../lib/utils";
 import { downloadJsonFile } from "../../lib/download-json";
 import { downloadZipFile } from "../../lib/download-zip";
@@ -144,6 +144,10 @@ function createBuiltInAgentConfigRow(
   };
 }
 
+function getAgentLibraryDisplayName(agent: AgentConfigRow) {
+  return BUILT_IN_AGENTS.find((entry) => entry.id === agent.type)?.name ?? agent.name;
+}
+
 function normalizeAgentImportEntry(entry: unknown) {
   const source = getFolderManifestConfig(entry);
   if (!isJsonRecord(source)) return null;
@@ -242,7 +246,7 @@ export function AgentsPanel() {
         const config = configByType.get(agent.id);
         return {
           ...agent,
-          name: config?.name ?? agent.name,
+          name: agent.name,
           description: config?.description ?? agent.description,
         };
       }),
@@ -491,7 +495,7 @@ export function AgentsPanel() {
       return renderAgentCard({
         id: agent.id,
         type: agent.type,
-        name: agent.name,
+        name: getAgentLibraryDisplayName(agent),
         description: agent.description,
         category,
         imagePath: agent.imagePath ?? null,
@@ -761,8 +765,18 @@ export function AgentsPanel() {
                   <button
                     onClick={(event) => {
                       event.stopPropagation();
-                      deleteAgentFolder.mutate(folder.id);
-                      if (expandedFolderId === folder.id) setExpandedFolderId(null);
+                      void confirmNonEmptyFolderDelete(folder.itemIds.length, {
+                        title: "Delete Folder",
+                        message: `Delete "${folder.name}"? Its ${folder.itemIds.length} agent${
+                          folder.itemIds.length === 1 ? "" : "s"
+                        } will move out of the folder.`,
+                        confirmLabel: "Delete",
+                        tone: "destructive",
+                      }).then((ok) => {
+                        if (!ok) return;
+                        deleteAgentFolder.mutate(folder.id);
+                        if (expandedFolderId === folder.id) setExpandedFolderId(null);
+                      });
                     }}
 	                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
 	                    title="Delete folder"

@@ -1000,7 +1000,7 @@ export function ChatSettingsDrawer({
       const builtIn = BUILT_IN_AGENTS.find((agent) => agent.id === agentId);
       const config = agentConfigsByType.get(agentId);
       return {
-        name: available?.name ?? config?.name ?? builtIn?.name ?? fallback.name,
+        name: available?.name ?? builtIn?.name ?? config?.name ?? fallback.name,
         description: available?.description ?? config?.description ?? builtIn?.description ?? fallback.description,
       };
     },

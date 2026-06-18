@@ -28,7 +28,7 @@ import {
   getDefaultAgentPrompt,
   type ConnectionFolder,
 } from "@marinara-engine/shared";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import {
   Plus,
   Trash2,
@@ -879,9 +879,12 @@ export function ConnectionsPanel() {
   };
 
   const handleDeleteFolder = async (folder: ConnectionFolder) => {
-    const ok = await showConfirmDialog({
+    const connectionCount = connectionsList.filter((connection) => connection.folderId === folder.id).length;
+    const ok = await confirmNonEmptyFolderDelete(connectionCount, {
       title: "Delete Folder",
-      message: `Delete folder "${folder.name}"? Connections inside will move back to Unfiled.`,
+      message: `Delete "${folder.name}"? Its ${connectionCount} connection${
+        connectionCount === 1 ? "" : "s"
+      } will move back to Unfiled.`,
       confirmLabel: "Delete",
       tone: "destructive",
     });

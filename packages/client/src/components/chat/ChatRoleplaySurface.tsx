@@ -1190,6 +1190,7 @@ export function ChatRoleplaySurface({
                   </div>
                 )}
                 <div
+                  data-roleplay-top-controls="right"
                   className={cn("pointer-events-auto ml-auto flex shrink-0 items-center", CHAT_TOOLBAR_ICON_GAP_CLASS)}
                 >
                   <ChatBranchSelector
@@ -1275,7 +1276,10 @@ export function ChatRoleplaySurface({
                         />
                       </Suspense>
                     </div>
-                    <div className={cn("ml-auto flex shrink-0 items-center", CHAT_TOOLBAR_ICON_GAP_CLASS)}>
+                    <div
+                      data-roleplay-top-controls="right"
+                      className={cn("ml-auto flex shrink-0 items-center", CHAT_TOOLBAR_ICON_GAP_CLASS)}
+                    >
                       <ChatToolbarMenu>
                         <ChatBranchSelector
                           activeChatId={activeChatId}

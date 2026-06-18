@@ -34,7 +34,7 @@ import {
   UserMinus,
   Tag,
 } from "lucide-react";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import { cn, getAvatarCropStyle, parseAvatarCropJson } from "../../lib/utils";
 import { api } from "../../lib/api-client";
 import { SelectionActionBar } from "../ui/SelectionActionBar";
@@ -247,6 +247,24 @@ export function PersonasPanel() {
       setEditGroupName("");
     },
     [editGroupName, updatePGroup],
+  );
+
+  const handleDeleteGroup = useCallback(
+    async (group: ParsedPersonaGroupRow) => {
+      const memberCount = group.memberIds.length;
+      const ok = await confirmNonEmptyFolderDelete(memberCount, {
+        title: "Delete Folder",
+        message: `Delete "${group.name}"? Its ${memberCount} persona${
+          memberCount === 1 ? "" : "s"
+        } will stay in the library and move out of the folder.`,
+        confirmLabel: "Delete",
+        tone: "destructive",
+      });
+      if (!ok) return;
+      deletePGroup.mutate(group.id);
+      if (expandedGroupId === group.id) setExpandedGroupId(null);
+    },
+    [deletePGroup, expandedGroupId],
   );
 
   const getDraggedPersonaIds = useCallback(
@@ -695,20 +713,9 @@ export function PersonasPanel() {
                     <Pencil size="0.6875rem" />
                   </button>
                   <button
-                    onClick={async (e) => {
+                    onClick={(e) => {
                       e.stopPropagation();
-                      if (
-                        !(await showConfirmDialog({
-                          title: "Delete Folder",
-                          message: `Delete folder "${group.name}"?`,
-                          confirmLabel: "Delete",
-                          tone: "destructive",
-                        }))
-                      ) {
-                        return;
-                      }
-                      deletePGroup.mutate(group.id);
-                      if (expandedGroupId === group.id) setExpandedGroupId(null);
+                      void handleDeleteGroup(group);
                     }}
 	                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
 	                    title="Delete folder"

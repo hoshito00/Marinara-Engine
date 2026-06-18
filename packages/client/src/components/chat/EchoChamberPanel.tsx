@@ -41,7 +41,11 @@ const HUD_EDGE_GAP = 16; // Aligns with the roleplay HUD edge padding.
 const FLOATING_EDGE_GAP = 16;
 const TOP_BUTTON_GAP = 6; // Matches the tracker panel gap below the top controls.
 const ROLEPLAY_TOP_ANCHOR_SELECTOR = '[data-tracker-panel-anchor="roleplay-hud"]';
+const ROLEPLAY_TOP_RIGHT_CONTROLS_SELECTOR = '[data-roleplay-top-controls="right"]';
 const TOP_BAR_SELECTOR = '[data-component="TopBar"]';
+const DESKTOP_PANEL_FALLBACK_W = 236;
+const DESKTOP_PANEL_MIN_W = 224;
+const DESKTOP_PANEL_MAX_W = 320;
 
 interface EchoChamberPanelProps {
   hiddenOnMobile?: boolean;
@@ -59,6 +63,25 @@ function findVisibleHud(): HTMLElement | null {
     if (readVisibleRect(el)) return el;
   }
   return null;
+}
+
+function findVisibleElement(selector: string): HTMLElement | null {
+  const els = document.querySelectorAll<HTMLElement>(selector);
+  for (const el of els) {
+    if (readVisibleRect(el)) return el;
+  }
+  return null;
+}
+
+function clampDesktopPanelWidth(width: number) {
+  return Math.max(DESKTOP_PANEL_MIN_W, Math.min(DESKTOP_PANEL_MAX_W, Math.ceil(width)));
+}
+
+function getAlignedDesktopPanelWidth(isLeft: boolean) {
+  const preferredElement = isLeft ? findVisibleHud() : findVisibleElement(ROLEPLAY_TOP_RIGHT_CONTROLS_SELECTOR);
+  const preferredRect = preferredElement ? readVisibleRect(preferredElement) : null;
+
+  return clampDesktopPanelWidth(preferredRect?.width ?? DESKTOP_PANEL_FALLBACK_W);
 }
 
 function getRoleplayAreaTop() {
@@ -263,16 +286,21 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
       const bottomOffset = !isTop ? INPUT_BOX_H + FLOATING_EDGE_GAP : undefined;
       const leftOffset = isLeft ? `calc(${HUD_EDGE_GAP}px + var(--tracker-panel-hud-clear-left, 0px))` : undefined;
       const rightOffset = !isLeft ? `calc(${HUD_EDGE_GAP}px + var(--tracker-panel-hud-clear-right, 0px))` : undefined;
+      const width = `${getAlignedDesktopPanelWidth(isLeft)}px`;
       setPosStyle({
         ...(topOffset !== undefined && { top: topOffset }),
         ...(bottomOffset !== undefined && { bottom: bottomOffset }),
         ...(leftOffset !== undefined && { left: leftOffset }),
         ...(rightOffset !== undefined && { right: rightOffset }),
+        width,
       });
     };
 
     update();
-    if (!isTop) return;
+    if (!isTop) {
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }
 
     let frame = 0;
     let discoveryObserver: MutationObserver | null = null;
@@ -282,6 +310,8 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
       const targets = [
         ...Array.from(document.querySelectorAll<HTMLElement>(TOP_BAR_SELECTOR)),
         ...Array.from(document.querySelectorAll<HTMLElement>(ROLEPLAY_TOP_ANCHOR_SELECTOR)),
+        ...Array.from(document.querySelectorAll<HTMLElement>(ROLEPLAY_TOP_RIGHT_CONTROLS_SELECTOR)),
+        ...Array.from(document.querySelectorAll<HTMLElement>(".rpg-hud")),
       ];
       targets.forEach((target) => {
         if (observedTargets.has(target)) return;
