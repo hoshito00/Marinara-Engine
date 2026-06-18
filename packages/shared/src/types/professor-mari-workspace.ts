@@ -26,6 +26,26 @@ export interface MariWorkspaceConnectionSummary {
   model: string;
 }
 
+export interface MariWorkspaceSkillSummary {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  size: number;
+  filePath: string;
+}
+
+export interface MariWorkspaceSkillDetail extends MariWorkspaceSkillSummary {
+  content: string;
+}
+
+export interface MariWorkspaceSkillsResponse {
+  skills: MariWorkspaceSkillDetail[];
+  diagnostics: string[];
+}
+
 export interface MariDbValidationIssue {
   level: "error" | "notice" | "info";
   table?: string;
@@ -114,6 +134,8 @@ export interface MariWorkspaceStatus {
   tools: MariWorkspaceToolName[];
   dbAccess: "server-managed";
   connection: MariWorkspaceConnectionSummary | null;
+  skills: MariWorkspaceSkillSummary[];
+  skillDiagnostics: string[];
   active: boolean;
   pendingApprovals: MariDbPendingApproval[];
   history: MariDbHistoryEntry[];
@@ -123,6 +145,17 @@ export interface MariWorkspaceStatus {
 export type MariWorkspacePromptEvent =
   | { type: "token"; data: string }
   | { type: "thinking"; data: string }
+  | {
+      type: "status";
+      data:
+        | string
+        | {
+            content: string;
+            kind?: "compaction_start" | "compaction_end" | "output_limit" | "retry" | "info";
+            level?: "info" | "warning" | "error";
+            reason?: string;
+          };
+    }
   | { type: "tool_start"; data: { id?: string; name: string; input?: unknown } }
   | { type: "tool_update"; data: { id?: string; name?: string; output?: string } }
   | { type: "tool_end"; data: { id?: string; name?: string; isError?: boolean; output?: string } }

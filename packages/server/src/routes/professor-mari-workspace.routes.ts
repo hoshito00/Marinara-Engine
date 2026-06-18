@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
 import { startSseReply, trySendSseEvent } from "./generate/sse.js";
 import { getProfessorMariWorkspaceService } from "../services/professor-mari/workspace-agent.service.js";
+import { getProfessorMariWorkspaceSkillsService } from "../services/professor-mari/workspace-skills.service.js";
 import { getMariDbService } from "../services/mari-db/mari-db.service.js";
 
 const promptSchema = z.object({
@@ -19,6 +20,21 @@ const cliSchema = z.object({
   command: z.string().optional(),
   cwd: z.string().optional(),
   sessionId: z.string().optional(),
+});
+
+const skillCreateSchema = z.object({
+  name: z.string().max(64).optional().nullable(),
+  description: z.string().max(1024).optional().nullable(),
+  fileName: z.string().max(240).optional().nullable(),
+  content: z.string().min(1).max(200_000),
+  enabled: z.boolean().optional(),
+});
+
+const skillUpdateSchema = z.object({
+  name: z.string().max(64).optional().nullable(),
+  description: z.string().max(1024).optional().nullable(),
+  content: z.string().max(200_000).optional().nullable(),
+  enabled: z.boolean().optional(),
 });
 
 function privileged(request: FastifyRequest, reply: FastifyReply, loopbackOnly = false) {
@@ -42,6 +58,34 @@ export async function professorMariWorkspaceRoutes(app: FastifyInstance) {
 
   app.post("/reset", async (req, reply) => {
     if (!privileged(req, reply)) return;
+    await getProfessorMariWorkspaceService(app).reset();
+    return { ok: true };
+  });
+
+  app.get("/skills", async (req, reply) => {
+    if (!privileged(req, reply)) return;
+    return getProfessorMariWorkspaceSkillsService().list();
+  });
+
+  app.post("/skills", async (req, reply) => {
+    if (!privileged(req, reply)) return;
+    const input = skillCreateSchema.parse(req.body);
+    const skill = await getProfessorMariWorkspaceSkillsService().create(input);
+    await getProfessorMariWorkspaceService(app).reset();
+    return { ok: true, skill };
+  });
+
+  app.put<{ Params: { id: string } }>("/skills/:id", async (req, reply) => {
+    if (!privileged(req, reply)) return;
+    const input = skillUpdateSchema.parse(req.body);
+    const skill = await getProfessorMariWorkspaceSkillsService().update(req.params.id, input);
+    await getProfessorMariWorkspaceService(app).reset();
+    return { ok: true, skill };
+  });
+
+  app.delete<{ Params: { id: string } }>("/skills/:id", async (req, reply) => {
+    if (!privileged(req, reply)) return;
+    await getProfessorMariWorkspaceSkillsService().delete(req.params.id);
     await getProfessorMariWorkspaceService(app).reset();
     return { ok: true };
   });

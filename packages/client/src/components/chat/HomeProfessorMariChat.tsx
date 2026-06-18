@@ -1,18 +1,30 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  BookOpen,
   Brain,
   Check,
   Database,
+  FileUp,
   FileText,
+  ImageIcon,
   Link,
   Loader2,
+  Palette,
+  PanelRightClose,
+  PanelRightOpen,
+  Plus,
   RefreshCw,
+  Save,
+  Search,
   Send,
   ShieldAlert,
   Square,
   Terminal,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
   Wrench,
   X,
 } from "lucide-react";
@@ -23,6 +35,8 @@ import {
   type Chat,
   type MariDbHistoryEntry,
   type MariDbPendingApproval,
+  type MariWorkspaceSkillDetail,
+  type MariWorkspaceSkillsResponse,
   type MariWorkspaceStatus,
   type MariWorkspaceTraceItem,
   type Message,
@@ -44,12 +58,33 @@ const MARI_CHIBI_URL = "/sprites/mari/chibi-professor-mari.png";
 const MARI_CONNECTION_STORAGE_KEY = "marinara:home-professor-mari-connection-id";
 const MARI_WELCOME =
   "Howdy, welcome to Marinara Engine!\n\nFeeling a little lost? It is not a skill issue yet, I am here to help! Ask me about the app, your setup, or what to do next.\n\nNeed something made or changed? I can create character cards, personas, lorebooks, chats, and presets, and I can make local workspace changes with your approval.";
+const NEW_SKILL_CONTENT = `# Custom Professor Mari Skill
+
+Use this skill when the request matches a workflow you want Professor Mari to follow.
+
+## Workflow
+
+- Add the trigger conditions.
+- Add the steps Professor Mari should follow.
+- Add any checks or evidence she should collect before saying the work is done.
+`;
 
 type WorkspaceApprovalResponse = {
   ok: boolean;
   approval?: MariDbPendingApproval;
   history?: MariDbHistoryEntry | null;
   completed?: boolean;
+};
+
+type WorkspaceSkillMutationResponse = {
+  ok: boolean;
+  skill: MariWorkspaceSkillDetail;
+};
+
+type SkillDraftState = {
+  name: string;
+  description: string;
+  content: string;
 };
 
 function readStoredConnectionId() {
@@ -136,7 +171,7 @@ type WorkspaceToolCall = {
   updatedAt: number;
 };
 
-type ToolTone = "db" | "shell" | "file" | "search" | "write" | "generic";
+type ToolTone = "db" | "shell" | "file" | "search" | "write" | "theme" | "image" | "wiki" | "skill" | "generic";
 
 type ToolPresentation = {
   eyebrow: string;
@@ -265,6 +300,14 @@ function appendThinkingTimeline(current: WorkspaceTimelineItem[], delta: string)
   return [...current, { id: timelineId("thinking"), type: "thinking", content: delta }];
 }
 
+function appendStatusTimeline(current: WorkspaceTimelineItem[], content: string): WorkspaceTimelineItem[] {
+  const trimmed = content.trim();
+  if (!trimmed) return current;
+  const last = current[current.length - 1];
+  if (last?.type === "status" && last.content === trimmed) return current;
+  return [...current, { id: timelineId("status"), type: "status", content: trimmed }];
+}
+
 function upsertToolTimeline(current: WorkspaceTimelineItem[], update: WorkspaceToolCall): WorkspaceTimelineItem[] {
   const existingIndex = current.findIndex((item) => item.type === "tool" && item.tool.id === update.id);
   if (existingIndex < 0) {
@@ -341,12 +384,40 @@ function getBashCommand(tool: WorkspaceToolCall) {
   return null;
 }
 
+function shellTokenBasename(token: string) {
+  const clean = token.trim().replace(/^["']|["']$/g, "");
+  const parts = clean.split(/[\\/]/);
+  return parts[parts.length - 1]?.toLowerCase() ?? "";
+}
+
+function isMariExecutableToken(token: string) {
+  return /^(?:mari|mari\.(?:cmd|ps1|exe))$/i.test(shellTokenBasename(token));
+}
+
+function getMariTokens(command: string): string[] | null {
+  const tokens = splitShellWords(command);
+  const start = tokens.findIndex(isMariExecutableToken);
+  return start >= 0 ? tokens.slice(start) : null;
+}
+
+function firstCommandValue(tokens: string[], start = 0) {
+  for (let index = start; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token || token === "--" || token.startsWith("-") || token.includes("=")) continue;
+    return token;
+  }
+  return null;
+}
+
+function looksLikeHelpToken(token: string | null | undefined) {
+  return !token || token === "help" || token === "--help" || token === "-h";
+}
+
 function extractMariDbCommand(command: string) {
-  const start = command.indexOf("mari db");
-  if (start < 0) return null;
-  const tokens = splitShellWords(command.slice(start));
-  if (tokens[0] !== "mari" || tokens[1] !== "db") return null;
-  const action = tokens[2] ?? "status";
+  const tokens = getMariTokens(command);
+  if (!tokens) return null;
+  if (!isMariExecutableToken(tokens[0] ?? "") || tokens[1] !== "db") return null;
+  const action = looksLikeHelpToken(tokens[2]) ? "help" : (tokens[2] ?? "status");
   const target = tokens.slice(3).find((token) => token && !token.startsWith("-") && !token.includes("=")) ?? null;
   return {
     action,
@@ -361,6 +432,8 @@ function mariDbTitle(info: NonNullable<ReturnType<typeof extractMariDbCommand>>)
   switch (info.action) {
     case "status":
       return "Checking database status";
+    case "help":
+      return "Opening database command help";
     case "tables":
       return "Listing database tables";
     case "counts":
@@ -406,11 +479,10 @@ function tokenFlagValue(tokens: string[], flag: string) {
 }
 
 function extractMariCodeCommand(command: string) {
-  const start = command.indexOf("mari code");
-  if (start < 0) return null;
-  const tokens = splitShellWords(command.slice(start));
-  if (tokens[0] !== "mari" || tokens[1] !== "code") return null;
-  const action = tokens[2] ?? "status";
+  const tokens = getMariTokens(command);
+  if (!tokens) return null;
+  if (!isMariExecutableToken(tokens[0] ?? "") || tokens[1] !== "code") return null;
+  const action = looksLikeHelpToken(tokens[2]) ? "help" : (tokens[2] ?? "status");
   return {
     action,
     subaction: action === "reload" ? (tokens[3] ?? null) : null,
@@ -424,6 +496,8 @@ function mariCodeTitle(info: NonNullable<ReturnType<typeof extractMariCodeComman
   switch (info.action) {
     case "status":
       return "Checking workspace status";
+    case "help":
+      return "Opening workspace command help";
     case "diff":
       return info.patch ? "Inspecting workspace diff" : "Summarizing workspace diff";
     case "check":
@@ -449,13 +523,10 @@ function mariCodeDetail(info: NonNullable<ReturnType<typeof extractMariCodeComma
 const MARI_THEME_MUTATIONS = new Set(["create", "update", "set-active"]);
 
 function extractMariThemesCommand(command: string) {
-  const themesStart = command.indexOf("mari themes");
-  const themeStart = command.indexOf("mari theme");
-  const start = themesStart >= 0 ? themesStart : themeStart;
-  if (start < 0) return null;
-  const tokens = splitShellWords(command.slice(start));
-  if (tokens[0] !== "mari" || (tokens[1] !== "themes" && tokens[1] !== "theme")) return null;
-  const action = tokens[2] ?? "list";
+  const tokens = getMariTokens(command);
+  if (!tokens) return null;
+  if (!isMariExecutableToken(tokens[0] ?? "") || (tokens[1] !== "themes" && tokens[1] !== "theme")) return null;
+  const action = looksLikeHelpToken(tokens[2]) ? "help" : (tokens[2] ?? "list");
   const name = tokenFlagValue(tokens, "--name");
   return {
     action,
@@ -471,6 +542,8 @@ function mariThemesTitle(info: NonNullable<ReturnType<typeof extractMariThemesCo
   switch (info.action) {
     case "list":
       return "Listing themes";
+    case "help":
+      return "Opening theme command help";
     case "active":
       return "Checking active theme";
     case "get":
@@ -492,6 +565,175 @@ function mariThemesDetail(info: NonNullable<ReturnType<typeof extractMariThemesC
   return null;
 }
 
+const MARI_IMAGE_WRITES = new Set(["assign", "add", "replace", "delete", "remove", "clear"]);
+
+function extractMariImagesCommand(command: string) {
+  const tokens = getMariTokens(command);
+  if (!tokens) return null;
+  if (!isMariExecutableToken(tokens[0] ?? "") || !["image", "images", "media"].includes(tokens[1] ?? "")) return null;
+  const action = looksLikeHelpToken(tokens[2]) ? "help" : (tokens[2] ?? "help");
+  return {
+    action,
+    target: tokenFlagValue(tokens, "--target") ?? firstCommandValue(tokens, 3),
+    asset: tokenFlagValue(tokens, "--asset") ?? tokenFlagValue(tokens, "--id"),
+    prompt: tokenFlagValue(tokens, "--prompt"),
+    source: tokenFlagValue(tokens, "--source"),
+    connection: tokenFlagValue(tokens, "--connection"),
+    edit: tokens.includes("--edit"),
+    mutating: MARI_IMAGE_WRITES.has(action),
+  };
+}
+
+function mariImagesTitle(info: NonNullable<ReturnType<typeof extractMariImagesCommand>>) {
+  switch (info.action) {
+    case "connections":
+      return info.edit ? "Finding edit-capable image connections" : "Checking image connections";
+    case "capabilities":
+      return info.edit ? "Checking image edit capabilities" : "Checking image capabilities";
+    case "preview":
+      return "Preparing image preview";
+    case "generate":
+      return "Generating review image";
+    case "edit":
+      return "Editing review image";
+    case "assign":
+    case "add":
+    case "replace":
+      return "Assigning image asset";
+    case "delete":
+    case "remove":
+    case "clear":
+      return "Removing image asset";
+    case "list":
+      return `Listing ${humanizeIdentifier(info.target)}`;
+    case "get":
+      return "Reading image asset";
+    case "help":
+      return "Opening image command help";
+    default:
+      return `Running mari images ${info.action}`;
+  }
+}
+
+function mariImagesDetail(info: NonNullable<ReturnType<typeof extractMariImagesCommand>>) {
+  if (info.target && !["list", "get"].includes(info.action)) return humanizeIdentifier(info.target);
+  if (info.asset) return compactCommand(info.asset, 70);
+  if (info.source) return compactCommand(info.source, 70);
+  if (info.prompt) return compactCommand(info.prompt, 70);
+  if (info.connection) return compactCommand(info.connection, 70);
+  return null;
+}
+
+function extractMariWikiCommand(command: string) {
+  const tokens = getMariTokens(command);
+  if (!tokens) return null;
+  if (!isMariExecutableToken(tokens[0] ?? "") || !["wiki", "fandom"].includes(tokens[1] ?? "")) return null;
+  const action = looksLikeHelpToken(tokens[2]) ? "help" : (tokens[2] ?? "help");
+  const wiki = tokenFlagValue(tokens, "--wiki") ?? (["search", "search-wiki", "pages", "category", "category-members", "site-info"].includes(action) ? tokens[3] : null);
+  return {
+    action,
+    wiki,
+    title: tokenFlagValue(tokens, "--title"),
+    pageUrl: tokenFlagValue(tokens, "--page-url") ?? tokenFlagValue(tokens, "--pageUrl"),
+    query: tokenFlagValue(tokens, "--query") ?? firstCommandValue(tokens, action === "search-in-page" ? 5 : 3),
+    category: tokenFlagValue(tokens, "--category") ?? (["category", "category-members"].includes(action) ? tokens.slice(4).find((token) => token && !token.startsWith("-")) : null),
+    content: tokenFlagValue(tokens, "--content"),
+  };
+}
+
+function mariWikiTitle(info: NonNullable<ReturnType<typeof extractMariWikiCommand>>) {
+  switch (info.action) {
+    case "find":
+    case "find-wikis":
+      return "Finding Fandom wikis";
+    case "search-all":
+      return "Searching Fandom pages";
+    case "search":
+    case "search-wiki":
+      return "Searching wiki";
+    case "get":
+    case "get-page":
+      return "Reading wiki page";
+    case "pages":
+      return "Reading wiki pages";
+    case "sections":
+      return "Reading wiki sections";
+    case "category":
+    case "category-members":
+      return "Listing wiki category";
+    case "site-info":
+      return "Checking wiki site info";
+    case "search-in-page":
+      return "Searching inside wiki page";
+    case "help":
+      return "Opening wiki command help";
+    default:
+      return `Running mari wiki ${info.action}`;
+  }
+}
+
+function mariWikiDetail(info: NonNullable<ReturnType<typeof extractMariWikiCommand>>) {
+  const detail = info.title ?? info.category ?? info.pageUrl ?? info.wiki ?? info.query ?? info.content;
+  return detail ? compactCommand(detail, 70) : null;
+}
+
+function extractMariStorageCommand(command: string) {
+  const tokens = getMariTokens(command);
+  if (!tokens) return null;
+  if (!isMariExecutableToken(tokens[0] ?? "") || tokens[1] !== "storage") return null;
+  return {
+    action: looksLikeHelpToken(tokens[2]) ? "help" : (tokens[2] ?? "help"),
+  };
+}
+
+function extractMariGenericCommand(command: string) {
+  const tokens = getMariTokens(command);
+  if (!tokens) return null;
+  const group = looksLikeHelpToken(tokens[1]) ? "help" : (tokens[1] ?? "help");
+  const action = looksLikeHelpToken(tokens[2]) ? "help" : (tokens[2] ?? "help");
+  return { group, action };
+}
+
+function mariGenericTitle(info: NonNullable<ReturnType<typeof extractMariGenericCommand>>) {
+  if (info.group === "help") return "Opening Mari CLI help";
+  if (info.group === "storage") return "Checking reserved storage command";
+  if (info.action === "help") return `Opening mari ${info.group} help`;
+  return `Running mari ${info.group} ${info.action}`;
+}
+
+function mariGenericDetail(info: NonNullable<ReturnType<typeof extractMariGenericCommand>>) {
+  if (info.group === "help") return null;
+  return info.action === "help" ? info.group : `${info.group} ${info.action}`;
+}
+
+function toolInputPath(tool: WorkspaceToolCall) {
+  const input = asRecord(tool.input);
+  const candidate = input?.path ?? input?.file ?? input?.filePath ?? input?.file_path ?? input?.uri ?? tool.detail;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
+}
+
+function skillNameFromPath(path: string) {
+  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+  const file = parts[parts.length - 1]?.toLowerCase();
+  const parent = file === "skill.md" ? parts[parts.length - 2] : parts[parts.length - 1];
+  return humanizeIdentifier(parent ?? "skill");
+}
+
+function getSkillReadPresentation(tool: WorkspaceToolCall): ToolPresentation | null {
+  const path = toolInputPath(tool);
+  if (!path) return null;
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  if (!normalized.endsWith("/skill.md") && normalized !== "skill.md") return null;
+  const professorMariSkill = normalized.includes("/.mari-workspace/skills/");
+  const skillName = skillNameFromPath(path);
+  return {
+    eyebrow: professorMariSkill ? "Mari skill" : "Skill",
+    title: professorMariSkill ? "Loading Professor Mari skill" : `Loading ${skillName}`,
+    detail: professorMariSkill ? skillName : null,
+    tone: "skill",
+  };
+}
+
 function summarizeShellCommand(command: string) {
   const compact = compactCommand(command, 120);
   const words = splitShellWords(command);
@@ -507,6 +749,10 @@ function inferToolPresentation(tool: WorkspaceToolCall): ToolPresentation {
   const mariDb = command ? extractMariDbCommand(command) : null;
   const mariCode = command ? extractMariCodeCommand(command) : null;
   const mariThemes = command ? extractMariThemesCommand(command) : null;
+  const mariImages = command ? extractMariImagesCommand(command) : null;
+  const mariWiki = command ? extractMariWikiCommand(command) : null;
+  const mariStorage = command ? extractMariStorageCommand(command) : null;
+  const mariGeneric = command ? extractMariGenericCommand(command) : null;
   if (command && mariDb) {
     return {
       eyebrow: mariDb.dryRun ? "DB preview" : "Database",
@@ -528,7 +774,39 @@ function inferToolPresentation(tool: WorkspaceToolCall): ToolPresentation {
       eyebrow: mariThemes.dryRun ? "Theme preview" : "Theme",
       title: mariThemesTitle(mariThemes),
       detail: mariThemesDetail(mariThemes),
-      tone: mariThemes.dryRun ? "write" : "db",
+      tone: "theme",
+    };
+  }
+  if (command && mariImages) {
+    return {
+      eyebrow: mariImages.mutating ? "Image change" : "Images",
+      title: mariImagesTitle(mariImages),
+      detail: mariImagesDetail(mariImages),
+      tone: mariImages.mutating ? "write" : "image",
+    };
+  }
+  if (command && mariWiki) {
+    return {
+      eyebrow: "Wiki",
+      title: mariWikiTitle(mariWiki),
+      detail: mariWikiDetail(mariWiki),
+      tone: "wiki",
+    };
+  }
+  if (command && mariStorage) {
+    return {
+      eyebrow: "Storage",
+      title: "Checking reserved storage command",
+      detail: mariStorage.action === "help" ? null : mariStorage.action,
+      tone: "shell",
+    };
+  }
+  if (command && mariGeneric) {
+    return {
+      eyebrow: "Mari CLI",
+      title: mariGenericTitle(mariGeneric),
+      detail: mariGenericDetail(mariGeneric),
+      tone: "shell",
     };
   }
 
@@ -540,6 +818,9 @@ function inferToolPresentation(tool: WorkspaceToolCall): ToolPresentation {
       tone: "shell",
     };
   }
+
+  const skillPresentation = getSkillReadPresentation(tool);
+  if (skillPresentation) return skillPresentation;
 
   const input = asRecord(tool.input);
   const detail = previewValue(input?.path ?? input?.pattern ?? input?.query ?? input?.url ?? input?.command ?? tool.detail, 90);
@@ -558,12 +839,36 @@ function inferToolPresentation(tool: WorkspaceToolCall): ToolPresentation {
   return { eyebrow: "Tool", title: name, detail, tone: "generic" };
 }
 
+function toolToneClasses(tone: ToolTone) {
+  switch (tone) {
+    case "db":
+    case "skill":
+      return "border-[var(--primary)]/20 bg-[var(--primary)]/10";
+    case "theme":
+      return "border-fuchsia-400/20 bg-fuchsia-400/10";
+    case "image":
+      return "border-sky-400/20 bg-sky-400/10";
+    case "wiki":
+      return "border-emerald-400/20 bg-emerald-400/10";
+    case "write":
+      return "border-amber-400/20 bg-amber-400/10";
+    case "search":
+      return "border-cyan-400/20 bg-cyan-400/10";
+    default:
+      return "border-[var(--border)]/70 bg-[var(--card)]/70";
+  }
+}
+
 function ToolGlyph({ tool, tone }: { tool: WorkspaceToolCall; tone: ToolTone }) {
   if (tool.status === "running") return <Loader2 size="0.72rem" className="animate-spin" />;
   if (tool.status === "error") return <AlertTriangle size="0.72rem" />;
   if (tone === "db") return <Database size="0.72rem" />;
+  if (tone === "theme") return <Palette size="0.72rem" />;
+  if (tone === "image") return <ImageIcon size="0.72rem" />;
+  if (tone === "wiki" || tone === "skill") return <BookOpen size="0.72rem" />;
+  if (tone === "search") return <Search size="0.72rem" />;
   if (tone === "shell") return <Terminal size="0.72rem" />;
-  if (tone === "file" || tone === "write" || tone === "search") return <FileText size="0.72rem" />;
+  if (tone === "file" || tone === "write") return <FileText size="0.72rem" />;
   return <Wrench size="0.72rem" />;
 }
 
@@ -657,11 +962,7 @@ function WorkspaceToolEvent({ tool }: { tool: WorkspaceToolCall }) {
       <div
         className={cn(
           "inline-flex max-w-full items-center gap-1.5 rounded-lg border px-2 py-1 text-[0.7rem] leading-5 shadow-sm",
-          presentation.tone === "db"
-            ? "border-[var(--primary)]/20 bg-[var(--primary)]/10"
-            : presentation.tone === "write"
-              ? "border-amber-400/20 bg-amber-400/10"
-              : "border-[var(--border)]/70 bg-[var(--card)]/70",
+          toolToneClasses(presentation.tone),
           isError && "border-[var(--destructive)]/35 bg-[var(--destructive)]/10",
         )}
         title={presentation.detail ?? presentation.title}
@@ -677,13 +978,42 @@ function WorkspaceToolEvent({ tool }: { tool: WorkspaceToolCall }) {
   );
 }
 
-function WorkspaceStatusEvent({ content }: { content: string }) {
+function WorkspaceStatusEvent({ content, active }: { content: string; active?: boolean }) {
+  const lower = content.toLowerCase();
+  const warning = /\b(failed|cancelled|limit|error|attention)\b/.test(lower);
+  const complete = /\b(compacted|completed|done)\b/.test(lower) && !/\b(compacting|retrying|working)\b/.test(lower);
+  const working = active && !warning && !complete;
+  const Icon = warning ? AlertTriangle : complete ? Check : working ? Loader2 : RefreshCw;
   return (
     <TranscriptRow
-      marker={<Loader2 size="0.78rem" className="mt-1 animate-spin text-[var(--primary)]" />}
+      marker={
+        <span
+          className={cn(
+            "mt-0.5 flex h-5 w-5 items-center justify-center rounded-md border bg-[var(--card)] shadow-sm",
+            warning
+              ? "border-amber-400/35 text-amber-300"
+              : complete
+                ? "border-emerald-400/25 text-emerald-300"
+                : "border-[var(--primary)]/25 text-[var(--primary)]",
+          )}
+        >
+          <Icon size="0.72rem" className={working ? "animate-spin" : undefined} />
+        </span>
+      }
       className="text-[0.7rem] text-[var(--muted-foreground)]"
     >
-      <span>{content}</span>
+      <span
+        className={cn(
+          "inline-flex max-w-full rounded-lg border px-2 py-1 leading-5 shadow-sm",
+          warning
+            ? "border-amber-400/20 bg-amber-400/10 text-amber-100"
+            : complete
+              ? "border-emerald-400/20 bg-emerald-400/10 text-[var(--foreground)]"
+              : "border-[var(--primary)]/20 bg-[var(--primary)]/10 text-[var(--foreground)]",
+        )}
+      >
+        {content}
+      </span>
     </TranscriptRow>
   );
 }
@@ -712,7 +1042,7 @@ function WorkspaceTimelineEvent({
     );
   }
   if (item.type === "tool") return <WorkspaceToolEvent tool={item.tool} />;
-  return <WorkspaceStatusEvent content={item.content} />;
+  return <WorkspaceStatusEvent content={item.content} active={active} />;
 }
 
 function getActiveTimelineIndex(items: WorkspaceTimelineItem[], active: boolean) {
@@ -721,6 +1051,7 @@ function getActiveTimelineIndex(items: WorkspaceTimelineItem[], active: boolean)
     const item = items[index];
     if (item.type === "tool" && item.tool.status === "running") return index;
     if ((item.type === "text" || item.type === "thinking") && item.content.trim()) return index;
+    if (item.type === "status" && item.content.trim()) return index;
   }
   return -1;
 }
@@ -885,6 +1216,231 @@ function WorkspaceApprovalCard({
   );
 }
 
+function ProfessorMariSkillsDrawer({
+  skills,
+  selectedSkill,
+  draft,
+  loading,
+  saving,
+  diagnostics,
+  fileInputRef,
+  onClose,
+  onNew,
+  onUploadClick,
+  onFileChange,
+  onSelect,
+  onDraftChange,
+  onSave,
+  onDelete,
+  onToggle,
+  className,
+}: {
+  skills: MariWorkspaceSkillDetail[];
+  selectedSkill: MariWorkspaceSkillDetail | null;
+  draft: SkillDraftState;
+  loading: boolean;
+  saving: boolean;
+  diagnostics: string[];
+  fileInputRef: RefObject<HTMLInputElement | null>;
+  onClose: () => void;
+  onNew: () => void;
+  onUploadClick: () => void;
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onSelect: (id: string) => void;
+  onDraftChange: (draft: SkillDraftState) => void;
+  onSave: () => void;
+  onDelete: (id: string) => void;
+  onToggle: (skill: MariWorkspaceSkillDetail) => void;
+  className?: string;
+}) {
+  const enabledCount = skills.filter((skill) => skill.enabled).length;
+  const hasSkills = skills.length > 0;
+
+  return (
+    <aside
+      className={cn(
+        "flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col overflow-hidden rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/85 shadow-lg shadow-black/10",
+        "max-sm:fixed max-sm:inset-x-2 max-sm:bottom-[calc(env(safe-area-inset-bottom)_+_0.75rem)] max-sm:top-[calc(env(safe-area-inset-top)_+_4rem)] max-sm:z-40 max-sm:h-auto max-sm:bg-[var(--background)] max-sm:shadow-2xl",
+        className,
+      )}
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <BookOpen size="0.9rem" className="shrink-0 text-[var(--primary)]" />
+            <span className="truncate text-xs font-semibold text-[var(--foreground)]">Professor Mari Skills</span>
+          </div>
+          {hasSkills && (
+            <div className="mt-0.5 truncate text-[0.6875rem] text-[var(--muted-foreground)]">
+              {enabledCount} active / {skills.length} total
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+          aria-label="Close skills"
+          title="Close"
+        >
+          <PanelRightClose size="0.95rem" />
+        </button>
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--border)]/50 px-2.5 py-2">
+        <button
+          type="button"
+          onClick={onNew}
+          disabled={saving}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-[0.6875rem] font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Plus size="0.78rem" />
+          New
+        </button>
+        <button
+          type="button"
+          onClick={onUploadClick}
+          disabled={saving}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-[0.6875rem] font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <FileUp size="0.78rem" />
+          Upload
+        </button>
+        <input ref={fileInputRef} type="file" accept=".md,.txt,text/markdown,text/plain" className="hidden" onChange={onFileChange} />
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="space-y-1 p-2">
+          {loading ? (
+            <div className="space-y-1.5">
+              <div className="h-10 animate-pulse rounded-lg bg-[var(--muted)]/30" />
+              <div className="h-10 animate-pulse rounded-lg bg-[var(--muted)]/20" />
+            </div>
+          ) : hasSkills ? (
+            skills.map((skill) => {
+              const active = selectedSkill?.id === skill.id;
+              return (
+                <button
+                  key={skill.id}
+                  type="button"
+                  onClick={() => onSelect(skill.id)}
+                  className={cn(
+                    "group flex w-full min-w-0 items-center gap-2 rounded-lg border px-2 py-2 text-left transition-colors",
+                    active
+                      ? "border-[var(--primary)]/45 bg-[var(--primary)]/10"
+                      : "border-[var(--border)]/70 bg-[var(--card)]/70 hover:bg-[var(--accent)]/70",
+                  )}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-[0.75rem] font-semibold text-[var(--foreground)]">{skill.name}</span>
+                    </span>
+                    <span className="mt-0.5 block truncate text-[0.65rem] text-[var(--muted-foreground)]">
+                      {skill.description}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onToggle(skill);
+                      }}
+                      disabled={saving}
+                      className={cn(
+                        "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
+                        skill.enabled
+                          ? "text-[var(--primary)] hover:bg-[var(--primary)]/10"
+                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                        saving && "cursor-not-allowed opacity-55",
+                      )}
+                      aria-label={skill.enabled ? "Disable skill" : "Enable skill"}
+                      title={skill.enabled ? "Enabled" : "Disabled"}
+                    >
+                      {skill.enabled ? <ToggleRight size="1rem" /> : <ToggleLeft size="1rem" />}
+                    </button>
+                  </span>
+                </button>
+              );
+            })
+          ) : (
+            <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-xs text-[var(--muted-foreground)]">
+              No custom skills yet
+            </div>
+          )}
+        </div>
+
+        {diagnostics.length > 0 && (
+          <div className="mx-2 mb-2 rounded-lg border border-amber-400/25 bg-amber-400/10 px-2.5 py-2 text-[0.6875rem] text-amber-200">
+            {diagnostics[0]}
+          </div>
+        )}
+
+        {hasSkills && (
+          <div className="border-t border-[var(--border)]/50 p-2.5">
+            {selectedSkill ? (
+              <div className="space-y-2">
+                <label className="block text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
+                  Name
+                  <input
+                    value={draft.name}
+                    onChange={(event) => onDraftChange({ ...draft, name: event.target.value })}
+                    disabled={saving}
+                    className="mt-1 h-8 w-full rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/55 disabled:cursor-not-allowed disabled:opacity-70"
+                  />
+                </label>
+                <label className="block text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
+                  Description
+                  <input
+                    value={draft.description}
+                    onChange={(event) => onDraftChange({ ...draft, description: event.target.value })}
+                    disabled={saving}
+                    className="mt-1 h-8 w-full rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/55 disabled:cursor-not-allowed disabled:opacity-70"
+                  />
+                </label>
+                <label className="block text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
+                  Instructions
+                  <textarea
+                    value={draft.content}
+                    onChange={(event) => onDraftChange({ ...draft, content: event.target.value })}
+                    disabled={saving}
+                    rows={9}
+                    className="mt-1 min-h-40 w-full resize-y rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-2 font-mono text-[0.6875rem] leading-relaxed text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/55 disabled:cursor-not-allowed disabled:opacity-70"
+                  />
+                </label>
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onDelete(selectedSkill.id)}
+                    disabled={saving}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-[0.6875rem] font-semibold text-[var(--destructive)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <Trash2 size="0.75rem" />
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onSave}
+                    disabled={saving}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[var(--primary)] px-2.5 text-[0.6875rem] font-semibold text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {saving ? <Loader2 size="0.75rem" className="animate-spin" /> : <Save size="0.75rem" />}
+                    Save
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-xs text-[var(--muted-foreground)]">
+                No skill selected
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+}
+
 export function HomeProfessorMariChat({
   pageActive = true,
   attachedFooter = false,
@@ -903,6 +1459,13 @@ export function HomeProfessorMariChat({
   const [workspaceActive, setWorkspaceActive] = useState(false);
   const [workspaceActivity, setWorkspaceActivity] = useState<string | null>(null);
   const [workspaceTimeline, setWorkspaceTimeline] = useState<WorkspaceTimelineItem[]>([]);
+  const [skillsDrawerOpen, setSkillsDrawerOpen] = useState(false);
+  const [skills, setSkills] = useState<MariWorkspaceSkillDetail[]>([]);
+  const [skillsDiagnostics, setSkillsDiagnostics] = useState<string[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsSaving, setSkillsSaving] = useState(false);
+  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const [skillDraft, setSkillDraft] = useState<SkillDraftState>({ name: "", description: "", content: "" });
   const [dottoreDismissed, setDottoreDismissed] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [sending, setSending] = useState(false);
@@ -914,6 +1477,7 @@ export function HomeProfessorMariChat({
   const scrollRef = useRef<HTMLDivElement>(null);
   const connectionButtonRef = useRef<HTMLButtonElement>(null);
   const connectionMenuRef = useRef<HTMLDivElement>(null);
+  const skillFileInputRef = useRef<HTMLInputElement>(null);
   const workspaceAbortRef = useRef<AbortController | null>(null);
 
   const hasActiveGeneration = useChatStore((state) => (chatId ? state.abortControllers.has(chatId) : false));
@@ -934,10 +1498,30 @@ export function HomeProfessorMariChat({
     null;
   const effectiveConnectionId = effectiveConnection?.id ?? null;
   const isBusy = sending || hasActiveGeneration || workspaceActive;
+  const selectedSkill = useMemo(
+    () => skills.find((skill) => skill.id === selectedSkillId) ?? null,
+    [selectedSkillId, skills],
+  );
+  const activeSkillCount = skills.filter((skill) => skill.enabled).length;
 
   const loadMessages = useCallback(async (id: string) => {
     const items = await api.get<Message[]>(`/chats/${id}/messages?limit=80`);
     setMessages(items.map((message) => ({ ...message, extra: toMessageExtra(message) })));
+  }, []);
+
+  const loadSkills = useCallback(async () => {
+    setSkillsLoading(true);
+    try {
+      const response = await api.get<MariWorkspaceSkillsResponse>("/professor-mari/workspace/skills");
+      setSkills(response.skills);
+      setSkillsDiagnostics(response.diagnostics);
+      setSelectedSkillId((current) => {
+        if (current && response.skills.some((skill) => skill.id === current)) return current;
+        return response.skills[0]?.id ?? null;
+      });
+    } finally {
+      setSkillsLoading(false);
+    }
   }, []);
 
   const ensureProfessorMariChat = useCallback(
@@ -1002,6 +1586,25 @@ export function HomeProfessorMariChat({
     }, 2000);
     return () => window.clearInterval(timer);
   }, [refreshWorkspaceStatus]);
+
+  useEffect(() => {
+    void loadSkills().catch((error) => {
+      console.error("[Professor Mari] Failed to load skills", error);
+      setSkillsDiagnostics(["Professor Mari skills unavailable"]);
+    });
+  }, [loadSkills]);
+
+  useEffect(() => {
+    if (!selectedSkill) {
+      setSkillDraft({ name: "", description: "", content: "" });
+      return;
+    }
+    setSkillDraft({
+      name: selectedSkill.name,
+      description: selectedSkill.description,
+      content: selectedSkill.content,
+    });
+  }, [selectedSkill]);
 
   const pendingApprovals = workspaceStatus?.pendingApprovals ?? [];
   const pendingApprovalKey = pendingApprovals.map((approval) => approval.id).join("|");
@@ -1131,6 +1734,119 @@ export function HomeProfessorMariChat({
     await api.post("/professor-mari/workspace/abort").catch(() => undefined);
   }, []);
 
+  const createSkillFromContent = useCallback(
+    async (input: { content: string; fileName?: string; name?: string; description?: string }) => {
+      setSkillsSaving(true);
+      try {
+        const result = await api.post<WorkspaceSkillMutationResponse>("/professor-mari/workspace/skills", {
+          ...input,
+          enabled: true,
+        });
+        await loadSkills();
+        setSelectedSkillId(result.skill.id);
+        setSkillsDrawerOpen(true);
+        await refreshWorkspaceStatus().catch(() => undefined);
+        toast.success("Professor Mari skill added.");
+      } finally {
+        setSkillsSaving(false);
+      }
+    },
+    [loadSkills, refreshWorkspaceStatus],
+  );
+
+  const handleNewSkill = useCallback(() => {
+    void createSkillFromContent({
+      name: "custom-skill",
+      description: "User-defined Professor Mari skill.",
+      content: NEW_SKILL_CONTENT,
+    }).catch((error) => {
+      console.error("[Professor Mari] Failed to create skill", error);
+      toast.error("Professor Mari could not add that skill.");
+    });
+  }, [createSkillFromContent]);
+
+  const handleSkillUploadClick = useCallback(() => {
+    skillFileInputRef.current?.click();
+  }, []);
+
+  const handleSkillFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.currentTarget.files?.[0] ?? null;
+      event.currentTarget.value = "";
+      if (!file) return;
+      void file
+        .text()
+        .then((content) => createSkillFromContent({ content, fileName: file.name }))
+        .catch((error) => {
+          console.error("[Professor Mari] Failed to upload skill", error);
+          toast.error("Professor Mari could not upload that skill.");
+        });
+    },
+    [createSkillFromContent],
+  );
+
+  const handleSaveSkill = useCallback(async () => {
+    if (!selectedSkill) return;
+    setSkillsSaving(true);
+    try {
+      const result = await api.put<WorkspaceSkillMutationResponse>(`/professor-mari/workspace/skills/${selectedSkill.id}`, {
+        name: skillDraft.name,
+        description: skillDraft.description,
+        content: skillDraft.content,
+      });
+      await loadSkills();
+      setSelectedSkillId(result.skill.id);
+      await refreshWorkspaceStatus().catch(() => undefined);
+      toast.success("Professor Mari skill saved.");
+    } catch (error) {
+      console.error("[Professor Mari] Failed to save skill", error);
+      toast.error("Professor Mari could not save that skill.");
+    } finally {
+      setSkillsSaving(false);
+    }
+  }, [loadSkills, refreshWorkspaceStatus, selectedSkill, skillDraft]);
+
+  const handleToggleSkill = useCallback(
+    async (skill: MariWorkspaceSkillDetail) => {
+      setSkillsSaving(true);
+      try {
+        await api.put<WorkspaceSkillMutationResponse>(`/professor-mari/workspace/skills/${skill.id}`, {
+          enabled: !skill.enabled,
+        });
+        await loadSkills();
+        await refreshWorkspaceStatus().catch(() => undefined);
+      } catch (error) {
+        console.error("[Professor Mari] Failed to toggle skill", error);
+        toast.error("Professor Mari could not update that skill.");
+      } finally {
+        setSkillsSaving(false);
+      }
+    },
+    [loadSkills, refreshWorkspaceStatus],
+  );
+
+  const handleDeleteSkill = useCallback(
+    async (id: string) => {
+      const skill = skills.find((entry) => entry.id === id);
+      if (!skill) return;
+      if (!window.confirm(`Delete ${skill.name}?`)) return;
+      setSkillsSaving(true);
+      try {
+        await api.delete(`/professor-mari/workspace/skills/${id}`);
+        setSelectedSkillId((current) => (current === id ? null : current));
+        await loadSkills();
+        await refreshWorkspaceStatus().catch(() => undefined);
+        toast.success("Professor Mari skill deleted.");
+      } catch (error) {
+        console.error("[Professor Mari] Failed to delete skill", error);
+        toast.error("Professor Mari could not delete that skill.");
+      } finally {
+        setSkillsSaving(false);
+      }
+    },
+    [loadSkills, refreshWorkspaceStatus, skills],
+  );
+
   const sendWorkspaceMessage = useCallback(
     async (chat: Chat, text: string) => {
       const controller = new AbortController();
@@ -1158,6 +1874,16 @@ export function HomeProfessorMariChat({
           } else if (event.type === "thinking" && typeof event.data === "string") {
             setWorkspaceTimeline((current) => appendThinkingTimeline(current, event.data as string));
             useChatStore.getState().appendThinkingBuffer(event.data, chat.id);
+          } else if (event.type === "status") {
+            const data = asRecord(event.data);
+            const content =
+              typeof event.data === "string"
+                ? event.data
+                : typeof data?.content === "string"
+                  ? data.content
+                  : "Working...";
+            setWorkspaceTimeline((current) => appendStatusTimeline(current, content));
+            setWorkspaceActivity(content);
           } else if (event.type === "tool_start") {
             const data = asRecord(event.data);
             const name = typeof data?.name === "string" ? data.name : "tool";
@@ -1258,7 +1984,8 @@ export function HomeProfessorMariChat({
     <>
       <section
         className={cn(
-          "home-professor-mari-chat mt-10 w-full max-w-3xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 sm:mt-0",
+          "home-professor-mari-chat mt-10 w-full border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 transition-[max-width] sm:mt-0",
+          skillsDrawerOpen ? "max-w-6xl" : "max-w-3xl",
           attachedFooter ? "rounded-t-xl rounded-b-none" : "rounded-xl",
           mobileFocusMode &&
             "fixed inset-x-0 bottom-0 top-[calc(env(safe-area-inset-top)_+_3rem)] z-30 mt-0 max-w-none overflow-hidden rounded-t-2xl border-0 border-t border-[var(--border)]/70 bg-[var(--background)] sm:relative sm:inset-auto sm:z-auto sm:mt-0 sm:max-w-3xl sm:overflow-visible sm:rounded-xl sm:border sm:bg-[var(--card)]/85",
@@ -1267,7 +1994,10 @@ export function HomeProfessorMariChat({
       >
         <div
           className={cn(
-            "grid gap-2.5 p-2 sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)] sm:p-2.5",
+            "grid gap-2.5 p-2 sm:p-2.5",
+            skillsDrawerOpen
+              ? "sm:grid-cols-[minmax(0,0.58fr)_minmax(0,1.22fr)_minmax(17rem,0.88fr)]"
+              : "sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)]",
             mobileFocusMode && "h-full grid-rows-[auto_minmax(0,1fr)] gap-0 p-0 sm:h-auto sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)] sm:gap-2.5 sm:p-2.5",
           )}
         >
@@ -1335,6 +2065,24 @@ export function HomeProfessorMariChat({
                 </span>
               </div>
               <div className={cn("flex shrink-0 items-center gap-1", mobileFocusMode && "absolute right-2 top-1/2 -translate-y-1/2")}>
+                <button
+                  type="button"
+                  onClick={() => setSkillsDrawerOpen((current) => !current)}
+                  className={cn(
+                    "inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50",
+                    skillsDrawerOpen ? "text-[var(--primary)]" : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                  )}
+                  title={skillsDrawerOpen ? "Close skills" : "Open skills"}
+                  aria-expanded={skillsDrawerOpen}
+                >
+                  {skillsDrawerOpen ? <PanelRightClose size="0.75rem" /> : <PanelRightOpen size="0.75rem" />}
+                  <span className="max-[360px]:hidden">Skills</span>
+                  {skills.length > 0 && (
+                    <span className="rounded-full bg-[var(--primary)]/12 px-1.5 py-0.5 text-[0.56rem] text-[var(--primary)]">
+                      {activeSkillCount}
+                    </span>
+                  )}
+                </button>
                 {(workspaceActive || hasActiveGeneration) && (
                   <button
                     type="button"
@@ -1493,6 +2241,27 @@ export function HomeProfessorMariChat({
               </div>
             </form>
           </div>
+
+          {skillsDrawerOpen && (
+            <ProfessorMariSkillsDrawer
+              skills={skills}
+              selectedSkill={selectedSkill}
+              draft={skillDraft}
+              loading={skillsLoading}
+              saving={skillsSaving}
+              diagnostics={skillsDiagnostics}
+              fileInputRef={skillFileInputRef}
+              onClose={() => setSkillsDrawerOpen(false)}
+              onNew={handleNewSkill}
+              onUploadClick={handleSkillUploadClick}
+              onFileChange={handleSkillFileChange}
+              onSelect={setSelectedSkillId}
+              onDraftChange={setSkillDraft}
+              onSave={() => void handleSaveSkill()}
+              onDelete={(id) => void handleDeleteSkill(id)}
+              onToggle={(skill) => void handleToggleSkill(skill)}
+            />
+          )}
         </div>
         <div className={cn("sm:hidden px-2 pb-2", mobileFocusMode && "hidden")}>
           <HomeFaq

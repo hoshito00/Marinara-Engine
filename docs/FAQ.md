@@ -87,7 +87,7 @@ If you downloaded only the APK from a GitHub Release and skipped Termux, the app
 <summary><strong>What can Professor Mari do?</strong></summary>
 <br>
 
-Professor Mari is Marinara Engine's built-in assistant character. She can explain the app, help with setup, create characters and personas, create lorebooks, start new Conversation or Roleplay chats, navigate panels, and fetch existing items so she can review or update them. She is a guide and helper, not a replacement for the docs or release notes when something is version-specific or recently changed.
+Professor Mari is Marinara Engine's built-in assistant character. She can explain the app, help with setup, create characters and personas, create lorebooks, start new Conversation or Roleplay chats, navigate panels, fetch existing items so she can review or update them, and use read-only Fandom/MediaWiki lookups. She is a guide and helper, not a replacement for the docs or release notes when something is version-specific or recently changed.
 
 Editing existing content needs more care than creating new content. Ask Mari to fetch the character, persona, lorebook, chat, or preset before editing it, and give her the specific field or behavior you want changed. Character edits keep a recoverable version snapshot, but persona edits overwrite without a snapshot, so back up personas before asking her to change one.
 

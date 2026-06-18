@@ -18,6 +18,7 @@ import { createCharactersStorage } from "../storage/characters.storage.js";
 import { newId, now } from "../../utils/id-generator.js";
 import { normalizeThemeCss } from "../../utils/theme-css.js";
 import { getMariImagesService } from "./mari-images.service.js";
+import { executeWikiCli } from "../professor-mari/fandom-mediawiki/wiki-cli.js";
 import type {
   MariDbCommandResult,
   MariDbDiffSummary,
@@ -710,6 +711,9 @@ export class MariDbService {
       }
       if (group === "image" || group === "images" || group === "media") {
         return await getMariImagesService(this.db).execute(argv.slice(1), { command, sessionId, cwd: envelope.cwd });
+      }
+      if (group === "wiki" || group === "fandom") {
+        return await executeWikiCli(argv.slice(1), { command });
       }
       if (group !== "db") {
         if (group === "storage") {
@@ -2005,6 +2009,7 @@ export class MariDbService {
       "Live app data:       mari db status|tables|list|get|search|insert|patch|replace|delete|transform|validate",
       "Customization:       mari themes list|active|get|create|update|set-active",
       "Images/media:        mari images connections|preview|generate|edit|assign|delete|list",
+      "Fandom/wiki reads:   mari wiki find-wikis|search-all|search|get-page|sections|category|site-info",
       "Discovery:           mari <group> --help or mari <group> <command> --help",
       "Writes dry-run by default where supported; --apply requests browser approval.",
     ].join("\n");
