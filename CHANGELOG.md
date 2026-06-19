@@ -31,7 +31,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Added conditional prompt macros, macro comment blocks, and Macro Reference guidance so presets and character/persona cards can keep author-only notes or branch prompt text by speaker/character.
 - Added Roleplay TTS narrator voice support and speaker-tagged dialogue voice routing so grouped character dialogue can queue per-character voice requests.
 - Added Roleplay Expression Avatar controls so Expression Engine selections can replace character avatars for matching messages, with sprite expression blocks hidden when avatar replacement is enabled.
-- Added Roleplay Spotify DJ source controls matching Game Mode so chats can choose playlist, liked-song, artist, or wider Spotify selection behavior.
+- Added Roleplay Music DJ source controls matching Game Mode so chats can choose playlist, liked-song, artist, or wider Spotify selection behavior.
 - Added an Illustrator run interval setting so scene illustrations are only eligible after a configurable number of assistant messages, and only successful image generations reset the interval.
 - Added Roleplay quick-edit gestures: double-click on desktop or double-tap on mobile opens a message editor.
 - Added a Chat Settings context toggle for excluding stored provider reasoning from future prompt context, enabled by default.
@@ -51,7 +51,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Removed unreliable met/unmet status tracking from Game Mode NPC prompt context.
 - Improved Roleplay group chat Individual mode prompting so only the currently responding character card is included, other characters' prior messages are treated as user-side context, and the turn-owner instruction can be toggled.
 - Improved Roleplay streaming so the Streaming Speed slider uses a real typewriter reveal cadence instead of dumping fast server token bursts onto the screen.
-- Improved Roleplay Spotify DJ execution so it can trigger in Roleplay chats, respect its configured context/source constraints, strip large playlists into song candidates, and recover playable tracks from grouped post-generation agent results.
+- Improved Roleplay Music DJ execution so it can trigger in Roleplay chats, respect its configured context/source constraints, strip large playlists into song candidates, and recover playable tracks from grouped post-generation agent results.
 - Unified Roleplay Agents & Actions plus Roleplay/Conversation input toolbar icon styling around the neutral grey-white treatment used by the emoji picker.
 - Polished mobile Roleplay/Conversation input toolbar controls with larger touch targets while keeping desktop density compact.
 - Updated the Roleplay input placeholder to invite writing a response without naming the active characters.
@@ -80,7 +80,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fixed quote formatting and macro parsing so curly quotes do not break macro conditions, and quote-formatting no longer pushes editor cursors to the end while typing.
 - Fixed macro comments in character and persona card fields so `{{// ...}}` text is stripped before prompt assembly.
 - Fixed Roleplay prompt/debug routing around transformed group-chat messages so `<last_message>` follows the actual latest visible message and generated responses trim leading blank lines/spaces before line breaks.
-- Fixed Roleplay Spotify DJ false failure toasts after successful queueing, malformed-summary handling, and missing playable-track extraction.
+- Fixed Roleplay Music DJ false failure toasts after successful queueing, malformed-summary handling, and missing playable-track extraction.
 - Fixed Advanced Settings layout issues, including the Admin Access save button escaping its bounds and tooltip/expand icons crowding each other in non-Game chat settings.
 - Fixed gradient character names in Roleplay generated messages so the text uses the gradient instead of rendering as a solid gradient block.
 - Fixed rare Professor Mari toast visits so they can be dismissed.

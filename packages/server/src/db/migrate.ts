@@ -121,6 +121,7 @@ const CREATE_TABLES: string[] = [
     image_path TEXT,
     scan_depth INTEGER NOT NULL DEFAULT 2,
     token_budget INTEGER NOT NULL DEFAULT 2048,
+    entry_limit INTEGER NOT NULL DEFAULT 100,
     recursive_scanning TEXT NOT NULL DEFAULT 'false',
     max_recursion_depth INTEGER NOT NULL DEFAULT 3,
     exclude_from_vectorization TEXT NOT NULL DEFAULT 'false',
@@ -259,6 +260,8 @@ const CREATE_TABLES: string[] = [
     multi_select TEXT NOT NULL DEFAULT 'false',
     separator TEXT NOT NULL DEFAULT ', ',
     random_pick TEXT NOT NULL DEFAULT 'false',
+    display_mode TEXT NOT NULL DEFAULT 'auto',
+    option_sort TEXT NOT NULL DEFAULT 'manual',
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`,
@@ -333,6 +336,7 @@ const CREATE_TABLES: string[] = [
     webhook_url TEXT,
     static_result TEXT,
     script_body TEXT,
+    include_hidden_context TEXT NOT NULL DEFAULT 'false',
     enabled TEXT NOT NULL DEFAULT 'true',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -593,6 +597,11 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "lorebooks",
     column: "max_recursion_depth",
     definition: "INTEGER NOT NULL DEFAULT 3",
+  },
+  {
+    table: "lorebooks",
+    column: "entry_limit",
+    definition: "INTEGER NOT NULL DEFAULT 100",
   },
   {
     table: "lorebooks",
@@ -873,6 +882,21 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "global_images",
     column: "custom_name",
     definition: "TEXT",
+  },
+  {
+    table: "custom_tools",
+    column: "include_hidden_context",
+    definition: "TEXT NOT NULL DEFAULT 'false'",
+  },
+  {
+    table: "choice_blocks",
+    column: "display_mode",
+    definition: "TEXT NOT NULL DEFAULT 'auto'",
+  },
+  {
+    table: "choice_blocks",
+    column: "option_sort",
+    definition: "TEXT NOT NULL DEFAULT 'manual'",
   },
 ];
 

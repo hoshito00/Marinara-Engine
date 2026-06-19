@@ -102,7 +102,11 @@ export function AgentWriteApprovalModal({ open, onClose }: Props) {
     setBusyAction("regenerate");
     setError(null);
     try {
-      await retryAgents(entry.chatId, [entry.agentType]);
+      const didRegenerate = await retryAgents(entry.chatId, [entry.agentType]);
+      if (!didRegenerate) {
+        setError("Could not regenerate proposal");
+        return;
+      }
       closeAndAdvance();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not regenerate proposal");

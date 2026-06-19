@@ -45,6 +45,8 @@ export interface Lorebook {
   scanDepth: number;
   /** Max output tokens allocated to this lorebook */
   tokenBudget: number;
+  /** Max active entries this lorebook may contribute per generation */
+  entryLimit: number;
   recursiveScanning: boolean;
   /** Maximum recursion depth for recursive scanning (default 3) */
   maxRecursionDepth: number;

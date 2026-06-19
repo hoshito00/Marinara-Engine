@@ -2,6 +2,7 @@
 // Lorebook Zod Schemas
 // ──────────────────────────────────────────────
 import { z } from "zod";
+import { LIMITS } from "../constants/defaults.js";
 
 export const lorebookCategorySchema = z.enum(["world", "character", "npc", "spellbook", "uncategorized"]);
 
@@ -70,6 +71,12 @@ export const createLorebookSchema = z.object({
   imagePath: z.string().nullable().default(null),
   scanDepth: z.number().int().min(0).default(2),
   tokenBudget: z.number().int().min(0).default(2048),
+  entryLimit: z
+    .number()
+    .int()
+    .min(LIMITS.LOREBOOK_ENTRY_LIMIT_MIN)
+    .max(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX)
+    .default(LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT),
   recursiveScanning: z.boolean().default(false),
   maxRecursionDepth: z.number().int().min(1).max(10).default(3),
   excludeFromVectorization: z.boolean().default(false),
@@ -94,6 +101,12 @@ export const updateLorebookSchema = z
     imagePath: z.string().nullable().optional(),
     scanDepth: z.number().int().min(0).optional(),
     tokenBudget: z.number().int().min(0).optional(),
+    entryLimit: z
+      .number()
+      .int()
+      .min(LIMITS.LOREBOOK_ENTRY_LIMIT_MIN)
+      .max(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX)
+      .optional(),
     recursiveScanning: z.boolean().optional(),
     maxRecursionDepth: z.number().int().min(1).max(10).optional(),
     excludeFromVectorization: z.boolean().optional(),

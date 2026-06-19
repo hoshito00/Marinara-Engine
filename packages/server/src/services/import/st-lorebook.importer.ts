@@ -205,13 +205,13 @@ function resolveProbability(entry: STWorldInfoEntry): number | null {
   return asNullablePercentage(entry.probability);
 }
 
-function resolveSelectiveLogic(value: unknown): "and" | "or" | "not" {
+export function resolveSelectiveLogic(value: unknown): "and" | "or" | "not" {
   const logicMap: Record<number, "and" | "or" | "not"> = { 0: "and", 1: "or", 2: "not" };
   if (typeof value === "string" && ["and", "or", "not"].includes(value)) return value as "and" | "or" | "not";
   return logicMap[typeof value === "number" ? value : 0] ?? "and";
 }
 
-function resolvePosition(value: STWorldInfoEntry["position"]): number {
+export function resolvePosition(value: unknown): number {
   if (typeof value === "string") {
     if (value === "after_char") return 1;
     if (value === "at_depth" || value === "depth") return 2;

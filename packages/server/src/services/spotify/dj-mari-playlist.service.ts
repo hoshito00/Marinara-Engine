@@ -1,4 +1,4 @@
-// Spotify DJ Mari - AI playlist composer
+// DJ Mari - Spotify playlist composer
 import { PROVIDERS } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
 import { logger } from "../../lib/logger.js";

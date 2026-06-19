@@ -1,7 +1,9 @@
 import { type ChangeEvent, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
+  ArrowDown,
   BookOpen,
   Brain,
   Check,
@@ -12,8 +14,6 @@ import {
   Link,
   Loader2,
   Palette,
-  PanelRightClose,
-  PanelRightOpen,
   Plus,
   RefreshCw,
   Save,
@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  LOCAL_SIDECAR_CONNECTION_ID,
   PROFESSOR_MARI_ID,
   type APIConnection,
   type Chat,
@@ -44,9 +45,11 @@ import {
 import { useConnections } from "../../hooks/use-connections";
 import { useTrackAchievement } from "../../hooks/use-achievements";
 import { chatKeys } from "../../hooks/use-chats";
+import { lorebookKeys } from "../../hooks/use-lorebooks";
 import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
 import { api } from "../../lib/api-client";
 import { useChatStore } from "../../stores/chat.store";
+import { useSidecarStore } from "../../stores/sidecar.store";
 import { useUIStore } from "../../stores/ui.store";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
 import { cn } from "../../lib/utils";
@@ -68,6 +71,7 @@ Use this skill when the request matches a workflow you want Professor Mari to fo
 - Add the steps Professor Mari should follow.
 - Add any checks or evidence she should collect before saying the work is done.
 `;
+const PROFESSOR_MARI_PANE_TRANSITION = { duration: 0.24, ease: [0.16, 1, 0.3, 1] } as const;
 
 type WorkspaceApprovalResponse = {
   ok: boolean;
@@ -86,6 +90,26 @@ type SkillDraftState = {
   description: string;
   content: string;
 };
+
+type ProfessorMariConnectionOption = {
+  id: string;
+  name: string;
+  model?: string | null;
+  provider?: string;
+  isDefault?: boolean;
+};
+
+const LOREBOOK_WORKSPACE_TABLES = new Set([
+  "lorebooks",
+  "lorebook_entries",
+  "lorebook_folders",
+  "lorebook_character_links",
+  "lorebook_persona_links",
+]);
+
+function workspaceHistoryTouchesLorebooks(entry: MariDbHistoryEntry) {
+  return Object.keys(entry.affectedTables ?? {}).some((table) => LOREBOOK_WORKSPACE_TABLES.has(table));
+}
 
 function readStoredConnectionId() {
   try {
@@ -1216,7 +1240,7 @@ function WorkspaceApprovalCard({
   );
 }
 
-function ProfessorMariSkillsDrawer({
+function ProfessorMariSkillsMenu({
   skills,
   selectedSkill,
   draft,
@@ -1257,17 +1281,16 @@ function ProfessorMariSkillsDrawer({
   const hasSkills = skills.length > 0;
 
   return (
-    <aside
+    <section
       className={cn(
-        "flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col overflow-hidden rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/85 shadow-lg shadow-black/10",
-        "max-sm:fixed max-sm:inset-x-2 max-sm:bottom-[calc(env(safe-area-inset-bottom)_+_0.75rem)] max-sm:top-[calc(env(safe-area-inset-top)_+_4rem)] max-sm:z-40 max-sm:h-auto max-sm:bg-[var(--background)] max-sm:shadow-2xl",
+        "flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col overflow-hidden rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70",
         className,
       )}
     >
       <div className="flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
-            <BookOpen size="0.9rem" className="shrink-0 text-[var(--primary)]" />
+            <ArrowDown size="0.9rem" className="shrink-0 text-[var(--primary)]" />
             <span className="truncate text-xs font-semibold text-[var(--foreground)]">Professor Mari Skills</span>
           </div>
           {hasSkills && (
@@ -1283,7 +1306,7 @@ function ProfessorMariSkillsDrawer({
           aria-label="Close skills"
           title="Close"
         >
-          <PanelRightClose size="0.95rem" />
+          <X size="0.95rem" />
         </button>
       </div>
 
@@ -1438,7 +1461,7 @@ function ProfessorMariSkillsDrawer({
           </div>
         )}
       </div>
-    </aside>
+    </section>
   );
 }
 
@@ -1451,6 +1474,9 @@ export function HomeProfessorMariChat({
 }) {
   const qc = useQueryClient();
   const { data: connectionsRaw, isLoading: connectionsLoading } = useConnections();
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
+  const fetchSidecarStatus = useSidecarStore((state) => state.fetchStatus);
   const trackAchievement = useTrackAchievement();
   const [chatId, setChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -1460,7 +1486,7 @@ export function HomeProfessorMariChat({
   const [workspaceActive, setWorkspaceActive] = useState(false);
   const [workspaceActivity, setWorkspaceActivity] = useState<string | null>(null);
   const [workspaceTimeline, setWorkspaceTimeline] = useState<WorkspaceTimelineItem[]>([]);
-  const [skillsDrawerOpen, setSkillsDrawerOpen] = useState(false);
+  const [skillsMenuOpen, setSkillsMenuOpen] = useState(false);
   const [skills, setSkills] = useState<MariWorkspaceSkillDetail[]>([]);
   const [skillsDiagnostics, setSkillsDiagnostics] = useState<string[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -1480,23 +1506,34 @@ export function HomeProfessorMariChat({
   const connectionMenuRef = useRef<HTMLDivElement>(null);
   const skillFileInputRef = useRef<HTMLInputElement>(null);
   const workspaceAbortRef = useRef<AbortController | null>(null);
+  const handledWorkspaceLorebookRefreshIdsRef = useRef<Set<string>>(new Set());
 
   const hasActiveGeneration = useChatStore((state) => (chatId ? state.abortControllers.has(chatId) : false));
   const mariPhase = useChatStore((state) => (chatId ? (state.mariPhaseByChatId.get(chatId) ?? null) : null));
 
-  const languageConnections = useMemo(
+  const languageConnections = useMemo<ProfessorMariConnectionOption[]>(
     () => filterLanguageGenerationConnections((connectionsRaw ?? []) as APIConnection[]),
     [connectionsRaw],
   );
+  const connectionOptions = useMemo<ProfessorMariConnectionOption[]>(() => {
+    if (!sidecarModelDownloaded) return languageConnections;
+    return [
+      ...languageConnections,
+      {
+        id: LOCAL_SIDECAR_CONNECTION_ID,
+        name: sidecarModelDisplayName ? `Local Model (${sidecarModelDisplayName})` : "Local Model (sidecar)",
+        model: sidecarModelDisplayName ?? "local-sidecar",
+        provider: "local_sidecar",
+        isDefault: languageConnections.length === 0,
+      },
+    ];
+  }, [languageConnections, sidecarModelDisplayName, sidecarModelDownloaded]);
   const selectedConnection = useMemo(
-    () => languageConnections.find((connection) => connection.id === selectedConnectionId) ?? null,
-    [languageConnections, selectedConnectionId],
+    () => connectionOptions.find((connection) => connection.id === selectedConnectionId) ?? null,
+    [connectionOptions, selectedConnectionId],
   );
   const effectiveConnection =
-    selectedConnection ??
-    languageConnections.find((connection) => connection.isDefault) ??
-    languageConnections[0] ??
-    null;
+    selectedConnection ?? connectionOptions.find((connection) => connection.isDefault) ?? connectionOptions[0] ?? null;
   const effectiveConnectionId = effectiveConnection?.id ?? null;
   const isBusy = sending || hasActiveGeneration || workspaceActive;
   const selectedSkill = useMemo(
@@ -1547,24 +1584,46 @@ export function HomeProfessorMariChat({
     return status;
   }, [effectiveConnectionId]);
 
-  const invalidateWorkspaceData = useCallback(async () => {
-    await qc.invalidateQueries({ refetchType: "active" });
+  const invalidateLorebookWorkspaceData = useCallback(async () => {
+    await qc.invalidateQueries({ queryKey: lorebookKeys.all, refetchType: "all" });
   }, [qc]);
 
+  const invalidateWorkspaceData = useCallback(async () => {
+    await Promise.all([qc.invalidateQueries({ refetchType: "active" }), invalidateLorebookWorkspaceData()]);
+  }, [invalidateLorebookWorkspaceData, qc]);
+
   useEffect(() => {
-    if (languageConnections.length === 0) {
+    void fetchSidecarStatus();
+  }, [fetchSidecarStatus]);
+
+  useEffect(() => {
+    const appliedLorebookChanges = (workspaceStatus?.history ?? []).filter((entry) => {
+      if (entry.status !== "approved") return false;
+      if (!workspaceHistoryTouchesLorebooks(entry)) return false;
+      return !handledWorkspaceLorebookRefreshIdsRef.current.has(entry.id);
+    });
+    if (appliedLorebookChanges.length === 0) return;
+    for (const entry of appliedLorebookChanges) {
+      handledWorkspaceLorebookRefreshIdsRef.current.add(entry.id);
+    }
+    void invalidateLorebookWorkspaceData().catch((error) => {
+      console.error("[Professor Mari] Failed to refresh lorebooks after workspace change", error);
+    });
+  }, [invalidateLorebookWorkspaceData, workspaceStatus?.history]);
+
+  useEffect(() => {
+    if (connectionOptions.length === 0) {
       setSelectedConnectionId(null);
       return;
     }
 
     setSelectedConnectionId((current) => {
-      if (current && languageConnections.some((connection) => connection.id === current)) return current;
-      const next =
-        languageConnections.find((connection) => connection.isDefault)?.id ?? languageConnections[0]?.id ?? null;
+      if (current && connectionOptions.some((connection) => connection.id === current)) return current;
+      const next = connectionOptions.find((connection) => connection.isDefault)?.id ?? connectionOptions[0]?.id ?? null;
       if (next) rememberConnectionId(next);
       return next;
     });
-  }, [languageConnections]);
+  }, [connectionOptions]);
 
   useEffect(() => {
     if (hasLoadedRef.current || connectionsLoading) return;
@@ -1666,6 +1725,16 @@ export function HomeProfessorMariChat({
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }, []);
 
+  const toggleSkillsMenu = useCallback(() => {
+    const next = !skillsMenuOpen;
+    if (next) {
+      setConnectionMenuOpen(false);
+      setMobileFocusMode(false);
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    }
+    setSkillsMenuOpen(next);
+  }, [skillsMenuOpen]);
+
   useEffect(() => {
     window.addEventListener("marinara:home-professor-mari-close", closeMobileFocusMode);
     return () => window.removeEventListener("marinara:home-professor-mari-close", closeMobileFocusMode);
@@ -1745,7 +1814,7 @@ export function HomeProfessorMariChat({
         });
         await loadSkills();
         setSelectedSkillId(result.skill.id);
-        setSkillsDrawerOpen(true);
+        setSkillsMenuOpen(true);
         await refreshWorkspaceStatus().catch(() => undefined);
         toast.success("Professor Mari skill added.");
       } finally {
@@ -1985,8 +2054,7 @@ export function HomeProfessorMariChat({
     <>
       <section
         className={cn(
-          "home-professor-mari-chat mt-10 w-full border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 transition-[max-width] sm:mt-0",
-          skillsDrawerOpen ? "max-w-6xl" : "max-w-3xl",
+          "home-professor-mari-chat mt-10 w-full max-w-3xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 sm:mt-0",
           attachedFooter ? "rounded-t-xl rounded-b-none" : "rounded-xl",
           mobileFocusMode &&
             "fixed inset-x-0 bottom-0 top-[calc(env(safe-area-inset-top)_+_3rem)] z-30 mt-0 max-w-none overflow-hidden rounded-t-2xl border-0 border-t border-[var(--border)]/70 bg-[var(--background)] sm:relative sm:inset-auto sm:z-auto sm:mt-0 sm:max-w-3xl sm:overflow-visible sm:rounded-xl sm:border sm:bg-[var(--card)]/85",
@@ -1995,17 +2063,16 @@ export function HomeProfessorMariChat({
       >
         <div
           className={cn(
-            "grid gap-2.5 p-2 sm:p-2.5",
-            skillsDrawerOpen
-              ? "sm:grid-cols-[minmax(0,0.58fr)_minmax(0,1.22fr)_minmax(17rem,0.88fr)]"
-              : "sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)]",
-            mobileFocusMode && "h-full grid-rows-[auto_minmax(0,1fr)] gap-0 p-0 sm:h-auto sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)] sm:gap-2.5 sm:p-2.5",
+            "grid gap-2.5 p-2 sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)] sm:p-2.5",
+            mobileFocusMode &&
+              "h-full grid-rows-[auto_minmax(0,1fr)] gap-0 p-0 sm:h-auto sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)] sm:gap-2.5 sm:p-2.5",
           )}
         >
           <div
             className={cn(
               "relative flex min-w-0 flex-col items-center justify-start gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5",
-              mobileFocusMode && "z-10 overflow-visible rounded-none border-0 bg-[var(--secondary)]/22 px-3 pb-0 pt-2.5 sm:flex",
+              mobileFocusMode &&
+                "z-10 overflow-visible rounded-none border-0 bg-[var(--secondary)]/22 px-3 pb-0 pt-2.5 sm:flex",
             )}
           >
             {mobileFocusMode && (
@@ -2048,221 +2115,269 @@ export function HomeProfessorMariChat({
             </div>
           </div>
 
-          <div
-            className={cn(
-              "flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70",
-              mobileFocusMode && "h-full rounded-none border-0 bg-[var(--background)] sm:h-[clamp(24rem,70dvh,31rem)] sm:rounded-lg sm:border sm:bg-[var(--background)]/70",
-            )}
-          >
-            <div
-              className={cn(
-                "flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2",
-                mobileFocusMode && "relative min-h-12 bg-[var(--card)]/80 px-2 pt-2",
-              )}
-            >
-              <div className={cn("flex min-w-0 flex-1 items-center gap-2", mobileFocusMode && "hidden sm:flex")}>
-                <span className="min-w-0 text-center">
-                  <span className="block truncate text-xs font-semibold text-[var(--foreground)]">Ask Professor Mari</span>
-                </span>
-              </div>
-              <div className={cn("flex shrink-0 items-center gap-1", mobileFocusMode && "absolute right-2 top-1/2 -translate-y-1/2")}>
-                <button
-                  type="button"
-                  onClick={() => setSkillsDrawerOpen((current) => !current)}
+          <AnimatePresence mode="wait" initial={false}>
+            {skillsMenuOpen ? (
+              <motion.div
+                key="professor-mari-skills"
+                initial={{ opacity: 0, y: -14, rotateX: -10, transformOrigin: "top center" }}
+                animate={{ opacity: 1, y: 0, rotateX: 0, transformOrigin: "top center" }}
+                exit={{ opacity: 0, y: 12, rotateX: 8, transformOrigin: "bottom center" }}
+                transition={PROFESSOR_MARI_PANE_TRANSITION}
+                className={cn("min-w-0", mobileFocusMode && "h-full")}
+              >
+                <ProfessorMariSkillsMenu
+                  skills={skills}
+                  selectedSkill={selectedSkill}
+                  draft={skillDraft}
+                  loading={skillsLoading}
+                  saving={skillsSaving}
+                  diagnostics={skillsDiagnostics}
+                  fileInputRef={skillFileInputRef}
+                  onClose={() => setSkillsMenuOpen(false)}
+                  onNew={handleNewSkill}
+                  onUploadClick={handleSkillUploadClick}
+                  onFileChange={handleSkillFileChange}
+                  onSelect={setSelectedSkillId}
+                  onDraftChange={setSkillDraft}
+                  onSave={() => void handleSaveSkill()}
+                  onDelete={(id) => void handleDeleteSkill(id)}
+                  onToggle={(skill) => void handleToggleSkill(skill)}
+                  className={
+                    mobileFocusMode
+                      ? "h-full rounded-none border-0 bg-[var(--background)] sm:h-[clamp(24rem,70dvh,31rem)] sm:rounded-lg sm:border sm:bg-[var(--background)]/70"
+                      : undefined
+                  }
+                />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="professor-mari-chat"
+                initial={{ opacity: 0, y: 14, rotateX: 8, transformOrigin: "bottom center" }}
+                animate={{ opacity: 1, y: 0, rotateX: 0, transformOrigin: "bottom center" }}
+                exit={{ opacity: 0, y: -12, rotateX: -10, transformOrigin: "top center" }}
+                transition={PROFESSOR_MARI_PANE_TRANSITION}
+                className={cn("min-w-0", mobileFocusMode && "h-full")}
+              >
+                <div
                   className={cn(
-                    "inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50",
-                    skillsDrawerOpen ? "text-[var(--primary)]" : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                    "flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70",
+                    mobileFocusMode &&
+                      "h-full rounded-none border-0 bg-[var(--background)] sm:h-[clamp(24rem,70dvh,31rem)] sm:rounded-lg sm:border sm:bg-[var(--background)]/70",
                   )}
-                  title={skillsDrawerOpen ? "Close skills" : "Open skills"}
-                  aria-expanded={skillsDrawerOpen}
                 >
-                  {skillsDrawerOpen ? <PanelRightClose size="0.75rem" /> : <PanelRightOpen size="0.75rem" />}
-                  <span className="max-[360px]:hidden">Skills</span>
-                  {skills.length > 0 && (
-                    <span className="rounded-full bg-[var(--primary)]/12 px-1.5 py-0.5 text-[0.56rem] text-[var(--primary)]">
-                      {activeSkillCount}
-                    </span>
-                  )}
-                </button>
-                {(workspaceActive || hasActiveGeneration) && (
-                  <button
-                    type="button"
-                    onClick={() => void stopWorkspace()}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] text-[var(--destructive)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
-                    title="Stop Professor Mari workspace agent"
-                  >
-                    <Square size="0.7rem" /> Stop
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void runRestart()}
-                  disabled={isBusy}
-                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Restart Professor Mari chat"
-                >
-                  <RefreshCw size="0.75rem" />
-                  /restart
-                </button>
-              </div>
-            </div>
-
-            <div
-              ref={scrollRef}
-              className={cn(
-                "min-h-0 flex-1 space-y-2.5 overflow-y-auto px-2.5 py-3 text-left",
-                mobileFocusMode && "px-3 pb-4",
-              )}
-            >
-              {loadingHistory ? (
-                <LoadingHistoryState />
-              ) : (
-                <>
-                  {displayMessages.map((message) => (
-                    <CompactMariMessage
-                      key={message.id}
-                      message={message}
-                      thinking={message.role === "assistant" ? getMessageThinking(message) : null}
-                    />
-                  ))}
-                  {workspaceTimeline.length === 0 && workspaceTimelineActive && (
-                    <WorkspaceStatusEvent content={workspaceActivity ?? "Thinking..."} />
-                  )}
-                  <WorkspaceTimelineList items={workspaceTimeline} active={workspaceTimelineActive} openReasoning />
-                  {workspaceStatus?.error && <WorkspaceErrorEvent message={workspaceStatus.error} />}
-                  {pendingApprovals.map((approval) => (
-                    <WorkspaceApprovalCard
-                      key={approval.id}
-                      approval={approval}
-                      onApprove={(id) => void approveWorkspaceChange(id)}
-                      onReject={(id) => void rejectWorkspaceChange(id)}
-                    />
-                  ))}
-                </>
-              )}
-            </div>
-
-            <form
-              className="border-t border-[var(--border)]/60 p-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void handleSubmit();
-              }}
-            >
-              <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
-                <button
-                  ref={connectionButtonRef}
-                  type="button"
-                  onClick={() => setConnectionMenuOpen((current) => !current)}
-                  className={cn(
-                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
-                    connectionMenuOpen
-                      ? "bg-foreground/10 text-foreground/75"
-                      : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
-                  )}
-                  title={effectiveConnection?.name ? `Connection: ${effectiveConnection.name}` : "Select connection"}
-                >
-                  <Link size="1rem" />
-                </button>
-
-                {connectionMenuOpen && (
                   <div
-                    ref={connectionMenuRef}
-                    className="absolute bottom-full left-2 z-20 mb-2 flex max-h-72 min-w-[15rem] max-w-[20rem] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] text-left shadow-2xl"
+                    className={cn(
+                      "flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2",
+                      mobileFocusMode && "relative min-h-12 bg-[var(--card)]/80 px-2 pt-2",
+                    )}
                   >
-                    <div className="border-b border-[var(--border)] px-3 py-2 text-[0.6875rem] font-semibold text-[var(--foreground)]">
-                      Connections
+                    <div className={cn("flex min-w-0 flex-1 items-center gap-2", mobileFocusMode && "hidden sm:flex")}>
+                      <span className="min-w-0 text-center">
+                        <span className="block truncate text-xs font-semibold text-[var(--foreground)]">
+                          Ask Professor Mari
+                        </span>
+                      </span>
                     </div>
-                    <div className="overflow-y-auto p-1">
-                      {languageConnections.length > 0 ? (
-                        languageConnections.map((connection) => {
-                          const isActive = effectiveConnectionId === connection.id;
-                          return (
-                            <button
-                              key={connection.id}
-                              type="button"
-                              onClick={() => handleConnectionChange(connection.id)}
-                              className={cn(
-                                "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]",
-                                isActive && "font-semibold text-[var(--foreground)]",
-                              )}
-                            >
-                              <span className="min-w-0 flex-1 truncate">{connection.name || connection.id}</span>
-                              {isActive && <Check size="0.75rem" className="shrink-0 text-[var(--primary)]" />}
-                            </button>
-                          );
-                        })
-                      ) : (
+                    <div
+                      className={cn(
+                        "flex shrink-0 items-center gap-1",
+                        mobileFocusMode && "absolute right-2 top-1/2 -translate-y-1/2",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={toggleSkillsMenu}
+                        className={cn(
+                          "inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50",
+                          "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                        )}
+                        title="Open skills"
+                        aria-expanded={skillsMenuOpen}
+                      >
+                        <ArrowDown size="0.75rem" />
+                        <span className="max-[360px]:hidden">Skills</span>
+                        {skills.length > 0 && (
+                          <span className="rounded-full bg-[var(--primary)]/12 px-1.5 py-0.5 text-[0.56rem] text-[var(--primary)]">
+                            {activeSkillCount}
+                          </span>
+                        )}
+                      </button>
+                      {(workspaceActive || hasActiveGeneration) && (
                         <button
                           type="button"
-                          onClick={() => {
-                            setConnectionMenuOpen(false);
-                            useUIStore.getState().openRightPanel("connections");
-                          }}
-                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                          onClick={() => void stopWorkspace()}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] text-[var(--destructive)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+                          title="Stop Professor Mari workspace agent"
                         >
-                          <Link size="0.875rem" />
-                          Add a connection
+                          <Square size="0.7rem" /> Stop
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => void runRestart()}
+                        disabled={isBusy}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Restart Professor Mari chat"
+                      >
+                        <RefreshCw size="0.75rem" />
+                        /restart
+                      </button>
                     </div>
                   </div>
-                )}
 
-                <textarea
-                  value={draft}
-                  onChange={(event) => {
-                    setDraft(event.target.value);
-                    if (mobileFocusMode) event.currentTarget.scrollIntoView({ block: "end" });
-                  }}
-                  onFocus={() => setMobileFocusMode(window.matchMedia("(max-width: 639px)").matches)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
+                  <div
+                    ref={scrollRef}
+                    className={cn(
+                      "min-h-0 flex-1 space-y-2.5 overflow-y-auto px-2.5 py-3 text-left",
+                      mobileFocusMode && "px-3 pb-4",
+                    )}
+                  >
+                    {loadingHistory ? (
+                      <LoadingHistoryState />
+                    ) : (
+                      <>
+                        {displayMessages.map((message) => (
+                          <CompactMariMessage
+                            key={message.id}
+                            message={message}
+                            thinking={message.role === "assistant" ? getMessageThinking(message) : null}
+                          />
+                        ))}
+                        {workspaceTimeline.length === 0 && workspaceTimelineActive && (
+                          <WorkspaceStatusEvent content={workspaceActivity ?? "Thinking..."} />
+                        )}
+                        <WorkspaceTimelineList
+                          items={workspaceTimeline}
+                          active={workspaceTimelineActive}
+                          openReasoning
+                        />
+                        {workspaceStatus?.error && <WorkspaceErrorEvent message={workspaceStatus.error} />}
+                        {pendingApprovals.map((approval) => (
+                          <WorkspaceApprovalCard
+                            key={approval.id}
+                            approval={approval}
+                            onApprove={(id) => void approveWorkspaceChange(id)}
+                            onReject={(id) => void rejectWorkspaceChange(id)}
+                          />
+                        ))}
+                      </>
+                    )}
+                  </div>
+
+                  <form
+                    className="border-t border-[var(--border)]/60 p-2"
+                    onSubmit={(event) => {
                       event.preventDefault();
                       void handleSubmit();
-                    }
-                  }}
-                  rows={1}
-                  placeholder="Ask Professor Mari..."
-                  className="mari-chat-input-textarea max-h-24 min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm leading-normal text-foreground/90 outline-none placeholder:text-foreground/30 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={isBusy}
-                />
-                <button
-                  type="submit"
-                  disabled={!draft.trim() || isBusy}
-                  className={cn(
-                    "mari-chat-send-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white transition-all duration-200",
-                    draft.trim() && !isBusy ? "hover:text-white active:scale-90" : "cursor-not-allowed opacity-40",
-                  )}
-                  aria-label="Send to Professor Mari"
-                  title="Send"
-                >
-                  <Send size="0.9375rem" className={cn(draft.trim() && "translate-x-[1px]")} />
-                </button>
-              </div>
-            </form>
-          </div>
+                    }}
+                  >
+                    <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
+                      <button
+                        ref={connectionButtonRef}
+                        type="button"
+                        onClick={() => setConnectionMenuOpen((current) => !current)}
+                        className={cn(
+                          "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
+                          connectionMenuOpen
+                            ? "bg-foreground/10 text-foreground/75"
+                            : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+                        )}
+                        title={
+                          effectiveConnection?.name ? `Connection: ${effectiveConnection.name}` : "Select connection"
+                        }
+                      >
+                        <Link size="1rem" />
+                      </button>
 
-          {skillsDrawerOpen && (
-            <ProfessorMariSkillsDrawer
-              skills={skills}
-              selectedSkill={selectedSkill}
-              draft={skillDraft}
-              loading={skillsLoading}
-              saving={skillsSaving}
-              diagnostics={skillsDiagnostics}
-              fileInputRef={skillFileInputRef}
-              onClose={() => setSkillsDrawerOpen(false)}
-              onNew={handleNewSkill}
-              onUploadClick={handleSkillUploadClick}
-              onFileChange={handleSkillFileChange}
-              onSelect={setSelectedSkillId}
-              onDraftChange={setSkillDraft}
-              onSave={() => void handleSaveSkill()}
-              onDelete={(id) => void handleDeleteSkill(id)}
-              onToggle={(skill) => void handleToggleSkill(skill)}
-            />
-          )}
+                      {connectionMenuOpen && (
+                        <div
+                          ref={connectionMenuRef}
+                          className="absolute bottom-full left-2 z-20 mb-2 flex max-h-72 min-w-[15rem] max-w-[20rem] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] text-left shadow-2xl"
+                        >
+                          <div className="border-b border-[var(--border)] px-3 py-2 text-[0.6875rem] font-semibold text-[var(--foreground)]">
+                            Connections
+                          </div>
+                          <div className="overflow-y-auto p-1">
+                            {connectionOptions.length > 0 ? (
+                              connectionOptions.map((connection) => {
+                                const isActive = effectiveConnectionId === connection.id;
+                                return (
+                                  <button
+                                    key={connection.id}
+                                    type="button"
+                                    onClick={() => handleConnectionChange(connection.id)}
+                                    className={cn(
+                                      "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]",
+                                      isActive && "font-semibold text-[var(--foreground)]",
+                                    )}
+                                  >
+                                    <span className="min-w-0 flex-1 truncate">
+                                      {connection.name || connection.id}
+                                      {connection.id === LOCAL_SIDECAR_CONNECTION_ID && (
+                                        <span className="ml-1 text-[0.625rem] font-normal text-[var(--muted-foreground)]">
+                                          JSON tools
+                                        </span>
+                                      )}
+                                    </span>
+                                    {isActive && <Check size="0.75rem" className="shrink-0 text-[var(--primary)]" />}
+                                  </button>
+                                );
+                              })
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setConnectionMenuOpen(false);
+                                  useUIStore.getState().openRightPanel("connections");
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                              >
+                                <Link size="0.875rem" />
+                                Add a connection
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <textarea
+                        value={draft}
+                        onChange={(event) => {
+                          setDraft(event.target.value);
+                          if (mobileFocusMode) event.currentTarget.scrollIntoView({ block: "end" });
+                        }}
+                        onFocus={() => setMobileFocusMode(window.matchMedia("(max-width: 639px)").matches)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            void handleSubmit();
+                          }
+                        }}
+                        rows={1}
+                        placeholder="Ask Professor Mari..."
+                        className="mari-chat-input-textarea max-h-24 min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm leading-normal text-foreground/90 outline-none placeholder:text-foreground/30 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={isBusy}
+                      />
+                      <button
+                        type="submit"
+                        disabled={!draft.trim() || isBusy}
+                        className={cn(
+                          "mari-chat-send-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white transition-all duration-200",
+                          draft.trim() && !isBusy
+                            ? "hover:text-white active:scale-90"
+                            : "cursor-not-allowed opacity-40",
+                        )}
+                        aria-label="Send to Professor Mari"
+                        title="Send"
+                      >
+                        <Send size="0.9375rem" className={cn(draft.trim() && "translate-x-[1px]")} />
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
         <div className={cn("sm:hidden px-2 pb-2", mobileFocusMode && "hidden")}>
           <HomeFaq

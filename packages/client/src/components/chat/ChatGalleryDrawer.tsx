@@ -58,7 +58,7 @@ export function ChatGalleryDrawer({ chat, open, onClose, anchor, onIllustrate }:
         </div>
 
         <div className={cn(ROLEPLAY_POPOVER_SCROLL_AREA, "flex-1 overflow-y-auto")}>
-          <ChatGallery chatId={chat.id} onIllustrate={onIllustrate} />
+          <ChatGallery chatId={chat.id} mode={chat.mode} onIllustrate={onIllustrate} />
         </div>
       </div>
     </>

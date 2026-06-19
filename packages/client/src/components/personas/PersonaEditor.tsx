@@ -898,20 +898,12 @@ export function PersonaEditor() {
           </div>
         </div>
 
-        <div className="mari-editor-actions hidden md:flex">
+        <div className="mari-editor-actions flex">
           <button type="button" onClick={handleSave} disabled={saveDisabled} className={saveButtonClass}>
             <Save size="0.9375rem" />
             <span>{saveLabel}</span>
           </button>
           {headerActions}
-        </div>
-
-        <div className="mari-editor-actions flex w-full items-center justify-between gap-2 md:hidden">
-          <button type="button" onClick={handleSave} disabled={saveDisabled} className={saveButtonClass}>
-            <Save size="0.9375rem" />
-            <span>{saveLabel}</span>
-          </button>
-          <div className="flex min-w-0 items-center justify-end gap-1">{headerActions}</div>
         </div>
       </div>
 

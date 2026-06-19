@@ -11,6 +11,7 @@ export const lorebooks = sqliteTable("lorebooks", {
   imagePath: text("image_path"),
   scanDepth: integer("scan_depth").notNull().default(2),
   tokenBudget: integer("token_budget").notNull().default(2048),
+  entryLimit: integer("entry_limit").notNull().default(100),
   recursiveScanning: text("recursive_scanning").notNull().default("false"),
   maxRecursionDepth: integer("max_recursion_depth").notNull().default(3),
   excludeFromVectorization: text("exclude_from_vectorization").notNull().default("false"),

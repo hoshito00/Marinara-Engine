@@ -60,6 +60,7 @@ import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { MacroTextarea } from "../ui/MacroTextarea";
+import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { api } from "../../lib/api-client";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
 import { type WrapFormat, type MarkerType } from "@marinara-engine/shared";
@@ -132,8 +133,30 @@ function reorderIdsByOffset(items: Array<{ id: string }>, index: number, offset:
   return ids;
 }
 
+function reorderItems<T>(items: T[], sourceIndex: number, targetIndex: number): T[] | null {
+  if (sourceIndex < 0 || sourceIndex >= items.length || targetIndex < 0 || targetIndex >= items.length) return null;
+  if (sourceIndex === targetIndex) return null;
+  const next = [...items];
+  const [moved] = next.splice(sourceIndex, 1);
+  if (moved === undefined) return null;
+  next.splice(targetIndex, 0, moved);
+  return next;
+}
+
 function readBoolFlag(value: unknown): boolean {
   return value === true || value === "true";
+}
+
+type ChoiceDisplayMode = "auto" | "buttons" | "listbox";
+type ChoiceOptionSort = "manual" | "alphabetical";
+type VariableOptionDraft = { id: string; label: string; value: string };
+
+function readChoiceDisplayMode(value: unknown): ChoiceDisplayMode {
+  return value === "buttons" || value === "listbox" ? value : "auto";
+}
+
+function readChoiceOptionSort(value: unknown): ChoiceOptionSort {
+  return value === "alphabetical" ? "alphabetical" : "manual";
 }
 
 function readMarkerConfig(value: unknown) {
@@ -1543,7 +1566,7 @@ function VariableCard({
   isReordering: boolean;
 }) {
   // Parse options
-  let opts: Array<{ id: string; label: string; value: string }> = [];
+  let opts: VariableOptionDraft[] = [];
   try {
     opts = typeof variable.options === "string" ? JSON.parse(variable.options) : (variable.options ?? []);
   } catch {
@@ -1555,16 +1578,62 @@ function VariableCard({
   const isMultiSelect = variable.multiSelect === "true" || variable.multiSelect === true;
   const isRandomPick = variable.randomPick === "true" || variable.randomPick === true;
   const separatorValue = variable.separator ?? ", ";
+  const displayMode = readChoiceDisplayMode(variable.displayMode ?? variable.display_mode);
+  const optionSort = readChoiceOptionSort(variable.optionSort ?? variable.option_sort);
+  const optionOrderIsAlphabetical = optionSort === "alphabetical";
 
   // Track which option is expanded in the big editor (index or null)
   const [expandedOptIdx, setExpandedOptIdx] = useState<number | null>(null);
+  const [draggingOptIdx, setDraggingOptIdx] = useState<number | null>(null);
+  const [dropOptIdx, setDropOptIdx] = useState<number | null>(null);
+  const [dragReadyOptIdx, setDragReadyOptIdx] = useState<number | null>(null);
 
   const update = (data: Record<string, unknown>) => {
     onUpdateVariable.mutate({ presetId, variableId: variable.id, ...data });
   };
 
-  const updateOpts = (newOpts: typeof opts) => {
+  const updateOpts = (newOpts: VariableOptionDraft[]) => {
     update({ options: newOpts });
+  };
+
+  const calcOptionDropIdx = (optionIdx: number, e: React.DragEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    return e.clientY < midY ? optionIdx : optionIdx + 1;
+  };
+
+  const handleOptionDragStart = (optionIdx: number, e: React.DragEvent) => {
+    if (optionOrderIsAlphabetical) return;
+    setDraggingOptIdx(optionIdx);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(optionIdx));
+  };
+
+  const handleOptionDragOver = (optionIdx: number, e: React.DragEvent) => {
+    if (optionOrderIsAlphabetical) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropOptIdx(calcOptionDropIdx(optionIdx, e));
+  };
+
+  const commitOptionDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const sourceIdx = draggingOptIdx;
+    const target = dropOptIdx;
+    setDraggingOptIdx(null);
+    setDropOptIdx(null);
+    setDragReadyOptIdx(null);
+    if (optionOrderIsAlphabetical || sourceIdx === null || target === null) return;
+    let insertAt = target;
+    if (sourceIdx < insertAt) insertAt--;
+    const next = reorderItems(opts, sourceIdx, insertAt);
+    if (next) updateOpts(next);
+  };
+
+  const moveOptionByOffset = (optionIdx: number, offset: number) => {
+    if (optionOrderIsAlphabetical) return;
+    const next = reorderItems(opts, optionIdx, optionIdx + offset);
+    if (next) updateOpts(next);
   };
 
   return (
@@ -1757,21 +1826,140 @@ function VariableCard({
             </div>
           )}
 
+          {/* Presentation */}
+          <div className="space-y-2 rounded-lg bg-[var(--secondary)] p-2.5 ring-1 ring-[var(--border)]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <ListChecks size="0.75rem" className="text-amber-400" />
+                <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Presentation</span>
+              </div>
+              <div className="flex rounded-lg bg-[var(--background)] p-0.5 ring-1 ring-[var(--border)]">
+                {(
+                  [
+                    ["auto", "Auto"],
+                    ["buttons", isMultiSelect ? "Checkboxes" : "Radios"],
+                    ["listbox", isMultiSelect ? "Listbox" : "Dropdown"],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => update({ displayMode: mode })}
+                    className={cn(
+                      "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-colors",
+                      displayMode === mode
+                        ? "bg-amber-400 text-black"
+                        : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t border-[var(--border)] pt-2">
+              <div className="min-w-0">
+                <p className="text-[0.625rem] font-medium text-[var(--foreground)]">Alphabetical option display</p>
+                <p className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                  Manual order is kept for editing and exports.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={optionOrderIsAlphabetical}
+                onClick={() => update({ optionSort: optionOrderIsAlphabetical ? "manual" : "alphabetical" })}
+                className={cn(
+                  "relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors",
+                  optionOrderIsAlphabetical ? "bg-amber-400" : "bg-[var(--border)]",
+                )}
+              >
+                <span
+                  className={cn(
+                    "pointer-events-none inline-block h-3 w-3 translate-y-0.5 rounded-full bg-white shadow transition-transform",
+                    optionOrderIsAlphabetical ? "translate-x-3.5" : "translate-x-0.5",
+                  )}
+                />
+              </button>
+            </div>
+          </div>
+
           {/* Options */}
           <div className="space-y-1.5">
             <label className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Options</label>
             {opts.map((opt, oi) => {
               const valueBlank = !opt.value || !opt.value.trim();
+              const showDropBefore =
+                dropOptIdx === oi && draggingOptIdx !== null && draggingOptIdx !== oi && draggingOptIdx !== oi - 1;
+              const showDropAfter =
+                oi === opts.length - 1 &&
+                dropOptIdx === opts.length &&
+                draggingOptIdx !== null &&
+                draggingOptIdx !== oi;
               return (
                 <div key={opt.id}>
+                  {showDropBefore && <div className="mx-2 mb-1 h-0.5 rounded-full bg-amber-400" />}
                   <div
+                    draggable={dragReadyOptIdx === oi && !optionOrderIsAlphabetical}
+                    onDragStart={(e) => handleOptionDragStart(oi, e)}
+                    onDragOver={(e) => {
+                      e.stopPropagation();
+                      handleOptionDragOver(oi, e);
+                    }}
+                    onDrop={(e) => {
+                      e.stopPropagation();
+                      commitOptionDrop(e);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingOptIdx(null);
+                      setDropOptIdx(null);
+                      setDragReadyOptIdx(null);
+                    }}
                     className={cn(
                       "flex items-center gap-2 rounded-lg px-2.5 py-1.5 ring-1",
                       valueBlank
                         ? "bg-[var(--destructive)]/5 ring-[var(--destructive)]/30"
                         : "bg-[var(--secondary)] ring-[var(--border)]",
+                      draggingOptIdx === oi && "opacity-40",
                     )}
                   >
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <div
+                        className={cn(
+                          "rounded p-0.5",
+                          optionOrderIsAlphabetical
+                            ? "cursor-not-allowed opacity-30"
+                            : "cursor-grab hover:bg-[var(--accent)] active:cursor-grabbing",
+                        )}
+                        title={optionOrderIsAlphabetical ? "Disable alphabetical display to reorder" : "Drag to reorder"}
+                        onMouseDown={() => {
+                          if (!optionOrderIsAlphabetical) setDragReadyOptIdx(oi);
+                        }}
+                        onMouseUp={() => setDragReadyOptIdx(null)}
+                      >
+                        <GripVertical size="0.75rem" className="text-[var(--muted-foreground)]" />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => moveOptionByOffset(oi, -1)}
+                        disabled={optionOrderIsAlphabetical || oi === 0}
+                        className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-30"
+                        title="Move option up"
+                        aria-label={`Move ${opt.label || `option ${oi + 1}`} up`}
+                      >
+                        <ArrowUp size="0.625rem" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveOptionByOffset(oi, 1)}
+                        disabled={optionOrderIsAlphabetical || oi === opts.length - 1}
+                        className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-30"
+                        title="Move option down"
+                        aria-label={`Move ${opt.label || `option ${oi + 1}`} down`}
+                      >
+                        <ArrowDown size="0.625rem" />
+                      </button>
+                    </div>
                     <span className="shrink-0 text-[0.625rem] font-medium text-amber-400">{oi + 1}.</span>
                     <OptionFieldInput
                       value={opt.label}
@@ -1819,6 +2007,7 @@ function VariableCard({
                   {valueBlank && (
                     <p className="mt-1 pl-6 text-[0.5625rem] text-[var(--destructive)]">Value cannot be empty.</p>
                   )}
+                  {showDropAfter && <div className="mx-2 mt-1 h-0.5 rounded-full bg-amber-400" />}
                 </div>
               );
             })}
@@ -1980,6 +2169,7 @@ function SectionContentTextarea({
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedRef = useRef(false);
   const formatQuotes = useQuoteFormatter();
+  const quoteFormat = useUIStore((s) => s.quoteFormat);
 
   // Only sync from parent when not actively editing
   useEffect(() => {
@@ -2029,6 +2219,7 @@ function SectionContentTextarea({
       onBlur={handleBlur}
       onFocus={handleFocus}
       onExpandedClose={commit}
+      formatOnChange={(textarea) => applyTextareaQuoteFormat(textarea, quoteFormat)}
       title={sectionName ? `Edit: ${sectionName}` : "Edit Prompt"}
       className="min-h-[7.5rem] w-full rounded-lg bg-[var(--secondary)] p-2.5 font-mono text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
       placeholder="Prompt content… (supports {{user}}, {{char}}, {{// comment}}, {{trim}} macros)"

@@ -27,7 +27,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useLorebooks, useDeleteLorebook, useUpdateLorebook, useUploadLorebookImage } from "../../hooks/use-lorebooks";
 import { useCharacters, usePersonas } from "../../hooks/use-characters";
 import type { Lorebook, LorebookCategory } from "@marinara-engine/shared";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import { cn } from "../../lib/utils";
 import { api } from "../../lib/api-client";
 import { getChatCharacterIds } from "../../lib/chat-macros";
@@ -822,8 +822,18 @@ export function LorebooksPanel() {
                   <button
                     onClick={(event) => {
                       event.stopPropagation();
-                      deleteLorebookFolder.mutate(folder.id);
-                      if (expandedFolderId === folder.id) setExpandedFolderId(null);
+                      void confirmNonEmptyFolderDelete(folder.itemIds.length, {
+                        title: "Delete Folder",
+                        message: `Delete "${folder.name}"? Its ${folder.itemIds.length} lorebook${
+                          folder.itemIds.length === 1 ? "" : "s"
+                        } will move out of the folder.`,
+                        confirmLabel: "Delete",
+                        tone: "destructive",
+                      }).then((ok) => {
+                        if (!ok) return;
+                        deleteLorebookFolder.mutate(folder.id);
+                        if (expandedFolderId === folder.id) setExpandedFolderId(null);
+                      });
                     }}
 	                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
 	                    title="Delete folder"

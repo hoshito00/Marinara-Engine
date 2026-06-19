@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, openSync, closeSync, readFileSync, readSync, statSync } from "node:fs";
 import { copyFile, open, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "../lib/logger.js";
 import { getFileStorageDir } from "../config/runtime-config.js";
 import * as schema from "./schema/index.js";
@@ -77,10 +78,19 @@ type TableSnapshotManifest = {
   tables: Record<string, number>;
 };
 
+export type QuarantinedStorageTable = {
+  table: string;
+  files: Array<{
+    from: string;
+    to: string;
+  }>;
+};
+
 export type FileNativeStoreController = {
   flush: () => Promise<void>;
   close: () => Promise<void>;
   rootDir: string;
+  getQuarantinedTables: () => QuarantinedStorageTable[];
 };
 
 export type FileNativeDB = {
@@ -188,6 +198,8 @@ type FileBackedTable = (typeof FILE_BACKED_TABLES)[number];
 
 const FILE_BACKED_TABLE_SET = new Set<string>(FILE_BACKED_TABLES);
 const TABLES_REVERSE = [...FILE_BACKED_TABLES].reverse();
+const isWindows = process.platform === "win32";
+const warnedFlushFailures = new Set<string>();
 
 const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentKey: string; childKey: string }> = [
   { parent: "chats", child: "messages", parentKey: "id", childKey: "chatId" },
@@ -279,13 +291,57 @@ function quoteIdentifier(value: string) {
   return `"${value.replace(/"/g, '""')}"`;
 }
 
+function warnFlushFailure(kind: "file" | "directory", path: string, err: unknown) {
+  const key = `${kind}:${path}`;
+  if (warnedFlushFailures.has(key)) {
+    logger.debug(err, "[file-storage] Failed to fsync %s %s", kind, path);
+    return;
+  }
+  warnedFlushFailures.add(key);
+  logger.warn(
+    err,
+    "[file-storage] Failed to fsync %s %s; crash recovery may rely on the operating system write cache.",
+    kind,
+    path,
+  );
+}
+
 async function flushFile(path: string) {
+  let handle: import("node:fs/promises").FileHandle | null = null;
+  try {
+    // Windows FlushFileBuffers requires a writable file handle. Opening the
+    // just-written snapshot with r+ keeps fsync effective there without
+    // truncating or rewriting the file.
+    handle = await open(path, "r+");
+    await handle.sync();
+  } catch (err) {
+    // Best effort only. Some mobile filesystems reject fsync for app data.
+    warnFlushFailure("file", path, err);
+  } finally {
+    if (handle !== null) {
+      try {
+        await handle.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+async function flushDirectory(path: string) {
+  if (isWindows) {
+    // Node cannot open/flush directory handles on Windows. File handles are
+    // still flushed above; the directory metadata flush remains POSIX-only.
+    return;
+  }
+
   let handle: import("node:fs/promises").FileHandle | null = null;
   try {
     handle = await open(path, "r");
     await handle.sync();
-  } catch {
-    // Best effort only. Some mobile filesystems reject fsync for app data.
+  } catch (err) {
+    // Directory fsync is best effort across filesystems/platforms.
+    warnFlushFailure("directory", path, err);
   } finally {
     if (handle !== null) {
       try {
@@ -344,6 +400,7 @@ async function atomicWriteFile(path: string, content: string, options: { refresh
         await copyFile(path, bakTmpPath);
         await flushFile(bakTmpPath);
         await rename(bakTmpPath, bakPath);
+        await flushDirectory(dirname(bakPath));
       } catch (err) {
         try {
           if (existsSync(bakTmpPath)) await unlink(bakTmpPath);
@@ -360,7 +417,7 @@ async function atomicWriteFile(path: string, content: string, options: { refresh
     await writeFile(tmpPath, content);
     await flushFile(tmpPath);
     await rename(tmpPath, path);
-    await flushFile(dirname(path));
+    await flushDirectory(dirname(path));
   } catch (err) {
     try {
       if (existsSync(tmpPath)) await unlink(tmpPath);
@@ -371,7 +428,14 @@ async function atomicWriteFile(path: string, content: string, options: { refresh
   }
 }
 
-type ParseResult<T> = { value: T; recoveredFromBackup: boolean; recoveredFromFallback: boolean };
+type ParseResult<T> = {
+  value: T;
+  recoveredFromBackup: boolean;
+  recoveredFromFallback: boolean;
+  unreadablePaths: string[];
+};
+
+type QuarantinedFile = QuarantinedStorageTable["files"][number];
 
 function describeStaleness(mainPath: string, backupPath: string): string {
   try {
@@ -392,10 +456,83 @@ function describeStaleness(mainPath: string, backupPath: string): string {
   }
 }
 
+function corruptionTimestamp() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function quarantinePath(path: string, timestamp: string) {
+  let candidate = `${path}.corrupt-${timestamp}`;
+  let suffix = 1;
+  while (existsSync(candidate)) {
+    suffix += 1;
+    candidate = `${path}.corrupt-${timestamp}-${suffix}`;
+  }
+  return candidate;
+}
+
+async function quarantineUnrecoverableFiles(paths: string[], context: string): Promise<QuarantinedFile[]> {
+  const timestamp = corruptionTimestamp();
+  const quarantined: QuarantinedFile[] = [];
+  const uniquePaths = [...new Set(paths)];
+  for (const from of uniquePaths) {
+    if (!existsSync(from)) continue;
+    const to = quarantinePath(from, timestamp);
+    try {
+      await rename(from, to);
+      quarantined.push({ from, to });
+    } catch (err) {
+      logger.error(
+        err,
+        "[file-storage] Failed to quarantine unrecoverable %s file %s; leaving it in place.",
+        context,
+        from,
+      );
+    }
+  }
+  return quarantined;
+}
+
 function parseJsonFile<T>(path: string, fallback: T): ParseResult<T> {
-  if (!existsSync(path)) return { value: fallback, recoveredFromBackup: false, recoveredFromFallback: false };
+  if (!existsSync(path)) {
+    const backupPath = `${path}.bak`;
+    if (existsSync(backupPath)) {
+      try {
+        const value = JSON.parse(readFileSync(backupPath, "utf8")) as T;
+        logger.warn(
+          "[file-storage] %s is missing; recovering from %s. A fresh primary snapshot will be written on next save.",
+          path,
+          backupPath,
+        );
+        return {
+          value,
+          recoveredFromBackup: true,
+          recoveredFromFallback: false,
+          unreadablePaths: [],
+        };
+      } catch (backupErr) {
+        logger.error(
+          backupErr,
+          "[file-storage] %s is missing and backup %s could not be used; continuing with fallback data.",
+          path,
+          backupPath,
+        );
+        return {
+          value: fallback,
+          recoveredFromBackup: false,
+          recoveredFromFallback: true,
+          unreadablePaths: [backupPath],
+        };
+      }
+    }
+    return { value: fallback, recoveredFromBackup: false, recoveredFromFallback: false, unreadablePaths: [] };
+  }
   try {
-    return { value: JSON.parse(readFileSync(path, "utf8")) as T, recoveredFromBackup: false, recoveredFromFallback: false };
+    return {
+      value: JSON.parse(readFileSync(path, "utf8")) as T,
+      recoveredFromBackup: false,
+      recoveredFromFallback: false,
+      unreadablePaths: [],
+    };
   } catch (err) {
     const backupPath = `${path}.bak`;
     if (existsSync(backupPath)) {
@@ -413,6 +550,7 @@ function parseJsonFile<T>(path: string, fallback: T): ParseResult<T> {
           value,
           recoveredFromBackup: true,
           recoveredFromFallback: false,
+          unreadablePaths: [],
         };
       } catch (backupErr) {
         logger.error(
@@ -428,7 +566,7 @@ function parseJsonFile<T>(path: string, fallback: T): ParseResult<T> {
           backupPath,
           path,
         );
-        return { value: fallback, recoveredFromBackup: false, recoveredFromFallback: true };
+        return { value: fallback, recoveredFromBackup: false, recoveredFromFallback: true, unreadablePaths: [path, backupPath] };
       }
     }
     logger.error(
@@ -436,7 +574,7 @@ function parseJsonFile<T>(path: string, fallback: T): ParseResult<T> {
       "[file-storage] %s is corrupt and no usable backup exists; continuing with fallback data. Data in this file is unrecoverable.",
       path,
     );
-    return { value: fallback, recoveredFromBackup: false, recoveredFromFallback: true };
+    return { value: fallback, recoveredFromBackup: false, recoveredFromFallback: true, unreadablePaths: [path] };
   }
 }
 
@@ -811,6 +949,13 @@ class FileTableStore {
   private migratedFromSqlite: TableSnapshotManifest["migratedFromSqlite"];
   private legacyRepair: TableSnapshotManifest["legacyRepair"];
   private loadedManifest: TableSnapshotManifest | null = null;
+  // Rollback state for the active transaction lives in this AsyncLocalStorage so
+  // it is bound to the transaction's own async call path. A concurrent
+  // non-transactional write that interleaves during an await runs OUTSIDE this
+  // context and is therefore never recorded — so it survives a rollback. See
+  // transaction() / recordTxMutation().
+  private readonly txContext = new AsyncLocalStorage<{ snapshots: Map<string, Row[]>; dirtyTables: Set<string> }>();
+  private quarantinedTables: QuarantinedStorageTable[] = [];
 
   constructor(
     private readonly rootDir: string,
@@ -825,17 +970,21 @@ class FileTableStore {
     mkdirSync(this.rootDir, { recursive: true });
 
     if (fileStoreManifestExists(this.rootDir)) {
-      this.loadFileSnapshots();
+      await this.loadFileSnapshots();
       await this.repairLegacyImportIfNeeded();
     } else if (this.legacyDbPaths.some((path) => existsSync(path))) {
       const imported = await this.importLegacySqlite(this.legacyDbPaths);
       if (imported) {
         await this.flush(true);
       } else if (tableSnapshotsExist(this.rootDir)) {
-        this.loadFileSnapshots();
+        await this.loadFileSnapshots();
       }
     } else if (tableSnapshotsExist(this.rootDir)) {
-      this.loadFileSnapshots();
+      await this.loadFileSnapshots();
+    }
+
+    if (this.dirty || this.dirtyTables.size > 0) {
+      await this.flush(true);
     }
 
     this.installAutosave();
@@ -847,20 +996,49 @@ class FileTableStore {
   }
 
   async transaction<T>(fn: (tx: FileNativeDB) => Promise<T> | T, tx: FileNativeDB): Promise<T> {
-    const tableSnapshot = new Map<string, Row[]>(
-      Array.from(this.tables, ([table, rows]) => [table, rows.map((row) => ({ ...row }))]),
-    );
+    // Copy-on-write rollback, isolated to this transaction's async context:
+    // instead of cloning every table up front (O(total rows) per call, on the
+    // per-turn setMemories hot path) and restoring the whole map on throw (which
+    // also dropped concurrent writes), snapshot each table only on its first
+    // mutation by THIS transaction and restore only those. Mutations made on
+    // other async call paths (concurrent non-transactional writes) run outside
+    // the context, are never recorded, and so survive a rollback.
+    if (this.txContext.getStore()) {
+      // Nested call: run inside the outer transaction's context so the whole
+      // nest rolls back together; the outermost owns snapshot/restore.
+      return await fn(tx);
+    }
+    const ctx = { snapshots: new Map<string, Row[]>(), dirtyTables: new Set<string>() };
     const dirtySnapshot = this.dirty;
     const dirtyTablesSnapshot = new Set(this.dirtyTables);
 
     try {
-      return await fn(tx);
+      return await this.txContext.run(ctx, () => fn(tx));
     } catch (err) {
-      this.tables = tableSnapshot;
+      for (const tableName of ctx.dirtyTables) {
+        const snapshot = ctx.snapshots.get(tableName);
+        if (snapshot) this.tables.set(tableName, snapshot);
+      }
       this.dirty = dirtySnapshot;
       this.dirtyTables = dirtyTablesSnapshot;
       throw err;
     }
+  }
+
+  /**
+   * Snapshot a table's current rows the first time the active transaction mutates
+   * it, so a rollback can restore just that table. No-op outside a transaction
+   * context (so concurrent non-transactional writes are not captured) or after
+   * the table has already been snapshotted this transaction. Must be called
+   * BEFORE the in-place mutation so the snapshot captures the pre-mutation state.
+   */
+  private recordTxMutation(tableName: string) {
+    const ctx = this.txContext.getStore();
+    if (!ctx) return;
+    if (ctx.dirtyTables.has(tableName)) return;
+    const currentRows = this.tables.get(tableName);
+    ctx.snapshots.set(tableName, currentRows ? currentRows.map((row) => ({ ...row })) : []);
+    ctx.dirtyTables.add(tableName);
   }
 
   select(projection?: Projection): SelectFromBuilder {
@@ -878,6 +1056,7 @@ class FileTableStore {
             const conflictColumns = normalizeConflictTargets(onConflict?.target);
             const inputRows = Array.isArray(rows) ? rows : [rows];
             const target = this.rows(meta.name);
+            this.recordTxMutation(meta.name);
             for (const input of inputRows) {
               const row = prepareInsertRow(meta, input);
               const duplicateIndex = findDuplicateIndex(meta, target, row, conflictColumns);
@@ -918,6 +1097,9 @@ class FileTableStore {
             target.forEach((row, index) => {
               const ctx = this.contextForRow(meta, row, index);
               if (!evaluateCondition(condition, ctx)) return;
+              // Snapshot lazily, just before the first actual row mutation, so an
+              // update whose WHERE matches nothing never clones the table.
+              this.recordTxMutation(meta.name);
               for (const [key, value] of Object.entries(patch)) {
                 const column = meta.byKey.get(key) ?? meta.byDbName.get(key);
                 row[column?.key ?? key] = resolveValue(value, ctx);
@@ -996,6 +1178,13 @@ class FileTableStore {
     await this.flush(true);
   }
 
+  getQuarantinedTables() {
+    return this.quarantinedTables.map((entry) => ({
+      table: entry.table,
+      files: entry.files.map((file) => ({ ...file })),
+    }));
+  }
+
   contextForRow(meta: TableMeta, row: Row, index: number): RowContext {
     return {
       rows: { [meta.name]: row },
@@ -1028,6 +1217,7 @@ class FileTableStore {
       }
     });
     if (deleted.length === 0) return;
+    this.recordTxMutation(meta.name);
     this.tables.set(meta.name, kept);
     this.markDirty(meta.name);
     this.applyCascades(meta.name as FileBackedTable, deleted);
@@ -1047,11 +1237,12 @@ class FileTableStore {
     }
   }
 
-  private loadFileSnapshots() {
+  private async loadFileSnapshots() {
     // The manifest is recoverable from on-disk table files, so a corrupted
     // manifest (e.g. both manifest.json and manifest.json.bak nulled by a
-    // hard crash mid-write) shouldn't block startup. Table files still
-    // throw on parse failure — silent fallback to [] would mean data loss.
+    // hard crash mid-write) shouldn't block startup. Table files recover from
+    // .bak when possible, then fall back to [] only when both files are
+    // unreadable so startup can still reach the UI.
     let loadedManifest: TableSnapshotManifest | null = null;
     let needsManifestRewrite = false;
     try {
@@ -1083,7 +1274,7 @@ class FileTableStore {
     for (const table of FILE_BACKED_TABLES) {
       const meta = getMeta(table);
       const path = tableFilePath(this.rootDir, table);
-      const { value: rows, recoveredFromBackup, recoveredFromFallback } = parseJsonFile<Row[]>(path, []);
+      const { value: rows, recoveredFromBackup, recoveredFromFallback, unreadablePaths } = parseJsonFile<Row[]>(path, []);
       const normalized = (Array.isArray(rows) ? rows : []).map((row) => normalizeRow(meta, row));
       this.tables.set(table, normalized);
       counts[table] = normalized.length;
@@ -1094,6 +1285,17 @@ class FileTableStore {
         // corrupt primary is never copied over the recovery source.
         this.dirtyTables.add(table);
         this.dirty = true;
+      }
+      if (recoveredFromFallback && unreadablePaths.length > 0) {
+        const files = await quarantineUnrecoverableFiles(unreadablePaths, `table ${table}`);
+        if (files.length > 0) {
+          this.quarantinedTables.push({ table, files });
+          logger.error(
+            { table, files },
+            "[file-storage] Table %s was unrecoverable from primary and backup; quarantined corrupt files and started the table empty. Preserved files require manual recovery.",
+            table,
+          );
+        }
       }
     }
     logger.info({ tables: counts }, `[file-storage] Loaded file-native data from ${this.rootDir}`);
@@ -1378,6 +1580,7 @@ export async function createFileNativeDB(legacyDbPaths: string[] = []): Promise<
     rootDir,
     flush: () => store.flush(true),
     close: () => store.close(),
+    getQuarantinedTables: () => store.getQuarantinedTables(),
   };
 
   let db: FileNativeDB;

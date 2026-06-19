@@ -42,6 +42,7 @@ import { findNamedMapValue } from "../../lib/game-character-name-match";
 import type { GameSegmentEdit } from "../../lib/game-segment-edits";
 import { parseGmTags, stripGmTagsKeepReadables } from "../../lib/game-tag-parser";
 import { audioManager } from "../../lib/game-audio";
+import { normalizeSpriteExpressionKey, resolveSpriteExpression } from "../../lib/sprite-expression-match";
 import {
   DIALOGUE_QUOTE_CAPTURE_GROUP_PATTERN_SOURCE,
   HTML_SAFE_DIALOGUE_QUOTE_PATTERN_SOURCE,
@@ -92,14 +93,6 @@ function nameColorStyle(color?: string): CSSProperties | undefined {
     };
   }
   return { color };
-}
-
-function normalizeSpriteExpressionKey(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/^full_/, "")
-    .replace(/[_\s-]+/g, "_");
 }
 
 const GAME_TTS_EMOTIONS = [
@@ -2566,11 +2559,7 @@ export function GameNarration({
             const sprites = spriteMap ? findNamedMapValue(spriteMap, active.speaker) : null;
             const expressionSprites = sprites?.filter((sprite) => !sprite.expression.toLowerCase().startsWith("full_"));
             if (!expressionSprites?.length) return null;
-            const exprKey = active.sprite ? normalizeSpriteExpressionKey(active.sprite) : "";
-            const sprite =
-              (exprKey
-                ? expressionSprites.find((item) => normalizeSpriteExpressionKey(item.expression) === exprKey)
-                : null) ?? expressionSprites[0];
+            const sprite = resolveSpriteExpression(expressionSprites, active.sprite ?? "neutral");
             return sprite ? { name: active.speaker, avatarUrl: sprite.url, expression: active.sprite } : null;
           })();
 
@@ -3226,16 +3215,8 @@ export function GameNarration({
       const expressionSprites = sprites.filter((s) => !s.expression.toLowerCase().startsWith("full_"));
       if (!expressionSprites.length) return null;
 
-      const exact = expressionSprites.find((s) => normalizeSpriteExpressionKey(s.expression) === exprKey);
-      if (exact) return { url: exact.url };
-
-      const partial = expressionSprites.find((s) => {
-        const spriteKey = normalizeSpriteExpressionKey(s.expression);
-        return spriteKey.includes(exprKey) || exprKey.includes(spriteKey);
-      });
-      if (partial) return { url: partial.url };
-
-      return { url: expressionSprites[0]!.url };
+      const match = resolveSpriteExpression(expressionSprites, exprKey);
+      return match ? { url: match.url } : null;
     },
     [spriteMap],
   );

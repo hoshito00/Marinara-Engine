@@ -453,6 +453,7 @@ function normalizeCustomToolWriteRow(row: Row): Row {
   if (out.webhookUrl === undefined) out.webhookUrl = null;
   if (out.staticResult === undefined) out.staticResult = null;
   if (out.scriptBody === undefined) out.scriptBody = null;
+  out.includeHiddenContext = out.includeHiddenContext === undefined ? "false" : toBooleanText(out.includeHiddenContext);
   out.enabled = out.enabled === undefined ? "true" : toBooleanText(out.enabled);
   return out;
 }
@@ -941,6 +942,17 @@ export class MariDbService {
     }
     if (typeof row.enabled !== "string" || !BOOLEAN_TEXT_VALUES.has(row.enabled)) {
       issues.push({ level: "error", table: "custom_tools", id, message: "Tool enabled must be stored as \"true\" or \"false\"" });
+    }
+    if (
+      row.includeHiddenContext !== undefined &&
+      (typeof row.includeHiddenContext !== "string" || !BOOLEAN_TEXT_VALUES.has(row.includeHiddenContext))
+    ) {
+      issues.push({
+        level: "error",
+        table: "custom_tools",
+        id,
+        message: "Tool includeHiddenContext must be stored as \"true\" or \"false\"",
+      });
     }
     const parametersSchema = tryParseJsonColumn(row, "parametersSchema");
     if (parametersSchema !== undefined && !isRecord(parametersSchema)) {

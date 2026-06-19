@@ -22,6 +22,8 @@ type Panel =
   | "settings"
   | "bot-browser";
 export type ChatModeShortcut = "conversation" | "roleplay" | "game";
+export const CHARACTER_LIBRARY_SORT_OPTIONS = ["name-asc", "name-desc", "newest", "oldest", "favorites"] as const;
+export type CharacterLibrarySort = (typeof CHARACTER_LIBRARY_SORT_OPTIONS)[number];
 type FontSize = 12 | 14 | 16 | 17 | 19 | 22;
 export type VisualTheme = "default" | "sillytavern";
 export type ConversationMessageStyle = "classic" | "bubble";
@@ -141,6 +143,16 @@ export function getDefaultChatTextColor(theme: "dark" | "light") {
 
 export function getDefaultChatChromeTextColor(theme: "dark" | "light") {
   return theme === "light" ? DEFAULT_CHAT_CHROME_TEXT_LIGHT : DEFAULT_CHAT_CHROME_TEXT_DARK;
+}
+
+export function normalizeCharacterLibrarySort(value: unknown): CharacterLibrarySort {
+  return CHARACTER_LIBRARY_SORT_OPTIONS.includes(value as CharacterLibrarySort)
+    ? (value as CharacterLibrarySort)
+    : "name-asc";
+}
+
+function normalizeScrollTop(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
 }
 
 function normalizeAppAccentColor(value: unknown) {
@@ -350,6 +362,12 @@ interface UIState {
   personaDetailId: string | null;
   /** When set, the main area shows the full-page regex script editor */
   regexDetailId: string | null;
+  /** Pre-selected target characters for a NEW regex script opened via openRegexDetail("__new__") */
+  regexDetailDefaultCharacterIds: string[] | null;
+  /** Where to return when the regex editor closes — e.g. back to a character's Advanced tab */
+  regexDetailReturn: { characterId: string; tab?: string } | null;
+  /** One-shot tab the character editor should open to (set by the regex-editor return path) */
+  characterDetailInitialTab: string | null;
   /** When true, the main area shows the browser */
   botBrowserOpen: boolean;
   /** When true, the main area shows the game assets browser */
@@ -358,6 +376,12 @@ interface UIState {
   characterLibraryOpen: boolean;
   /** Last selected character card inside the full-page character library */
   characterLibrarySelectedId: string | null;
+  /** Last selected sort order for character lists and the full-page character library */
+  characterLibrarySort: CharacterLibrarySort;
+  /** Last scroll offset for the compact Characters panel */
+  characterPanelScrollTop: number;
+  /** Last scroll offset for the full-page Character Library list */
+  characterLibraryScrollTop: number;
   /** True when any open detail editor has unsaved changes */
   editorDirty: boolean;
   /** Mobile-only return target for detail editors opened from a right panel */
@@ -419,6 +443,8 @@ interface UIState {
   boldDialogue: boolean;
   /** Preferred quote style applied to AI output and user input. */
   quoteFormat: QuoteFormat;
+  /** When true, common LaTeX symbol commands render as plain Unicode symbols in chat text. */
+  convertLatexSymbols: boolean;
   /** When true, model responses are trimmed back to the last complete sentence before saving. */
   trimIncompleteModelOutput: boolean;
   /** When true, chat inputs show a microphone button for browser speech-to-text dictation. */
@@ -602,6 +628,9 @@ interface UIState {
   setDefaultRoleplayBackground: (url: string) => void;
   setChatBackgroundBlur: (v: number) => void;
   setCharacterLibrarySelectedId: (id: string | null) => void;
+  setCharacterLibrarySort: (sort: CharacterLibrarySort) => void;
+  setCharacterPanelScrollTop: (scrollTop: number) => void;
+  setCharacterLibraryScrollTop: (scrollTop: number) => void;
   openCharacterDetail: (id: string, options?: { preserveCharacterLibrary?: boolean }) => void;
   closeCharacterDetail: () => void;
   openLorebookDetail: (id: string) => void;
@@ -616,7 +645,10 @@ interface UIState {
   closeToolDetail: () => void;
   openPersonaDetail: (id: string) => void;
   closePersonaDetail: () => void;
-  openRegexDetail: (id: string) => void;
+  openRegexDetail: (
+    id: string,
+    options?: { defaultCharacterIds?: string[]; returnTo?: { characterId: string; tab?: string } },
+  ) => void;
   closeRegexDetail: () => void;
   openCharacterLibrary: () => void;
   closeCharacterLibrary: () => void;
@@ -667,6 +699,7 @@ interface UIState {
   setMessagesPerPage: (n: number) => void;
   setBoldDialogue: (v: boolean) => void;
   setQuoteFormat: (v: QuoteFormat) => void;
+  setConvertLatexSymbols: (v: boolean) => void;
   setTrimIncompleteModelOutput: (v: boolean) => void;
   setSpeechToTextEnabled: (v: boolean) => void;
   setChibiProfessorMariEnabled: (v: boolean) => void;
@@ -761,6 +794,39 @@ function restoreMobileDetailReturnPanel(panel: Panel | null) {
   };
 }
 
+function normalizePersistedMainSurface(persisted: Record<string, unknown>) {
+  const surfaceKeys = [
+    "regexDetailId",
+    "personaDetailId",
+    "toolDetailId",
+    "agentDetailId",
+    "connectionDetailId",
+    "presetDetailId",
+    "characterDetailId",
+    "lorebookDetailId",
+    "characterLibraryOpen",
+    "botBrowserOpen",
+    "gameAssetsBrowserOpen",
+  ] as const;
+  let found = false;
+  for (const key of surfaceKeys) {
+    const value = persisted[key];
+    const isOpen = typeof value === "string" ? value.trim().length > 0 : value === true;
+    if (!isOpen) {
+      if (typeof value === "string") persisted[key] = null;
+      if (typeof value === "boolean") persisted[key] = false;
+      continue;
+    }
+    if (!found) {
+      found = true;
+      continue;
+    }
+    persisted[key] = typeof value === "string" ? null : false;
+  }
+  persisted.editorDirty = false;
+  persisted.detailReturnRightPanel = null;
+}
+
 /**
  * Returns the subset of UI state that is synced to the server so it persists
  * across devices and browsers. Excludes device-local sizing preferences,
@@ -823,6 +889,7 @@ export function pickSyncedSettings(state: UIState) {
     messagesPerPage: state.messagesPerPage,
     boldDialogue: state.boldDialogue,
     quoteFormat: state.quoteFormat,
+    convertLatexSymbols: state.convertLatexSymbols,
     trimIncompleteModelOutput: state.trimIncompleteModelOutput,
     speechToTextEnabled: state.speechToTextEnabled,
     chibiProfessorMariEnabled: state.chibiProfessorMariEnabled,
@@ -920,10 +987,16 @@ export const useUIStore = create<UIState>()(
       toolDetailId: null,
       personaDetailId: null,
       regexDetailId: null,
+      regexDetailDefaultCharacterIds: null,
+      regexDetailReturn: null,
+      characterDetailInitialTab: null,
       botBrowserOpen: false,
       gameAssetsBrowserOpen: false,
       characterLibraryOpen: false,
       characterLibrarySelectedId: null,
+      characterLibrarySort: "name-asc" as CharacterLibrarySort,
+      characterPanelScrollTop: 0,
+      characterLibraryScrollTop: 0,
       editorDirty: false,
       detailReturnRightPanel: null,
 
@@ -966,6 +1039,7 @@ export const useUIStore = create<UIState>()(
       messagesPerPage: 20,
       boldDialogue: true,
       quoteFormat: "straight" as QuoteFormat,
+      convertLatexSymbols: true,
       trimIncompleteModelOutput: false,
       speechToTextEnabled: false,
       chibiProfessorMariEnabled: true,
@@ -1110,11 +1184,15 @@ export const useUIStore = create<UIState>()(
       setDefaultRoleplayBackground: (url) => set({ defaultRoleplayBackground: normalizeDefaultRoleplayBackground(url) }),
       setChatBackgroundBlur: (v) => set({ chatBackgroundBlur: Math.max(0, Math.min(24, Math.round(v))) }),
       setCharacterLibrarySelectedId: (id) => set({ characterLibrarySelectedId: id }),
+      setCharacterLibrarySort: (sort) => set({ characterLibrarySort: normalizeCharacterLibrarySort(sort) }),
+      setCharacterPanelScrollTop: (scrollTop) => set({ characterPanelScrollTop: normalizeScrollTop(scrollTop) }),
+      setCharacterLibraryScrollTop: (scrollTop) => set({ characterLibraryScrollTop: normalizeScrollTop(scrollTop) }),
       openCharacterDetail: (id, options) =>
         set((s) => {
           const preserveCharacterLibrary = options?.preserveCharacterLibrary ?? s.characterLibraryOpen;
           return {
             characterDetailId: id,
+            characterDetailInitialTab: null,
             lorebookDetailId: null,
             presetDetailId: null,
             connectionDetailId: null,
@@ -1261,9 +1339,11 @@ export const useUIStore = create<UIState>()(
           editorDirty: false,
           ...restoreMobileDetailReturnPanel(s.detailReturnRightPanel),
         })),
-      openRegexDetail: (id) =>
+      openRegexDetail: (id, options) =>
         set((s) => ({
           regexDetailId: id,
+          regexDetailDefaultCharacterIds: options?.defaultCharacterIds ?? null,
+          regexDetailReturn: options?.returnTo ?? null,
           personaDetailId: null,
           characterLibraryOpen: false,
           botBrowserOpen: false,
@@ -1277,11 +1357,26 @@ export const useUIStore = create<UIState>()(
           ...getMobileDetailReturnState(s),
         })),
       closeRegexDetail: () =>
-        set((s) => ({
-          regexDetailId: null,
-          editorDirty: false,
-          ...restoreMobileDetailReturnPanel(s.detailReturnRightPanel),
-        })),
+        set((s) => {
+          const ret = s.regexDetailReturn;
+          if (ret) {
+            // Opened from a character's scoped-regex manager — return to that character's tab.
+            return {
+              regexDetailId: null,
+              regexDetailReturn: null,
+              regexDetailDefaultCharacterIds: null,
+              characterDetailId: ret.characterId,
+              characterDetailInitialTab: ret.tab ?? null,
+              editorDirty: false,
+            };
+          }
+          return {
+            regexDetailId: null,
+            regexDetailReturn: null,
+            editorDirty: false,
+            ...restoreMobileDetailReturnPanel(s.detailReturnRightPanel),
+          };
+        }),
       openCharacterLibrary: () =>
         set({
           characterLibraryOpen: true,
@@ -1441,6 +1536,7 @@ export const useUIStore = create<UIState>()(
       setMessagesPerPage: (n) => set({ messagesPerPage: n }),
       setBoldDialogue: (v) => set({ boldDialogue: v }),
       setQuoteFormat: (v) => set({ quoteFormat: normalizeQuoteFormat(v) }),
+      setConvertLatexSymbols: (v) => set({ convertLatexSymbols: v }),
       setTrimIncompleteModelOutput: (v) => set({ trimIncompleteModelOutput: v }),
       setSpeechToTextEnabled: (v) => set({ speechToTextEnabled: v }),
       setChibiProfessorMariEnabled: (v) => set({ chibiProfessorMariEnabled: v }),
@@ -1594,7 +1690,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 52,
+      version: 56,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1986,6 +2082,13 @@ export const useUIStore = create<UIState>()(
         if (version <= 50 && persisted.achievementsEnabled === undefined) {
           persisted.achievementsEnabled = true;
         }
+        if (version <= 52 && persisted.convertLatexSymbols === undefined) {
+          persisted.convertLatexSymbols = true;
+        }
+        persisted.characterLibrarySort = normalizeCharacterLibrarySort(persisted.characterLibrarySort);
+        persisted.characterPanelScrollTop = normalizeScrollTop(persisted.characterPanelScrollTop);
+        persisted.characterLibraryScrollTop = normalizeScrollTop(persisted.characterLibraryScrollTop);
+        normalizePersistedMainSurface(persisted);
         if (Array.isArray(persisted.recentUserActivities)) {
           persisted.recentUserActivities = persisted.recentUserActivities
             .filter((activity: unknown): activity is string => typeof activity === "string")
@@ -2004,7 +2107,25 @@ export const useUIStore = create<UIState>()(
       partialize: (state) => ({
         sidebarOpen: state.sidebarOpen,
         sidebarWidth: state.sidebarWidth,
+        rightPanelOpen: state.rightPanelOpen,
         rightPanelWidth: state.rightPanelWidth,
+        rightPanel: state.rightPanel,
+        settingsTab: state.settingsTab,
+        characterDetailId: state.characterDetailId,
+        lorebookDetailId: state.lorebookDetailId,
+        presetDetailId: state.presetDetailId,
+        connectionDetailId: state.connectionDetailId,
+        agentDetailId: state.agentDetailId,
+        toolDetailId: state.toolDetailId,
+        personaDetailId: state.personaDetailId,
+        regexDetailId: state.regexDetailId,
+        botBrowserOpen: state.botBrowserOpen,
+        gameAssetsBrowserOpen: state.gameAssetsBrowserOpen,
+        characterLibraryOpen: state.characterLibraryOpen,
+        characterLibrarySelectedId: state.characterLibrarySelectedId,
+        characterLibrarySort: state.characterLibrarySort,
+        characterPanelScrollTop: state.characterPanelScrollTop,
+        characterLibraryScrollTop: state.characterLibraryScrollTop,
         trackerPanelEnabled: state.trackerPanelEnabled,
         trackerPanelOpen: state.trackerPanelOpen,
         trackerPanelSide: state.trackerPanelSide,
@@ -2060,6 +2181,7 @@ export const useUIStore = create<UIState>()(
         messagesPerPage: state.messagesPerPage,
         boldDialogue: state.boldDialogue,
         quoteFormat: state.quoteFormat,
+        convertLatexSymbols: state.convertLatexSymbols,
         trimIncompleteModelOutput: state.trimIncompleteModelOutput,
         speechToTextEnabled: state.speechToTextEnabled,
         chibiProfessorMariEnabled: state.chibiProfessorMariEnabled,

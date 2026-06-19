@@ -221,7 +221,7 @@ function buildSpotifyFallbackQuery(
     .slice(0, 1200);
   return {
     query: text || "roleplay scene music",
-    mood: mood || "Spotify DJ selection",
+    mood: mood || "Music DJ selection",
   };
 }
 
@@ -284,7 +284,7 @@ async function playSpotifyFallbackCandidates(args: {
 }): Promise<AgentResult> {
   const { agent, result, resultData, context, reason } = args;
   if (!agent.toolContext) {
-    return { ...result, success: false, error: "Spotify DJ chose music, but Spotify tools were unavailable." };
+    return { ...result, success: false, error: "Music DJ chose music, but Spotify tools were unavailable." };
   }
 
   const candidates = await loadSpotifyFallbackCandidates({ agent, resultData, context });
@@ -356,7 +356,7 @@ async function applySpotifyAgentPlaybackFallback(
     const playedUris = agent.__spotifyPlayUris?.length ? agent.__spotifyPlayUris : readSpotifyTrackUris(data);
     const trackNames = readSpotifyTrackNames(data);
     const fallbackTrackNames = readSpotifyTrackNamesForUris(agent, playedUris);
-    const mood = readSpotifyStringField(data, "mood") || agent.__spotifyPlayReason || "Spotify DJ selection";
+    const mood = readSpotifyStringField(data, "mood") || agent.__spotifyPlayReason || "Music DJ selection";
     const queued = agent.__spotifyQueued ?? (playedUris.length > 0 ? playedUris.length : null);
     return {
       ...normalizedResult,
@@ -390,7 +390,7 @@ async function applySpotifyAgentPlaybackFallback(
       result: normalizedResult,
       resultData: data,
       context,
-      reason: readSpotifyStringField(data, "mood") || "Spotify DJ malformed-result recovery",
+      reason: readSpotifyStringField(data, "mood") || "Music DJ malformed-result recovery",
     });
   }
   if (action !== "play" || requestedUris.length === 0) return normalizedResult;
@@ -402,7 +402,7 @@ async function applySpotifyAgentPlaybackFallback(
       result: normalizedResult,
       resultData: data,
       context,
-      reason: readSpotifyStringField(data, "mood") || "Spotify DJ grouped-result playback",
+      reason: readSpotifyStringField(data, "mood") || "Music DJ grouped-result playback",
     });
   }
   if (spotifyPlayCalled && agent.__spotifyPlayError) {
@@ -412,14 +412,14 @@ async function applySpotifyAgentPlaybackFallback(
     return {
       ...normalizedResult,
       success: false,
-      error: "Spotify DJ chose music, but Spotify tools were unavailable.",
+      error: "Music DJ chose music, but Spotify tools were unavailable.",
     };
   }
 
   const playArgs =
     requestedUris.length === 1
-      ? { uri: requestedUris[0], reason: readSpotifyStringField(data, "mood") || "Spotify DJ selection" }
-      : { uris: requestedUris, reason: readSpotifyStringField(data, "mood") || "Spotify DJ selection" };
+      ? { uri: requestedUris[0], reason: readSpotifyStringField(data, "mood") || "Music DJ selection" }
+      : { uris: requestedUris, reason: readSpotifyStringField(data, "mood") || "Music DJ selection" };
   const play = await executeSpotifyAgentToolJson(agent, "spotify_play", playArgs);
   if (play.applied !== true) {
     const playError = typeof play.error === "string" ? play.error : "Spotify play did not apply playback.";

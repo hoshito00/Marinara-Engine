@@ -1,22 +1,26 @@
 // ──────────────────────────────────────────────
 // Chat Gallery — Image grid for per-chat generated images
 // ──────────────────────────────────────────────
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { ImagePlus, Paintbrush, Trash2, X, Download, Sparkles, Pin, Loader2 } from "lucide-react";
+import { ImagePlus, Paintbrush, Trash2, X, Download, Sparkles, Pin, Loader2, Images, Search } from "lucide-react";
 import {
+  useChatAssetBrowser,
   useGalleryImages,
   useUploadGalleryImage,
   useDeleteGalleryImage,
+  type ChatAssetBrowserItem,
   type ChatImage,
 } from "../../hooks/use-gallery";
 import { useGalleryStore } from "../../stores/gallery.store";
 import { ImagePromptPanel } from "./ImagePromptPanel";
 import { toast } from "sonner";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
+import { buildCardAssetMarkdown, dispatchCardAssetInsert } from "../../lib/card-asset-links";
 
 interface ChatGalleryProps {
   chatId: string;
+  mode?: string;
   /** Manually trigger the Illustrator agent */
   onIllustrate?: () => void | Promise<void>;
 }
@@ -36,18 +40,45 @@ function getImageDownloadName(image: ChatImage) {
   return fromUrl || `gallery-${image.id}.png`;
 }
 
-export function ChatGallery({ chatId, onIllustrate }: ChatGalleryProps) {
+function formatAssetKind(asset: ChatAssetBrowserItem) {
+  if (asset.kind === "chat-gallery") return "Chat gallery";
+  if (asset.kind === "character-gallery") return "Character gallery";
+  if (asset.kind === "persona-gallery") return "Persona gallery";
+  return "Sprite";
+}
+
+function getAssetMeta(asset: ChatAssetBrowserItem) {
+  const details = [asset.ownerName, formatAssetKind(asset)];
+  if (asset.width && asset.height) details.push(`${asset.width} x ${asset.height}`);
+  return details.join(" | ");
+}
+
+export function ChatGallery({ chatId, mode, onIllustrate }: ChatGalleryProps) {
   const { data: images, isLoading } = useGalleryImages(chatId);
   const upload = useUploadGalleryImage(chatId);
   const remove = useDeleteGalleryImage(chatId);
   const [lightbox, setLightbox] = useState<ChatImage | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [assetBrowserOpen, setAssetBrowserOpen] = useState(false);
+  const [assetSearch, setAssetSearch] = useState("");
   const isIllustrating = useGalleryStore((s) => s.illustratingChatIds.has(chatId));
   const pinImage = useGalleryStore((s) => s.pinImage);
   const setChatIllustrating = useGalleryStore((s) => s.setChatIllustrating);
+  const canBrowseAssets = mode === "roleplay";
+  const { data: assetItems, isLoading: assetsLoading } = useChatAssetBrowser(chatId, canBrowseAssets && assetBrowserOpen);
   const lightboxPrompt = lightbox?.prompt.trim() ?? "";
   const lightboxMeta = lightbox ? formatImageMeta(lightbox) : "";
   const portalRoot = typeof document !== "undefined" ? document.body : null;
+  const filteredAssets = useMemo(() => {
+    const query = assetSearch.trim().toLowerCase();
+    const items = assetItems ?? [];
+    if (!query) return items;
+    return items.filter((asset) =>
+      [asset.name, asset.ownerName, asset.prompt, formatAssetKind(asset)].some((value) =>
+        value.toLowerCase().includes(query),
+      ),
+    );
+  }, [assetItems, assetSearch]);
 
   const handleUpload = useCallback(
     (files: File[]) => {
@@ -76,6 +107,16 @@ export function ChatGallery({ chatId, onIllustrate }: ChatGalleryProps) {
     }
   };
 
+  const handleInsertAsset = useCallback(
+    (asset: ChatAssetBrowserItem) => {
+      const label = asset.prompt.trim() || asset.name;
+      dispatchCardAssetInsert(buildCardAssetMarkdown(label, asset.cardUrl), chatId);
+      toast.success("Image link inserted.");
+      setAssetBrowserOpen(false);
+    },
+    [chatId],
+  );
+
   return (
     <>
       <div className="flex flex-col gap-3 p-4">
@@ -90,6 +131,17 @@ export function ChatGallery({ chatId, onIllustrate }: ChatGalleryProps) {
           >
             {isIllustrating ? <Loader2 size="1rem" className="animate-spin" /> : <Paintbrush size="1rem" />}
             {isIllustrating ? "Generating image..." : "Illustrate"}
+          </button>
+        )}
+
+        {canBrowseAssets && (
+          <button
+            type="button"
+            onClick={() => setAssetBrowserOpen(true)}
+            className="flex items-center justify-center gap-2 rounded-xl bg-[var(--secondary)] px-4 py-3 text-xs font-medium text-[var(--foreground)] transition-all hover:bg-[var(--accent)]"
+          >
+            <Images size="1rem" />
+            Browse Images
           </button>
         )}
 
@@ -184,6 +236,93 @@ export function ChatGallery({ chatId, onIllustrate }: ChatGalleryProps) {
           </div>
         )}
       </div>
+
+      {/* Asset browser */}
+      {portalRoot &&
+        assetBrowserOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm max-md:pt-[env(safe-area-inset-top)]">
+            <div className="flex max-h-[88vh] w-[min(58rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl bg-[var(--background)] shadow-2xl ring-1 ring-[var(--border)]">
+              <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+                <h3 className="flex items-center gap-2 text-sm font-semibold">
+                  <Images size="1rem" className="text-[var(--muted-foreground)]" />
+                  Browse Images
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setAssetBrowserOpen(false)}
+                  aria-label="Close image browser"
+                  className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]"
+                >
+                  <X size="1rem" />
+                </button>
+              </div>
+
+              <div className="border-b border-[var(--border)] p-3">
+                <label className="relative block">
+                  <Search
+                    size="0.875rem"
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
+                  />
+                  <input
+                    type="search"
+                    value={assetSearch}
+                    onChange={(event) => setAssetSearch(event.target.value)}
+                    placeholder="Search images"
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)] py-2 pl-9 pr-3 text-sm outline-none transition-colors focus:border-[var(--primary)]"
+                  />
+                </label>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                {assetsLoading && (
+                  <div className="flex items-center justify-center gap-2 py-10 text-sm text-[var(--muted-foreground)]">
+                    <Loader2 size="1rem" className="animate-spin" />
+                    Loading images…
+                  </div>
+                )}
+
+                {!assetsLoading && filteredAssets.length === 0 && (
+                  <div className="flex flex-col items-center gap-2 py-10 text-[var(--muted-foreground)]">
+                    <Images size="1.5rem" className="opacity-45" />
+                    <p className="text-xs">No images found</p>
+                  </div>
+                )}
+
+                {!assetsLoading && filteredAssets.length > 0 && (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                    {filteredAssets.map((asset) => (
+                      <button
+                        key={asset.id}
+                        type="button"
+                        onClick={() => handleInsertAsset(asset)}
+                        className="group overflow-hidden rounded-lg bg-[var(--secondary)] text-left ring-1 ring-[var(--border)] transition-all hover:ring-[var(--primary)]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+                        aria-label={`Insert ${asset.name}`}
+                      >
+                        <img
+                          src={asset.url}
+                          alt={asset.prompt || asset.name}
+                          loading="lazy"
+                          decoding="async"
+                          className="aspect-square w-full object-cover transition-transform group-hover:scale-105"
+                        />
+                        <span className="block space-y-1 p-2">
+                          <span className="block truncate text-xs font-medium text-[var(--foreground)]">
+                            {asset.prompt || asset.name}
+                          </span>
+                          <span className="block truncate text-[0.6875rem] text-[var(--muted-foreground)]">
+                            {getAssetMeta(asset)}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>,
+          portalRoot,
+        )}
 
       {/* Delete confirmation */}
       {portalRoot &&

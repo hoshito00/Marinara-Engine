@@ -5,6 +5,7 @@ import type { ResolvedAgent } from "../agents/agent-pipeline.js";
 import {
   executeToolCalls,
   type CustomToolDef,
+  type CustomToolHiddenContext,
   type MetadataPatch,
   type MetadataPatchInput,
   type ToolExecutionContext,
@@ -31,6 +32,7 @@ type CustomToolsStore = {
       webhookUrl: string | null;
       staticResult: string | null;
       scriptBody: string | null;
+      includeHiddenContext?: string | boolean | number | null;
     }>
   >;
 };
@@ -112,6 +114,113 @@ function parseSettings(settings: unknown): Record<string, unknown> {
     }
   }
   return typeof settings === "object" && !Array.isArray(settings) ? (settings as Record<string, unknown>) : {};
+}
+
+function booleanText(value: unknown): boolean {
+  return value === true || value === "true" || value === "1" || value === 1;
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw === "string") out[key] = raw;
+  }
+  return out;
+}
+
+function joinNonEmpty(parts: Array<string | undefined>): string {
+  return parts.filter((part): part is string => typeof part === "string" && part.trim().length > 0).join("\n");
+}
+
+function buildCustomToolHiddenContext(args: {
+  requestBody: Record<string, unknown>;
+  chatId: string;
+  chatMetadata: Record<string, unknown>;
+  promptCharacterIds: string[];
+  personaId: string | null;
+  agentContext: AgentContext;
+  gameState: unknown;
+}): CustomToolHiddenContext {
+  const characters = args.agentContext.characters.map((character) => ({
+    id: character.id,
+    name: character.name,
+  }));
+  const characterNamesById = new Map(characters.map((character) => [character.id, character.name]));
+  const requestedCharacterId =
+    typeof args.requestBody.forCharacterId === "string" && args.requestBody.forCharacterId.trim()
+      ? args.requestBody.forCharacterId.trim()
+      : null;
+  const primaryCharacterId =
+    requestedCharacterId && args.promptCharacterIds.includes(requestedCharacterId)
+      ? requestedCharacterId
+      : (args.promptCharacterIds[0] ?? null);
+  const characterIds = args.promptCharacterIds;
+  const characterNames = characterIds.map((id) => characterNamesById.get(id) ?? id);
+  const personaName = args.agentContext.persona?.name ?? null;
+  const primaryCharacterName = primaryCharacterId ? (characterNamesById.get(primaryCharacterId) ?? null) : null;
+  const primaryCharacter =
+    (primaryCharacterId ? args.agentContext.characters.find((character) => character.id === primaryCharacterId) : null) ??
+    args.agentContext.characters[0] ??
+    null;
+  const personaFields = args.agentContext.persona
+    ? joinNonEmpty([
+        args.agentContext.persona.description,
+        args.agentContext.persona.personality,
+        args.agentContext.persona.backstory,
+        args.agentContext.persona.appearance,
+        args.agentContext.persona.scenario,
+      ])
+    : "";
+  const lastInput =
+    [...args.agentContext.recentMessages].reverse().find((message) => message.role === "user")?.content ?? "";
+  const now = new Date();
+
+  return {
+    chatId: args.chatId,
+    chatMode: args.agentContext.chatMode,
+    personaId: args.personaId,
+    personaName,
+    characterId: primaryCharacterId,
+    characterName: primaryCharacterName,
+    characterIds,
+    characterNames,
+    characters,
+    variables: stringRecord(args.chatMetadata.agentVariables),
+    macros: {
+      chatId: args.chatId,
+      chatMode: args.agentContext.chatMode,
+      personaId: args.personaId,
+      user: personaName ?? "",
+      userName: personaName ?? "",
+      persona: personaFields,
+      characterId: primaryCharacterId ?? "",
+      characterName: primaryCharacterName ?? "",
+      char: primaryCharacterName ?? "",
+      charName: primaryCharacterName ?? "",
+      characters: characterNames.join(", "),
+      description: primaryCharacter?.description ?? "",
+      personality: primaryCharacter?.personality ?? "",
+      backstory: primaryCharacter?.backstory ?? "",
+      appearance: primaryCharacter?.appearance ?? "",
+      scenario: primaryCharacter?.scenario ?? "",
+      example: primaryCharacter?.mesExample ?? "",
+      charSysInfo: primaryCharacter?.systemPrompt ?? "",
+      charPostHistory: primaryCharacter?.postHistoryInstructions ?? "",
+      input: lastInput,
+      date: now.toISOString().slice(0, 10),
+      time: now.toTimeString().slice(0, 5),
+      datetime: now.toISOString(),
+      isotime: now.toISOString(),
+      weekday: now.toLocaleDateString("en-US", { weekday: "long" }),
+    },
+    recentMessages: args.agentContext.recentMessages.map((message) => ({
+      id: message.id ?? null,
+      role: message.role,
+      characterId: message.characterId ?? null,
+    })),
+    gameState: args.gameState ?? null,
+  };
 }
 
 function validateToolSchema(schema: unknown): Record<string, unknown> {
@@ -202,6 +311,7 @@ async function loadToolDefinitions(args: {
         webhookUrl: customTool.webhookUrl,
         staticResult: customTool.staticResult,
         scriptBody: customTool.scriptBody,
+        includeHiddenContext: booleanText(customTool.includeHiddenContext),
       });
 
       allToolDefs.push({
@@ -509,6 +619,15 @@ export async function resolveGenerationTools({
 
   const baseToolExecutionContext: ToolExecutionContext = {
     gameState: gameState ? (gameState as Record<string, unknown>) : undefined,
+    hiddenContext: buildCustomToolHiddenContext({
+      requestBody,
+      chatId,
+      chatMetadata,
+      promptCharacterIds,
+      personaId,
+      agentContext,
+      gameState,
+    }),
     customTools: customToolDefs,
     spotify: spotifyCreds,
     spotifyRepeatAfterPlay: gameSpotifyMusicEnabled ? "track" : undefined,

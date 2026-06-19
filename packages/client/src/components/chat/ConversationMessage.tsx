@@ -115,6 +115,7 @@ export const ConversationMessage = memo(function ConversationMessage({
   const [imageLightbox, setImageLightbox] = useState<{ url: string; prompt?: string | null } | null>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const msgRef = useRef<HTMLDivElement>(null);
+  const editSwipeIndexRef = useRef<number | null>(null);
 
   // ── Store selectors ──
   const collapseHiddenMessages = useUIStore((s) => s.summaryPopoverSettings.collapseHiddenMessages);
@@ -369,6 +370,7 @@ export const ConversationMessage = memo(function ConversationMessage({
   editValueRef.current = editValue;
 
   const startEditing = useCallback(() => {
+    editSwipeIndexRef.current = message.activeSwipeIndex ?? null;
     setEditing(true);
     setEditValue(formattedEditSourceContent);
     requestAnimationFrame(() => {
@@ -379,13 +381,43 @@ export const ConversationMessage = memo(function ConversationMessage({
         el.focus();
       }
     });
-  }, [formattedEditSourceContent]);
+  }, [formattedEditSourceContent, message.activeSwipeIndex]);
 
   const handleSaveEdit = useCallback(() => {
+    if (editSwipeIndexRef.current !== null && editSwipeIndexRef.current !== (message.activeSwipeIndex ?? null)) {
+      editSwipeIndexRef.current = null;
+      setEditing(false);
+      return;
+    }
     const val = formatTextQuotes(editValueRef.current.trim(), quoteFormat);
     if (val !== editSourceContent) onEdit?.(message.id, val);
+    editSwipeIndexRef.current = null;
     setEditing(false);
-  }, [editSourceContent, message.id, onEdit, quoteFormat]);
+  }, [editSourceContent, message.activeSwipeIndex, message.id, onEdit, quoteFormat]);
+
+  const handleCancelEdit = useCallback(() => {
+    editSwipeIndexRef.current = null;
+    setEditing(false);
+  }, []);
+
+  const handleSetActiveSwipe = useCallback(
+    (messageId: string, index: number) => {
+      if (index === message.activeSwipeIndex) return;
+      editSwipeIndexRef.current = null;
+      setEditing(false);
+      onSetActiveSwipe?.(messageId, index);
+    },
+    [message.activeSwipeIndex, onSetActiveSwipe],
+  );
+
+  useEffect(() => {
+    if (!editing) return;
+    if (editSwipeIndexRef.current === null) return;
+    if (editSwipeIndexRef.current !== (message.activeSwipeIndex ?? null)) {
+      editSwipeIndexRef.current = null;
+      setEditing(false);
+    }
+  }, [editing, message.activeSwipeIndex]);
 
   const handleStartEdit = useCallback(() => {
     if (onEditClick) onEditClick();
@@ -498,7 +530,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     editRef,
     onEditValueChange: setEditValue,
     onSaveEdit: handleSaveEdit,
-    onCancelEdit: () => setEditing(false),
+    onCancelEdit: handleCancelEdit,
     isHiddenFromAI,
     isHiddenCollapsed,
     hiddenFromAIHeader,
@@ -541,7 +573,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     onStartEdit: handleStartEdit,
     onImageOpen: (url, prompt) => setImageLightbox({ url, prompt }),
     onRemoveAttachment: handleRemoveAttachment,
-    onSetActiveSwipe,
+    onSetActiveSwipe: handleSetActiveSwipe,
     onRegenerate,
     onToggleHiddenFromAI,
     onPeekPrompt,

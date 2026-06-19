@@ -25,7 +25,6 @@ import { TrackerPanelIcon } from "../ui/TrackerPanelIcon";
 import { useGameStateStore } from "../../stores/game-state.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useAgentConfigs, useCustomAgentRuns, type AgentConfigRow } from "../../hooks/use-agents";
-import { useChat } from "../../hooks/use-chats";
 import { discardPendingGameStatePatch, useGameStatePatcher } from "../../hooks/use-game-state-patcher";
 import { useUIStore } from "../../stores/ui.store";
 import {
@@ -137,23 +136,6 @@ export function RoleplayHUD({
   }, [agentConfigs]);
   const enabledAgentTypes = enabledAgentTypesProp ?? globalEnabledAgentTypes;
 
-  const { data: chatForAgentsMenu } = useChat(chatId);
-  const agentsMenuMetadata = useMemo(() => {
-    const raw = chatForAgentsMenu?.metadata;
-    let m: Record<string, unknown> = {};
-    if (typeof raw === "string") {
-      try {
-        m = JSON.parse(raw) as Record<string, unknown>;
-      } catch {
-        m = {};
-      }
-    } else if (raw && typeof raw === "object") {
-      m = raw as Record<string, unknown>;
-    }
-    return m;
-  }, [chatForAgentsMenu?.metadata]);
-  const showInjectionsTab = agentsMenuMetadata.showInjectionsPanel === true;
-
   const thoughtBubbles = useAgentStore((s) => s.thoughtBubbles);
   const isAgentProcessing = useAgentStore((s) => s.isProcessing);
   const failedAgentTypes = useAgentStore((s) => s.failedAgentTypes);
@@ -166,6 +148,7 @@ export function RoleplayHUD({
   const trackerPanelHideHudWidgets = useUIStore((s) => s.trackerPanelHideHudWidgets);
   const trackerTemperatureUnit = useUIStore((s) => s.trackerTemperatureUnit);
   const toggleTrackerPanel = useUIStore((s) => s.toggleTrackerPanel);
+  const showInjectionsTab = useUIStore((s) => s.debugMode);
 
   const isTrackerBusy = isAgentProcessing || isStreaming || gameStateRefreshing;
   const showHudTrackerWidgets = !gameStateRefreshing && !(trackerPanelEnabled && trackerPanelHideHudWidgets);

@@ -121,6 +121,9 @@ export interface PromptSection {
 }
 
 /** A preset-level variable — the user picks one option per chat, referenced via {{variableName}} in prompts. */
+export type ChoiceDisplayMode = "auto" | "buttons" | "listbox";
+export type ChoiceOptionSort = "manual" | "alphabetical";
+
 export interface ChoiceBlock {
   id: string;
   presetId: string;
@@ -135,6 +138,10 @@ export interface ChoiceBlock {
   separator: string;
   /** If true, one of the user's selected options is randomly picked each generation instead of joining all. */
   randomPick: boolean;
+  /** How choices are presented in the selection modal. */
+  displayMode: ChoiceDisplayMode;
+  /** Whether options keep manual order or render alphabetically for users. */
+  optionSort: ChoiceOptionSort;
   createdAt: string;
 }
 

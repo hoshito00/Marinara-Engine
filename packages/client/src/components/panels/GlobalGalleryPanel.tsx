@@ -5,7 +5,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Upload, Download, Trash2, X, FolderPlus, Pencil, Check, Folder } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "../../lib/utils";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
 import {
@@ -142,12 +142,11 @@ export function GlobalGalleryPanel() {
     if (!activeFolderObj) return;
     const count = counts.byFolder.get(activeFolderObj.id) ?? 0;
     if (
-      !(await showConfirmDialog({
+      !(await confirmNonEmptyFolderDelete(count, {
         title: "Delete Folder",
-        message:
-          count > 0
-            ? `Delete "${activeFolderObj.name}"? Its ${count} image${count === 1 ? "" : "s"} will move to Unfiled.`
-            : `Delete "${activeFolderObj.name}"?`,
+        message: `Delete "${activeFolderObj.name}"? Its ${count} image${
+          count === 1 ? "" : "s"
+        } will move to Unfiled.`,
         confirmLabel: "Delete",
         tone: "destructive",
       }))

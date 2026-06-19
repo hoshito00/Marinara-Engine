@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Regex Scripts — Prompt Application
 // ──────────────────────────────────────────────
-import { applyRegexReplacement } from "@marinara-engine/shared";
+import { applyRegexReplacement, isPatternSafe } from "@marinara-engine/shared";
 
 type RegexPlacement = "ai_output" | "user_input";
 
@@ -109,6 +109,9 @@ export function applyRegexScriptsToPromptText(
 
     const findRegex = typeof script.findRegex === "string" ? resolveScriptString(script.findRegex, options) : "";
     if (!findRegex) continue;
+    // Skip ReDoS-prone patterns instead of compiling + running them against every
+    // prompt message with no timeout — mirrors the lorebook keyword-scan posture.
+    if (!isPatternSafe(findRegex)) continue;
 
     try {
       const flags = typeof script.flags === "string" ? script.flags : "";

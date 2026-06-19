@@ -68,6 +68,8 @@ export interface CustomTool {
   webhookUrl: string | null;
   staticResult: string | null;
   scriptBody: string | null;
+  /** Whether execution receives server-side context that is not exposed in the LLM tool schema. */
+  includeHiddenContext: boolean;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;

@@ -65,6 +65,14 @@ export function showConfirmDialog(options: Omit<ConfirmDialogState, "kind" | "ch
   });
 }
 
+export function confirmNonEmptyFolderDelete(
+  itemCount: number,
+  options: Omit<ConfirmDialogState, "kind" | "checkboxLabel">,
+): Promise<boolean> {
+  if (itemCount <= 0) return Promise.resolve(true);
+  return showConfirmDialog(options);
+}
+
 export type ConfirmWithCheckboxResult = { confirmed: boolean; checked: boolean };
 
 /**

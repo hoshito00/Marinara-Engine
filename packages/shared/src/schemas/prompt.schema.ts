@@ -84,6 +84,9 @@ export const choiceOptionSchema = z.object({
   value: z.string(),
 });
 
+export const choiceDisplayModeSchema = z.enum(["auto", "buttons", "listbox"]);
+export const choiceOptionSortSchema = z.enum(["manual", "alphabetical"]);
+
 export const createChoiceBlockSchema = z.object({
   presetId: z.string(),
   variableName: z.string().min(1).max(100).regex(/^\w+$/, "Variable name must be alphanumeric/underscores only"),
@@ -92,6 +95,8 @@ export const createChoiceBlockSchema = z.object({
   multiSelect: z.boolean().default(false),
   separator: z.string().max(20).default(", "),
   randomPick: z.boolean().default(false),
+  displayMode: choiceDisplayModeSchema.default("auto"),
+  optionSort: choiceOptionSortSchema.default("manual"),
 });
 
 export const updateChoiceBlockSchema = z.object({
@@ -106,6 +111,8 @@ export const updateChoiceBlockSchema = z.object({
   multiSelect: z.boolean().optional(),
   separator: z.string().max(20).optional(),
   randomPick: z.boolean().optional(),
+  displayMode: choiceDisplayModeSchema.optional(),
+  optionSort: choiceOptionSortSchema.optional(),
 });
 
 // ── Groups ──

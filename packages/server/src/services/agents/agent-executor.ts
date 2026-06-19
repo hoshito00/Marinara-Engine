@@ -11,7 +11,7 @@ import {
   normalizeCustomAgentCapabilities,
   getDefaultAgentPrompt,
 } from "@marinara-engine/shared";
-import { isDebugAgentsEnabled } from "../../config/runtime-config.js";
+import { getMaxToolRounds, isDebugAgentsEnabled } from "../../config/runtime-config.js";
 import { logger } from "../../lib/logger.js";
 import { wrapContent } from "../prompt/format-engine.js";
 
@@ -450,12 +450,12 @@ async function executeAgentWithTools(
   startTime: number,
   context: AgentContext,
 ): Promise<AgentResult> {
-  const MAX_TOOL_ROUNDS = 5;
+  const maxToolRounds = getMaxToolRounds();
   const loopMessages = [...initialMessages];
   let totalTokens = 0;
   const debugAgentsEnabled = isDebugAgentsEnabled() && logger.isLevelEnabled("debug");
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+  for (let round = 0; round < maxToolRounds; round++) {
     emitAgentDebug(context, {
       stage: "request",
       ...agentDebugBase(config, model, temperature, maxTokens),
@@ -542,7 +542,7 @@ async function executeAgentWithTools(
     ...agentDebugBase(config, model, temperature, maxTokens),
     messageCount: loopMessages.length,
     messages: debugMessages(loopMessages),
-    round: MAX_TOOL_ROUNDS + 1,
+    round: maxToolRounds + 1,
   });
   const finalResult = await provider.chatComplete(loopMessages, {
     model,
@@ -557,7 +557,7 @@ async function executeAgentWithTools(
     stage: "response",
     ...agentDebugBase(config, model, temperature, maxTokens),
     messageCount: loopMessages.length,
-    round: MAX_TOOL_ROUNDS + 1,
+    round: maxToolRounds + 1,
     durationMs: Date.now() - startTime,
     finishReason: finalResult.finishReason,
     ...debugUsage(finalResult.usage),

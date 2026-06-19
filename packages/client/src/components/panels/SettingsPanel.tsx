@@ -1145,6 +1145,8 @@ function GeneralSettings() {
   const setBoldDialogue = useUIStore((s) => s.setBoldDialogue);
   const quoteFormat = useUIStore((s) => s.quoteFormat);
   const setQuoteFormat = useUIStore((s) => s.setQuoteFormat);
+  const convertLatexSymbols = useUIStore((s) => s.convertLatexSymbols);
+  const setConvertLatexSymbols = useUIStore((s) => s.setConvertLatexSymbols);
   const trimIncompleteModelOutput = useUIStore((s) => s.trimIncompleteModelOutput);
   const setTrimIncompleteModelOutput = useUIStore((s) => s.setTrimIncompleteModelOutput);
   const speechToTextEnabled = useUIStore((s) => s.speechToTextEnabled);
@@ -1381,6 +1383,12 @@ function GeneralSettings() {
             help={
               'When on, text inside dialogue quotation marks ("like this", 「like this」, or 『like this』) is bolded in addition to its dialogue highlight color. Turn it off to keep the color without bold.'
             }
+          />
+          <ToggleSetting
+            label="Convert LaTeX symbols"
+            checked={convertLatexSymbols}
+            onChange={setConvertLatexSymbols}
+            help="Turns common model-written LaTeX commands like \\rightarrow, \\neq, \\times, and \\alpha into regular symbols while leaving code snippets alone. This is display-only; saved messages keep their original text."
           />
 
           <div className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">

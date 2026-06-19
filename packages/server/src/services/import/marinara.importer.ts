@@ -15,6 +15,7 @@ import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
 import { createPromptsStorage } from "../storage/prompts.storage.js";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "./import-timestamps.js";
 import { resolveLorebookEntryRole } from "./lorebook-role.js";
+import { resolvePosition, resolveSelectiveLogic } from "./st-lorebook.importer.js";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { DATA_DIR } from "../../utils/data-dir.js";
@@ -476,7 +477,7 @@ async function importLorebook(data: unknown, db: DB) {
         enabled: e.enabled !== false,
         constant: Boolean(e.constant),
         selective: Boolean(e.selective),
-        selectiveLogic: (e.selectiveLogic as any) ?? "and",
+        selectiveLogic: resolveSelectiveLogic(e.selectiveLogic),
         probability: e.probability != null ? Number(e.probability) : null,
         scanDepth: e.scanDepth != null ? Number(e.scanDepth) : null,
         matchWholeWords: Boolean(e.matchWholeWords),
@@ -491,7 +492,7 @@ async function importLorebook(data: unknown, db: DB) {
           ? e.generationTriggerFilters.map(String)
           : [],
         additionalMatchingSources: readMatchingSources(e.additionalMatchingSources),
-        position: Number(e.position ?? 0),
+        position: resolvePosition(e.position),
         depth: Number(e.depth ?? 4),
         order: Number(e.order ?? 100),
         role: resolveLorebookEntryRole(e.role),
@@ -616,6 +617,8 @@ async function importPreset(data: unknown, db: DB) {
         multiSelect: v.multiSelect === true || v.multiSelect === "true",
         separator: String(v.separator ?? ", "),
         randomPick: v.randomPick === true || v.randomPick === "true",
+        displayMode: v.displayMode === "buttons" || v.displayMode === "listbox" ? v.displayMode : "auto",
+        optionSort: v.optionSort === "alphabetical" ? "alphabetical" : "manual",
       });
     }
   }

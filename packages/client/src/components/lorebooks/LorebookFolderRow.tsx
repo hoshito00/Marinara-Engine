@@ -21,7 +21,7 @@ import {
 } from "react";
 import { ChevronDown, Copy, Folder, GripVertical, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { showConfirmDialog, showConfirmWithCheckbox } from "../../lib/app-dialogs";
+import { confirmNonEmptyFolderDelete } from "../../lib/app-dialogs";
 import { useUpdateLorebookFolder, useDeleteLorebookFolder, useCloneLorebookFolder } from "../../hooks/use-lorebooks";
 import { canReparentFolder, collectFolderSubtreeIds, type LorebookFolder } from "@marinara-engine/shared";
 
@@ -168,35 +168,19 @@ export function LorebookFolderRow({
       e.stopPropagation();
       const descendantCount = collectFolderSubtreeIds(folders, folder.id).length - 1;
       const hasSubfolders = descendantCount > 0;
-      // Any folder with content (subfolders and/or entries) offers a checkbox to
-      // delete that content too, instead of lifting it up to the top level.
-      if (hasSubfolders || entryCount > 0) {
-        const { confirmed, checked } = await showConfirmWithCheckbox({
-          title: "Delete Folder",
-          message: hasSubfolders
-            ? "Delete this folder? Its contents move up to the top level."
-            : `Delete this folder? Its ${entryCount} entr${entryCount === 1 ? "y" : "ies"} move up to the top level.`,
-          confirmLabel: "Delete",
-          tone: "destructive",
-          checkboxLabel: hasSubfolders
-            ? `Also delete the ${descendantCount} nested subfolder${descendantCount === 1 ? "" : "s"} and everything inside`
-            : "Also delete everything in it",
-        });
-        if (!confirmed) return;
-        deleteFolder.mutate({ lorebookId, folderId: folder.id, cascade: checked });
-        return;
-      }
-      // Empty folder — nothing to cascade.
-      const confirmed = await showConfirmDialog({
+      const contentCount = entryCount + descendantCount;
+      const confirmed = await confirmNonEmptyFolderDelete(contentCount, {
         title: "Delete Folder",
-        message: "Delete this folder?",
+        message: hasSubfolders
+          ? `Delete "${folder.name}"? Its nested subfolder${descendantCount === 1 ? "" : "s"} and entries will move up to the top level.`
+          : `Delete "${folder.name}"? Its ${entryCount} entr${entryCount === 1 ? "y" : "ies"} will move up to the top level.`,
         confirmLabel: "Delete",
         tone: "destructive",
       });
       if (!confirmed) return;
       deleteFolder.mutate({ lorebookId, folderId: folder.id });
     },
-    [entryCount, lorebookId, folder.id, folders, deleteFolder],
+    [entryCount, lorebookId, folder.id, folder.name, folders, deleteFolder],
   );
 
   return (

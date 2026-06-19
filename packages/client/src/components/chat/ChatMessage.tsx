@@ -10,6 +10,7 @@ import {
   type AvatarCropValue,
 } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks, applyInlineMarkdownHTML } from "../../lib/markdown";
+import { normalizeCardAssetImageSyntax, resolveCardAssetUrl } from "../../lib/card-asset-links";
 import {
   User,
   Bot,
@@ -494,6 +495,15 @@ const CHAT_HTML_ALLOWED_ATTR = [
 
 const CHAT_STYLE_BLOCK_RE = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
 const CSS_SELECTOR_RE = /(^|[{}])\s*([^@{}][^{]*)\{/g;
+const MD_IMAGE_HTML_RE = /!\[([^\]]*)\]\(((?:https?:\/\/[^)\s]+|card:\/\/[^)\s]+|\/api\/[^)\s]+))\)/g;
+
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 
 function sanitizeChatHtml(html: string, options: { allowStyle?: boolean } = {}) {
   const allowedAttr = options.allowStyle
@@ -640,10 +650,11 @@ function renderContent(
   // Convert markdown images to <img> before sanitization so DOMPurify validates them.
   // Keep tags minimal (no class/loading) — styling is via .mari-message-content img in CSS
   // to avoid the dialogue-bolding regex mangling attribute quotes.
-  const withImages = withBreaks.replace(
-    /!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g,
-    (_m, alt: string, url: string) => `<img src="${url}" alt="${alt || "image"}" loading="lazy" decoding="async">`,
-  );
+  const withImages = normalizeCardAssetImageSyntax(withBreaks).replace(MD_IMAGE_HTML_RE, (_m, alt: string, url: string) => {
+    const src = escapeHtmlAttr(resolveCardAssetUrl(url));
+    const safeAlt = escapeHtmlAttr(alt || "image");
+    return `<img src="${src}" alt="${safeAlt}" loading="lazy" decoding="async">`;
+  });
 
   const clean = sanitizeChatHtml(withImages, { allowStyle: true });
 
@@ -855,6 +866,7 @@ export const ChatMessage = memo(function ChatMessage({
   const [avatarLightboxPrompt, setAvatarLightboxPrompt] = useState<string | null>(null);
   const scrollRestoreRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const msgRef = useRef<HTMLDivElement>(null);
+  const editSwipeIndexRef = useRef<number | null>(null);
   const lastQuickTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
   const openImageLightbox = useCallback((url: string, prompt?: unknown) => {
     setAvatarLightbox(url);
@@ -957,8 +969,9 @@ export const ChatMessage = memo(function ChatMessage({
     if (!onEdit || isStreaming) return;
     const sp = msgRef.current?.closest("[class*='overflow-y']") as HTMLElement | null;
     if (sp) scrollRestoreRef.current = { el: sp, top: sp.scrollTop };
+    editSwipeIndexRef.current = message.activeSwipeIndex ?? null;
     setEditing(true);
-  }, [isStreaming, onEdit]);
+  }, [isStreaming, message.activeSwipeIndex, onEdit]);
 
   const startQuickEdit = useCallback(
     (target: EventTarget | null) => {
@@ -1186,17 +1199,43 @@ export const ChatMessage = memo(function ChatMessage({
 
   const handleSaveEdit = useCallback(
     (content: string) => {
+      if (editSwipeIndexRef.current !== null && editSwipeIndexRef.current !== (message.activeSwipeIndex ?? null)) {
+        editSwipeIndexRef.current = null;
+        setEditing(false);
+        return;
+      }
       if (content.trim() !== message.content) {
         onEdit?.(message.id, content.trim());
       }
+      editSwipeIndexRef.current = null;
       setEditing(false);
     },
-    [message.content, message.id, onEdit],
+    [message.activeSwipeIndex, message.content, message.id, onEdit],
   );
 
   const handleCancelEdit = useCallback(() => {
+    editSwipeIndexRef.current = null;
     setEditing(false);
   }, []);
+
+  const handleSetActiveSwipe = useCallback(
+    (index: number) => {
+      if (index === message.activeSwipeIndex) return;
+      editSwipeIndexRef.current = null;
+      setEditing(false);
+      onSetActiveSwipe?.(message.id, index);
+    },
+    [message.activeSwipeIndex, message.id, onSetActiveSwipe],
+  );
+
+  useEffect(() => {
+    if (!editing) return;
+    if (editSwipeIndexRef.current === null) return;
+    if (editSwipeIndexRef.current !== (message.activeSwipeIndex ?? null)) {
+      editSwipeIndexRef.current = null;
+      setEditing(false);
+    }
+  }, [editing, message.activeSwipeIndex]);
 
   // Apply regex scripts to AI output (assistant/narrator roles)
   const { applyToAIOutput } = useApplyRegex();
@@ -2064,7 +2103,7 @@ export const ChatMessage = memo(function ChatMessage({
                 messageId={message.id}
                 activeSwipeIndex={message.activeSwipeIndex}
                 swipeCount={swipeCount}
-                onSetActiveSwipe={(index) => onSetActiveSwipe?.(message.id, index)}
+                onSetActiveSwipe={handleSetActiveSwipe}
                 className="px-1 text-[0.75rem] text-white/40"
                 buttonClassName="rounded-md p-[0.25em] transition-colors hover:bg-white/10 disabled:opacity-30"
                 inputClassName="border-white/10 bg-white/5 text-white/70 [color-scheme:dark]"
@@ -2541,7 +2580,7 @@ export const ChatMessage = memo(function ChatMessage({
               messageId={message.id}
               activeSwipeIndex={message.activeSwipeIndex}
               swipeCount={swipeCount}
-              onSetActiveSwipe={(index) => onSetActiveSwipe?.(message.id, index)}
+              onSetActiveSwipe={handleSetActiveSwipe}
               className="px-2 text-[0.75rem] text-[var(--muted-foreground)]"
               buttonClassName="rounded p-[0.25em] transition-colors hover:bg-[var(--accent)] disabled:opacity-30"
               iconSize={MESSAGE_SWIPE_ICON_SIZE}

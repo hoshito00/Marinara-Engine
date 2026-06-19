@@ -20,6 +20,8 @@ import type { AgentFailure } from "../lib/agent-failures";
 export interface PendingCardUpdate {
   /** Client-generated ID, used as key for dismissal. */
   id: string;
+  chatId: string;
+  agentType: string;
   characterId: string;
   characterName: string;
   updates: CharacterCardFieldUpdate[];

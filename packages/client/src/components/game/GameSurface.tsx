@@ -9271,7 +9271,9 @@ export function GameSurface({
                 open={galleryOpen}
                 onClose={handleCloseGalleryPanel}
                 anchor={galleryAnchor}
-                onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
+                onIllustrate={() => {
+                  void retryAgents(activeChatId, ["illustrator"]);
+                }}
               />
               <PinnedImageOverlay activeChatId={activeChatId} />
 

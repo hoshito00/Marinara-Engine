@@ -16,7 +16,7 @@ export type GroupChatMode = "merged" | "individual";
 /** How individual-mode group chats decide response order. */
 export type GroupResponseOrder = "sequential" | "smart" | "manual";
 
-/** Spotify source constraints used by Spotify DJ. */
+/** Spotify source constraints used by Music DJ. */
 export type SpotifySourceType = "liked" | "playlist" | "artist" | "any";
 
 export interface KnowledgeAgentSourceSettings {
@@ -180,7 +180,7 @@ export interface ChatMetadata {
   tags: string[];
   /** Whether agents are enabled for this chat */
   enableAgents: boolean;
-  /** When true, lorebook and summary writes proposed by agents require user approval before persistence. */
+  /** When true, agent output proposals such as lorebook, summary, and card updates require user review. */
   agentWriteApprovalRequired?: boolean;
   /** Per-agent enable overrides (agentId → boolean) */
   agentOverrides: Record<string, boolean>;
@@ -271,8 +271,6 @@ export interface ChatMetadata {
   groupScenarioOverride?: boolean;
   /** The shared scenario text used when groupScenarioOverride is enabled */
   groupScenarioText?: string;
-  /** When true, show the Injections tab in the roleplay Agents menu for cached prompt injections. */
-  showInjectionsPanel?: boolean;
   /** Prose Guardian per-chat banned words/settings applied to the rewrite prompt. */
   proseGuardianBannedWords?: string | null;
   /** Prose Guardian per-chat prose habits to remove. */
@@ -308,7 +306,7 @@ export interface ChatMetadata {
   hapticSensitivity?: HapticFeedbackSensitivity;
   /** When true, very brief accidental brushes may trigger small haptic feedback. Missing/false = only deliberate contact. */
   hapticIncidentalContact?: boolean;
-  /** Music source constraint for Spotify DJ in roleplay and visual novel chats. */
+  /** Music source constraint for Music DJ in roleplay and visual novel chats. */
   spotifySourceType?: SpotifySourceType;
   /** Spotify playlist ID used when spotifySourceType is "playlist". */
   spotifyPlaylistId?: string | null;
@@ -316,7 +314,7 @@ export interface ChatMetadata {
   spotifyPlaylistName?: string | null;
   /** Spotify artist name used when spotifySourceType is "artist". */
   spotifyArtist?: string | null;
-  /** Recent Spotify track URIs played by the roleplay/conversation Spotify DJ. */
+  /** Recent Spotify track URIs played by the roleplay/conversation Music DJ. */
   spotifyRecentTracks?: string[];
   /** Durable count of autonomous messages the user has not viewed yet. */
   autonomousUnreadCount?: number;
@@ -408,9 +406,9 @@ export interface ChatMetadata {
   gameImagePromptInstructions?: string | null;
   /** Per-game asset browser folder exclusions. Omitted/null means every asset folder is available. */
   gameAssetSelection?: { excludedFolders?: string[] } | null;
-  /** When true, Game Mode uses Spotify DJ for music instead of local music assets. */
+  /** When true, Game Mode uses Music DJ for Spotify music instead of local music assets. */
   gameUseSpotifyMusic?: boolean;
-  /** Music source constraint for Spotify DJ in Game Mode. */
+  /** Music source constraint for Music DJ in Game Mode. */
   gameSpotifySourceType?: SpotifySourceType;
   /** Spotify playlist ID used when gameSpotifySourceType is "playlist". */
   gameSpotifyPlaylistId?: string | null;

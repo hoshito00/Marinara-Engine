@@ -80,7 +80,9 @@ import {
   assemblePrompt,
   buildPromptMacroContext,
   collectCharacterDepthPromptEntries,
+  resolveCharacterMacroData,
   resolveMacrosWithVariableSnapshot,
+  resolvePromptMessageMacros,
   type AssemblerInput,
 } from "../services/prompt/index.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
@@ -242,6 +244,7 @@ import {
   normalizeHapticAgentCommand,
   normalizeHapticAgentCommands,
 } from "../services/generation/haptic-runtime.js";
+import { getMaxToolRounds } from "../config/runtime-config.js";
 import {
   REVIEWABLE_WRITER_AGENT_TYPES,
   buildRuntimeAgentSectionEligibleTypes,
@@ -1559,6 +1562,10 @@ export async function generateRoutes(app: FastifyInstance) {
           chatId: input.chatId,
           model: conn.model,
         });
+        const historyMacroProfilesById = (await resolveCharacterMacroData(app.db, allCharacterIds)).profilesById;
+        const resolveHistoryMessageMacros = <T extends { content: string; characterId?: string | null }>(
+          messages: T[],
+        ): T[] => resolvePromptMessageMacros(messages, promptMacroContext, historyMacroProfilesById);
         const resolvePromptMacros = (value: string) => resolveMacros(value, promptMacroContext);
         const resolvePromptMacrosForLorebook = (value: string) =>
           resolveMacrosWithVariableSnapshot(
@@ -1606,6 +1613,17 @@ export async function generateRoutes(app: FastifyInstance) {
               "\n\n",
             );
           }
+          mappedMessages.splice(0, mappedMessages.length, ...resolveHistoryMessageMacros(mappedMessages));
+          if (regenerateUserSourceMessage) {
+            regenerateUserSourceMessage = resolveHistoryMessageMacros([regenerateUserSourceMessage])[0] ?? null;
+          }
+          lorebookKeeperMessages = resolveHistoryMessageMacros(
+            lorebookKeeperMessages.map((message: any) => ({
+              ...message,
+              content: (message.content as string) ?? "",
+              characterId: typeof message.characterId === "string" && message.characterId ? message.characterId : null,
+            })),
+          );
           if (shouldPrefixGroupHistorySpeakers) {
             const characterNamesById = await getGroupHistoryCharacterNamesById();
             mappedMessages.splice(
@@ -1960,6 +1978,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   ...(files.length ? { files } : {}),
                 };
               });
+              finalMessages = resolveHistoryMessageMacros(finalMessages);
             }
             // Send "typing" event — client switches to "X is typing..."
             reply.raw.write(`data: ${JSON.stringify({ type: "typing", characters: respondingConvoCharNames })}\n\n`);
@@ -2706,11 +2725,6 @@ export async function generateRoutes(app: FastifyInstance) {
           if (chat.connectedChatId) {
             const connectedChat = await chats.getById(chat.connectedChatId as string);
             if (connectedChat && connectedChat.mode === "roleplay") {
-              const rpMeta =
-                typeof connectedChat.metadata === "string"
-                  ? JSON.parse(connectedChat.metadata)
-                  : (connectedChat.metadata ?? {});
-              const rpSummary = (rpMeta.summary as string) ?? null;
               const rpMessages = await chats.listMessages(connectedChat.id);
               const recentRp = rpMessages.slice(-20);
 
@@ -2729,7 +2743,6 @@ export async function generateRoutes(app: FastifyInstance) {
               }
 
               const rpLines: string[] = [`<connected_roleplay name="${connectedChat.name}">`];
-              if (rpSummary) rpLines.push(`<summary>${rpSummary}</summary>`);
               rpLines.push(`<recent_messages>`);
               for (const m of recentRp) {
                 const speaker =
@@ -2749,7 +2762,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 const connectedInstructionLines = [
                   `<connected_roleplay_instructions>`,
                   `You have access to context from a connected roleplay: "${connectedChat.name}".`,
-                  `The summary and recent messages from that roleplay are provided so you can naturally reference or discuss events happening there.`,
+                  `Recent messages from that roleplay are provided so you can naturally reference or discuss events happening there.`,
                 ];
                 if (connectedInfluenceCommandEnabled) {
                   connectedInstructionLines.push(
@@ -3325,6 +3338,20 @@ export async function generateRoutes(app: FastifyInstance) {
         }
 
         const charInfo = await loadCharacterPromptInfo({ chars, characterIds, chatMode });
+        for (const character of charInfo) {
+          const resolveCharacterPromptText = (value: string): string =>
+            resolveHistoryMessageMacros([{ content: value, characterId: character.id }])[0]?.content ?? value;
+          character.description = resolveCharacterPromptText(character.description);
+          character.personality = resolveCharacterPromptText(character.personality);
+          character.scenario = resolveCharacterPromptText(character.scenario);
+          character.creatorNotes = resolveCharacterPromptText(character.creatorNotes);
+          character.systemPrompt = resolveCharacterPromptText(character.systemPrompt);
+          character.backstory = resolveCharacterPromptText(character.backstory);
+          character.appearance = resolveCharacterPromptText(character.appearance);
+          character.mesExample = resolveCharacterPromptText(character.mesExample);
+          character.firstMes = resolveCharacterPromptText(character.firstMes);
+          character.postHistoryInstructions = resolveCharacterPromptText(character.postHistoryInstructions);
+        }
         const characterMacroProfilesById = buildCharacterMacroProfilesById(charInfo);
 
         let resolvedGameDiscordSpeakerName: string | null = null;
@@ -3683,6 +3710,13 @@ export async function generateRoutes(app: FastifyInstance) {
             ? Math.max(...resolvedAgents.map((a) => normalizeAgentContextSize(a.settings.contextSize)))
             : 5;
         const agentSlice = chatMessages.slice(-agentContextSize);
+        const resolvedAgentSlice = resolveHistoryMessageMacros(
+          agentSlice.map((message: any) => ({
+            ...message,
+            content: (message.content as string) ?? "",
+            characterId: typeof message.characterId === "string" && message.characterId ? message.characterId : null,
+          })),
+        );
 
         // Batch-fetch committed game state snapshots for assistant messages in the agent context
         const assistantMsgIds = agentSlice.filter((m: any) => m.role === "assistant").map((m: any) => m.id as string);
@@ -3695,11 +3729,12 @@ export async function generateRoutes(app: FastifyInstance) {
             ? latestGameState
             : null;
 
-        const recentMsgs = agentSlice.map((m: any) => {
+        const recentMsgs = agentSlice.map((m: any, index: number) => {
+          const resolved = resolvedAgentSlice[index];
           const msg: AgentContext["recentMessages"][number] = {
             id: typeof m.id === "string" ? m.id : undefined,
             role: m.role as string,
-            content: m.content as string,
+            content: resolved?.content ?? (m.content as string),
             characterId: m.characterId ?? undefined,
           };
           if (m.role === "assistant") {
@@ -3719,6 +3754,10 @@ export async function generateRoutes(app: FastifyInstance) {
           }
           return msg;
         });
+        const resolvePersonaPromptText = (value?: string): string | undefined => {
+          if (!value) return value;
+          return resolveHistoryMessageMacros([{ content: value, characterId: null }])[0]?.content ?? value;
+        };
 
         const agentContext: AgentContext = {
           chatId: input.chatId,
@@ -3732,11 +3771,11 @@ export async function generateRoutes(app: FastifyInstance) {
             personaName !== "User"
               ? {
                   name: personaName,
-                  description: personaDescription,
-                  personality: personaFields.personality || undefined,
-                  backstory: personaFields.backstory || undefined,
-                  appearance: personaFields.appearance || undefined,
-                  scenario: personaFields.scenario || undefined,
+                  description: resolvePersonaPromptText(personaDescription) ?? "",
+                  personality: resolvePersonaPromptText(personaFields.personality) || undefined,
+                  backstory: resolvePersonaPromptText(personaFields.backstory) || undefined,
+                  appearance: resolvePersonaPromptText(personaFields.appearance) || undefined,
+                  scenario: resolvePersonaPromptText(personaFields.scenario) || undefined,
                   ...(persona?.personaStats
                     ? (() => {
                         let pStats: any;
@@ -4104,8 +4143,8 @@ export async function generateRoutes(app: FastifyInstance) {
                 try {
                   const sourceInfo = await getSourceFilePath(fileId);
                   if (!sourceInfo) continue;
-                  const { filePath, originalName } = sourceInfo;
-                  const text = await extractFileText(filePath);
+                  const { filePath, originalName, size, uploadedAt } = sourceInfo;
+                  const text = await extractFileText(filePath, fileId, { size, uploadedAt });
                   if (text.trim()) {
                     materialParts.push(`## File: ${originalName}\n${text}`);
                   }
@@ -4717,7 +4756,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
           const shouldReviewWriterAgentOutputs =
             (chatMode === "roleplay" || chatMode === "visual_novel") &&
-            chatMeta.reviewWriterAgentOutputs === true &&
+            requireAgentWriteApproval &&
             reviewedAgentInjections.length === 0 &&
             !input.regenerateMessageId;
           const reviewableWriterInjections = contextInjections.filter((entry) =>
@@ -5439,7 +5478,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
           try {
             if (enableChatTools && provider.chatComplete) {
-              const MAX_TOOL_ROUNDS = 5;
+              const maxToolRounds = getMaxToolRounds();
               let loopMessages: ChatMessage[] = initialProviderMessages;
               // ── Seed encrypted reasoning cache from DB ──
               // OpenAI Responses API uses encrypted reasoning items for multi-turn continuity.
@@ -5491,7 +5530,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
               };
 
-              for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+              for (let round = 0; round < maxToolRounds; round++) {
                 // Treat abort as a silent cancellation: stop the pipeline immediately.
                 if (abortController.signal.aborted) {
                   return null;
@@ -5654,7 +5693,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   });
                 }
 
-                if (round === MAX_TOOL_ROUNDS - 1) {
+                if (round === maxToolRounds - 1) {
                   // Reset per-character accumulator for final round content
                   const prevLen = fullResponse.length;
                   loopMessages = fitPromptForSend(loopMessages);
@@ -9559,6 +9598,8 @@ export async function generateRoutes(app: FastifyInstance) {
                           multiSelect: choiceBlock.multiSelect ?? false,
                           separator: choiceBlock.separator ?? ", ",
                           randomPick: choiceBlock.randomPick ?? false,
+                          displayMode: choiceBlock.displayMode ?? "auto",
+                          optionSort: choiceBlock.optionSort ?? "manual",
                         });
                         choiceBlockCount += 1;
                       }
@@ -9906,7 +9947,7 @@ export async function generateRoutes(app: FastifyInstance) {
               resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
             });
             newMariMsg.content = newMariMsg.content.replace(/\n([ \t]*\n){2,}/g, "\n\n");
-            runningMessagesForFollowUp.push(newMariMsg);
+            runningMessagesForFollowUp.push(resolveHistoryMessageMacros([newMariMsg])[0] ?? newMariMsg);
           }
 
           // Re-read chat metadata so the freshly-persisted mariContext is

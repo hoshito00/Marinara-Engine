@@ -42,6 +42,7 @@ import { AvatarGenerationModal } from "../ui/AvatarGenerationModal";
 import { AvatarCropWidget } from "../ui/AvatarCropWidget";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
+import { CharacterRegexSection } from "./CharacterRegexSection";
 import {
   ArrowLeft,
   Save,
@@ -225,7 +226,9 @@ export function CharacterEditor() {
   const uploadPersonaAvatar = useUploadPersonaAvatar();
   const { data: connectionsList } = useConnections();
 
-  const [activeTab, setActiveTab] = useState<TabId>("metadata");
+  const [activeTab, setActiveTab] = useState<TabId>(
+    () => (useUIStore.getState().characterDetailInitialTab as TabId | null) ?? "metadata",
+  );
   const [formData, setFormData] = useState<CharacterData | null>(null);
   const [characterComment, setCharacterComment] = useState("");
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
@@ -871,20 +874,12 @@ export function CharacterEditor() {
           </div>
         </div>
 
-        <div className="mari-editor-actions hidden md:flex">
+        <div className="mari-editor-actions flex">
           <button type="button" onClick={handleSave} disabled={saveDisabled} className={saveButtonClass}>
             <Save size="0.9375rem" />
             <span>{saveLabel}</span>
           </button>
           {headerActions}
-        </div>
-
-        <div className="mari-editor-actions flex w-full items-center justify-between gap-2 md:hidden">
-          <button type="button" onClick={handleSave} disabled={saveDisabled} className={saveButtonClass}>
-            <Save size="0.9375rem" />
-            <span>{saveLabel}</span>
-          </button>
-          <div className="flex min-w-0 items-center justify-end gap-1">{headerActions}</div>
         </div>
       </div>
 
@@ -951,7 +946,12 @@ export function CharacterEditor() {
               <CharacterCardTab formData={formData} updateField={updateField} updateExtension={updateExtension} />
             )}
             {activeTab === "advanced" && (
-              <AdvancedTab formData={formData} updateField={updateField} updateExtension={updateExtension} />
+              <AdvancedTab
+                formData={formData}
+                updateField={updateField}
+                updateExtension={updateExtension}
+                characterId={characterId}
+              />
             )}
             {activeTab === "sprites" && characterId && (
               <SpritesTab
@@ -1693,10 +1693,12 @@ function AdvancedTab({
   formData,
   updateField,
   updateExtension,
+  characterId,
 }: {
   formData: CharacterData;
   updateField: <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => void;
   updateExtension: (key: string, value: unknown) => void;
+  characterId: string | null;
 }) {
   const depthPrompt = formData.extensions.depth_prompt ?? { prompt: "", depth: 4, role: "system" as const };
 
@@ -1780,6 +1782,8 @@ function AdvancedTab({
           </label>
         </div>
       </div>
+
+      <CharacterRegexSection characterId={characterId} characterName={formData.name} />
     </div>
   );
 }

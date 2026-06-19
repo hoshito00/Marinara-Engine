@@ -27,6 +27,7 @@ import {
   Plus,
   Minus,
   Upload,
+  KeyRound,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { downloadJsonFile, sanitizeExportFilenamePart } from "../../lib/download-json";
@@ -70,6 +71,7 @@ export function ToolEditor() {
   const [localWebhookUrl, setLocalWebhookUrl] = useState("");
   const [localStaticResult, setLocalStaticResult] = useState("");
   const [localScriptBody, setLocalScriptBody] = useState("");
+  const [localIncludeHiddenContext, setLocalIncludeHiddenContext] = useState(false);
   const [localParams, setLocalParams] = useState<ParamDef[]>([]);
   const [dirty, setDirty] = useState(false);
   const setEditorDirty = useUIStore((s) => s.setEditorDirty);
@@ -88,6 +90,7 @@ export function ToolEditor() {
       setLocalWebhookUrl(dbTool.webhookUrl ?? "");
       setLocalStaticResult(dbTool.staticResult ?? "");
       setLocalScriptBody(dbTool.scriptBody ?? "");
+      setLocalIncludeHiddenContext(dbTool.includeHiddenContext === "true" || dbTool.includeHiddenContext === "1");
       // Parse params from schema
       try {
         const schema = JSON.parse(dbTool.parametersSchema || "{}");
@@ -114,6 +117,7 @@ export function ToolEditor() {
       setLocalWebhookUrl("");
       setLocalStaticResult("");
       setLocalScriptBody("");
+      setLocalIncludeHiddenContext(false);
       setLocalParams([]);
     }
     setDirty(false);
@@ -174,6 +178,7 @@ export function ToolEditor() {
       webhookUrl: localExecType === "webhook" ? localWebhookUrl || null : null,
       staticResult: localExecType === "static" ? localStaticResult || null : null,
       scriptBody: localExecType === "script" ? localScriptBody || null : null,
+      includeHiddenContext: localIncludeHiddenContext,
       enabled: currentEnabled,
     };
 
@@ -198,6 +203,7 @@ export function ToolEditor() {
     localWebhookUrl,
     localStaticResult,
     localScriptBody,
+    localIncludeHiddenContext,
     dbTool,
     currentEnabled,
     createTool,
@@ -216,6 +222,7 @@ export function ToolEditor() {
       webhookUrl: localExecType === "webhook" ? localWebhookUrl || null : null,
       staticResult: localExecType === "static" ? localStaticResult || null : null,
       scriptBody: localExecType === "script" ? localScriptBody || null : null,
+      includeHiddenContext: localIncludeHiddenContext,
       enabled: currentEnabled,
     };
     downloadJsonFile(
@@ -244,6 +251,7 @@ export function ToolEditor() {
     localWebhookUrl,
     localStaticResult,
     localScriptBody,
+    localIncludeHiddenContext,
     buildParamsSchema,
   ]);
 
@@ -553,6 +561,33 @@ export function ToolEditor() {
             <p className="mt-1.5 text-[0.625rem] text-[var(--muted-foreground)]">{execMeta.description}</p>
           </FieldGroup>
 
+          <FieldGroup
+            label="Hidden Marinara context"
+            icon={<KeyRound size="0.875rem" className="text-[var(--primary)]" />}
+            help="Adds a separate server-provided context object to webhook and script executions. The AI does not see these fields as tool parameters."
+          >
+            <label className="flex items-start gap-3 rounded-xl bg-[var(--card)] p-3 text-sm ring-1 ring-[var(--border)]">
+              <input
+                type="checkbox"
+                checked={localIncludeHiddenContext}
+                onChange={(e) => {
+                  setLocalIncludeHiddenContext(e.target.checked);
+                  markDirty();
+                }}
+                className="mt-0.5 rounded"
+              />
+              <span className="min-w-0">
+                <span className="block font-medium text-[var(--foreground)]">Include hidden chat context</span>
+                <span className="mt-1 block text-xs text-[var(--muted-foreground)]">
+                  Webhooks receive <code className="rounded bg-[var(--secondary)] px-1">context</code> beside{" "}
+                  <code className="rounded bg-[var(--secondary)] px-1">arguments</code>; scripts receive a{" "}
+                  <code className="rounded bg-[var(--secondary)] px-1">context</code> variable. Includes chat ID, mode,
+                  persona, character IDs/names, chat variables, recent message IDs, and game state.
+                </span>
+              </span>
+            </label>
+          </FieldGroup>
+
           {/* ── Execution Config ── */}
           {localExecType === "static" && (
             <FieldGroup label="Static Result" icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}>
@@ -586,7 +621,7 @@ export function ToolEditor() {
               />
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 A POST request will be sent with{" "}
-                <code className="rounded bg-[var(--secondary)] px-1">{"{ tool, arguments }"}</code> as JSON body.
+                <code className="rounded bg-[var(--secondary)] px-1">{"{ tool, arguments, context? }"}</code> as JSON body.
                 Response is returned to the AI.
               </p>
             </FieldGroup>
@@ -608,6 +643,7 @@ export function ToolEditor() {
               />
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 Write JavaScript. Has access to <code className="rounded bg-[var(--secondary)] px-1">args</code>,{" "}
+                <code className="rounded bg-[var(--secondary)] px-1">context</code>,{" "}
                 <code className="rounded bg-[var(--secondary)] px-1">JSON</code>,{" "}
                 <code className="rounded bg-[var(--secondary)] px-1">Math</code>,{" "}
                 <code className="rounded bg-[var(--secondary)] px-1">Date</code>. Must{" "}

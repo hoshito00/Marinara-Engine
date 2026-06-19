@@ -25,7 +25,9 @@ import {
   assemblePrompt,
   buildPromptMacroContext,
   collectCharacterDepthPromptEntries,
+  resolveCharacterMacroData,
   resolveMacrosWithVariableSnapshot,
+  resolvePromptMessageMacros,
   type AssemblerInput,
 } from "../../services/prompt/index.js";
 import { mergeAdjacentMessages } from "../../services/prompt/merger.js";
@@ -841,6 +843,10 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       lastInput: [...mappedMessages].reverse().find((message) => message.role === "user")?.content,
       chatId,
     });
+    const historyMacroProfilesById = (await resolveCharacterMacroData(app.db, allCharacterIds)).profilesById;
+    const resolveHistoryMessageMacros = <T extends { content: string; characterId?: string | null }>(
+      messages: T[],
+    ): T[] => resolvePromptMessageMacros(messages, promptMacroContext, historyMacroProfilesById);
     const resolvePromptMacros = (value: string) => resolveMacros(value, promptMacroContext);
     const resolvePromptMacrosForLorebook = (value: string) =>
       resolveMacrosWithVariableSnapshot(value, promptMacroContext);
@@ -854,6 +860,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     for (const msg of mappedMessages) {
       msg.content = msg.content.replace(/\n([ \t]*\n){2,}/g, "\n\n");
     }
+    mappedMessages = resolveHistoryMessageMacros(mappedMessages);
     const dryRunGroupChatMode = ((chatMeta.groupChatMode as string) ?? "merged") as string;
     const shouldPrefixGroupHistorySpeakers =
       chatMeta.groupSpeakerNamesInHistory === true &&

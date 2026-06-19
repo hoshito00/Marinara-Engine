@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import {
   ArrowLeft,
   ArrowUpDown,
@@ -16,13 +16,9 @@ import { useStartChatFromCharacter } from "../../hooks/use-start-chat-from-chara
 import { getCharacterTitle } from "../../lib/character-display";
 import { estimateCharacterCardTokens, formatEstimatedTokens } from "../../lib/character-token-count";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
-import { useUIStore } from "../../stores/ui.store";
+import { useUIStore, type CharacterLibrarySort } from "../../stores/ui.store";
 import type { CharacterData } from "@marinara-engine/shared";
 
-type SortOption = "name-asc" | "name-desc" | "newest" | "oldest" | "favorites";
-
-const CHARACTER_LIBRARY_SORT_SESSION_KEY = "marinara:character-library-sort";
-const SORT_OPTIONS = ["name-asc", "name-desc", "newest", "oldest", "favorites"] as const satisfies SortOption[];
 const libraryToolbarButtonClass =
   "mari-chrome-control mari-chrome-control--small h-7 min-w-0 px-2 text-[0.75rem]";
 const libraryToolbarFieldClass =
@@ -115,27 +111,6 @@ function getCharacterSections(char: ParsedCharacterRow) {
     { title: "Scenario", content: getText(char.parsed.scenario) },
     { title: "Opening Message", content: getText(char.parsed.first_mes) },
   ].filter((section) => section.content);
-}
-
-function isSortOption(value: string | null): value is SortOption {
-  return SORT_OPTIONS.includes(value as SortOption);
-}
-
-function readSessionSort(): SortOption {
-  try {
-    const storedSort = window.sessionStorage.getItem(CHARACTER_LIBRARY_SORT_SESSION_KEY);
-    return isSortOption(storedSort) ? storedSort : "name-asc";
-  } catch {
-    return "name-asc";
-  }
-}
-
-function writeSessionSort(sort: SortOption) {
-  try {
-    window.sessionStorage.setItem(CHARACTER_LIBRARY_SORT_SESSION_KEY, sort);
-  } catch {
-    // Session storage can be unavailable in privacy modes; the control still works for the mounted view.
-  }
 }
 
 function CharacterLibraryDetailCard({
@@ -266,10 +241,16 @@ export function CharacterLibraryView() {
   const openModal = useUIStore((s) => s.openModal);
   const selectedCharacterId = useUIStore((s) => s.characterLibrarySelectedId);
   const setSelectedCharacterId = useUIStore((s) => s.setCharacterLibrarySelectedId);
+  const sort = useUIStore((s) => s.characterLibrarySort);
+  const setCharacterLibrarySort = useUIStore((s) => s.setCharacterLibrarySort);
+  const setCharacterLibraryScrollTop = useUIStore((s) => s.setCharacterLibraryScrollTop);
   const { data: characters, isLoading } = useCharacters();
 
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortOption>(readSessionSort);
+  const libraryRootScrollRef = useRef<HTMLDivElement | null>(null);
+  const libraryListScrollRef = useRef<HTMLElement | null>(null);
+  const pendingLibraryScrollTopRef = useRef(0);
+  const libraryScrollFrameRef = useRef<number | null>(null);
 
   const parsedCharacters = useMemo(() => {
     if (!characters) return [];
@@ -333,19 +314,79 @@ export function CharacterLibraryView() {
     [selectedCharacterId, sortedCharacters],
   );
 
+  const getActiveLibraryScrollNode = useCallback(() => {
+    const candidates = [libraryRootScrollRef.current, libraryListScrollRef.current];
+    return (
+      candidates.find((node) => {
+        if (!node || node.scrollHeight <= node.clientHeight) return false;
+        const overflowY = window.getComputedStyle(node).overflowY;
+        return overflowY === "auto" || overflowY === "scroll";
+      }) ??
+      libraryRootScrollRef.current ??
+      libraryListScrollRef.current
+    );
+  }, []);
+
+  const rememberLibraryScroll = useCallback(() => {
+    const node = getActiveLibraryScrollNode();
+    if (!node) return;
+    pendingLibraryScrollTopRef.current = node.scrollTop;
+    setCharacterLibraryScrollTop(node.scrollTop);
+  }, [getActiveLibraryScrollNode, setCharacterLibraryScrollTop]);
+
+  const handleLibraryScroll = useCallback(
+    (event: UIEvent<HTMLElement>) => {
+      if (event.currentTarget !== event.target) return;
+      pendingLibraryScrollTopRef.current = event.currentTarget.scrollTop;
+      if (libraryScrollFrameRef.current !== null) return;
+      libraryScrollFrameRef.current = window.requestAnimationFrame(() => {
+        libraryScrollFrameRef.current = null;
+        setCharacterLibraryScrollTop(pendingLibraryScrollTopRef.current);
+      });
+    },
+    [setCharacterLibraryScrollTop],
+  );
+
+  useLayoutEffect(() => {
+    if (isLoading) return;
+    const restoreScroll = () => {
+      const scrollTop = useUIStore.getState().characterLibraryScrollTop;
+      for (const node of [libraryRootScrollRef.current, libraryListScrollRef.current]) {
+        if (!node) continue;
+        const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
+        node.scrollTop = Math.min(scrollTop, maxScrollTop);
+      }
+    };
+    restoreScroll();
+    const frame = window.requestAnimationFrame(restoreScroll);
+    return () => window.cancelAnimationFrame(frame);
+  }, [isLoading, sortedCharacters.length]);
+
+  useLayoutEffect(
+    () => () => {
+      if (libraryScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(libraryScrollFrameRef.current);
+      }
+    },
+    [],
+  );
+
   const openCharacterDetailFromLibrary = (id: string) => {
+    rememberLibraryScroll();
     setSelectedCharacterId(id);
     openCharacterDetail(id, { preserveCharacterLibrary: true });
   };
 
   const handleSortChange = (value: string) => {
-    if (!isSortOption(value)) return;
-    setSort(value);
-    writeSessionSort(value);
+    setCharacterLibrarySort(value as CharacterLibrarySort);
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto overflow-x-hidden bg-[radial-gradient(circle_at_top_left,_rgba(244,114,182,0.14),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(56,189,248,0.14),_transparent_26%),var(--background)] lg:overflow-hidden">
+    <div
+      ref={libraryRootScrollRef}
+      onScroll={handleLibraryScroll}
+      className="flex h-full min-h-0 flex-col overflow-y-auto overflow-x-hidden bg-[radial-gradient(circle_at_top_left,_rgba(244,114,182,0.14),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(56,189,248,0.14),_transparent_26%),var(--background)] lg:overflow-hidden"
+    >
       <div className="sticky top-0 z-10 border-b border-[var(--border)]/40 bg-[var(--card)]/85 backdrop-blur-xl">
         <div className="flex flex-col gap-2 px-3 py-2 md:px-6 md:py-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex min-w-0 items-center gap-3">
@@ -421,7 +462,11 @@ export function CharacterLibraryView() {
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem] lg:gap-0 xl:grid-cols-[minmax(0,1.1fr)_28rem]">
-        <section className="min-h-0 overflow-visible px-4 py-4 md:px-6 lg:overflow-y-auto">
+        <section
+          ref={libraryListScrollRef}
+          onScroll={handleLibraryScroll}
+          className="min-h-0 overflow-visible px-4 py-4 md:px-6 lg:overflow-y-auto"
+        >
           {isLoading && (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {[1, 2, 3, 4, 5, 6].map((item) => (

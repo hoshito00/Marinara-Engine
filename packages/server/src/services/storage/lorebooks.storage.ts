@@ -11,16 +11,26 @@ import {
   lorebookPersonaLinks,
 } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
-import type {
-  CreateLorebookInput,
-  UpdateLorebookInput,
-  CreateLorebookEntryInput,
-  UpdateLorebookEntryInput,
-  CreateLorebookFolderInput,
-  UpdateLorebookFolderInput,
+import {
+  LIMITS,
+  type CreateLorebookInput,
+  type UpdateLorebookInput,
+  type CreateLorebookEntryInput,
+  type UpdateLorebookEntryInput,
+  type CreateLorebookFolderInput,
+  type UpdateLorebookFolderInput,
 } from "@marinara-engine/shared";
 import { collectEffectivelyDisabledFolderIds, collectFolderSubtreeIds } from "@marinara-engine/shared";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "../import/import-timestamps.js";
+
+function normalizeLorebookEntryLimit(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT;
+  return Math.max(
+    LIMITS.LOREBOOK_ENTRY_LIMIT_MIN,
+    Math.min(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX, Math.trunc(parsed)),
+  );
+}
 
 function resolveTimestamps(overrides?: TimestampOverrides | null) {
   const normalized = normalizeTimestampOverrides(overrides);
@@ -107,6 +117,7 @@ function parseLorebookRow(row: Record<string, unknown>) {
   return {
     ...row,
     recursiveScanning: row.recursiveScanning === "true",
+    entryLimit: normalizeLorebookEntryLimit(row.entryLimit),
     maxRecursionDepth: typeof row.maxRecursionDepth === "number" ? row.maxRecursionDepth : 3,
     excludeFromVectorization: row.excludeFromVectorization === "true",
     isGlobal: row.isGlobal === "true",
@@ -298,6 +309,7 @@ export function createLorebooksStorage(db: DB) {
           imagePath: input.imagePath ?? null,
           scanDepth: input.scanDepth ?? 2,
           tokenBudget: input.tokenBudget ?? 2048,
+          entryLimit: normalizeLorebookEntryLimit(input.entryLimit),
           recursiveScanning: String(input.recursiveScanning ?? false),
           maxRecursionDepth: input.maxRecursionDepth ?? 3,
           excludeFromVectorization: String(input.excludeFromVectorization ?? false),
@@ -326,6 +338,7 @@ export function createLorebooksStorage(db: DB) {
       if (input.imagePath !== undefined) updates.imagePath = input.imagePath;
       if (input.scanDepth !== undefined) updates.scanDepth = input.scanDepth;
       if (input.tokenBudget !== undefined) updates.tokenBudget = input.tokenBudget;
+      if (input.entryLimit !== undefined) updates.entryLimit = normalizeLorebookEntryLimit(input.entryLimit);
       if (input.recursiveScanning !== undefined) updates.recursiveScanning = String(input.recursiveScanning);
       if (input.maxRecursionDepth !== undefined) updates.maxRecursionDepth = input.maxRecursionDepth;
       if (input.excludeFromVectorization !== undefined)

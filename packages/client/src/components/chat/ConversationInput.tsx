@@ -39,6 +39,7 @@ import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { translateDraftText } from "../../lib/draft-translation";
 import { prepareImageAttachment } from "../../lib/chat-attachment-images";
+import { CARD_ASSET_INSERT_EVENT, type CardAssetInsertDetail } from "../../lib/card-asset-links";
 import { QuickConnectionSwitcher } from "./QuickConnectionSwitcher";
 import { QuickPersonaSwitcher } from "./QuickPersonaSwitcher";
 import { QuickSwitcherMobile } from "./QuickSwitcherMobile";
@@ -258,6 +259,37 @@ export function ConversationInput({
     attachmentsRef.current = next;
     setAttachments(next);
   }, []);
+
+  const insertTextAtCursor = useCallback(
+    (text: string) => {
+      const el = textareaRef.current;
+      if (!el || !activeChatId) return;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? start;
+      const nextValue = `${el.value.slice(0, start)}${text}${el.value.slice(end)}`;
+      const cursor = start + text.length;
+      el.value = nextValue;
+      el.selectionStart = el.selectionEnd = cursor;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+      syncInputState(nextValue);
+      setInputDraft(activeChatId, nextValue);
+      el.focus();
+    },
+    [activeChatId, setInputDraft, syncInputState],
+  );
+
+  useEffect(() => {
+    const handleCardAssetInsert = (event: Event) => {
+      const detail = (event as CustomEvent<CardAssetInsertDetail>).detail;
+      if (!detail?.markdown) return;
+      if (detail.chatId && detail.chatId !== activeChatId) return;
+      insertTextAtCursor(detail.markdown);
+    };
+
+    window.addEventListener(CARD_ASSET_INSERT_EVENT, handleCardAssetInsert);
+    return () => window.removeEventListener(CARD_ASSET_INSERT_EVENT, handleCardAssetInsert);
+  }, [activeChatId, insertTextAtCursor]);
 
   const updateAttachments = useCallback((updater: (current: Attachment[]) => Attachment[]) => {
     setAttachments((current) => {

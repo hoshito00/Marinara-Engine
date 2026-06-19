@@ -26,6 +26,9 @@ interface ChoiceOption {
   value: string;
 }
 
+type ChoiceDisplayMode = "auto" | "buttons" | "listbox";
+type ChoiceOptionSort = "manual" | "alphabetical";
+
 interface VariableData {
   id: string;
   variableName: string;
@@ -33,6 +36,30 @@ interface VariableData {
   options: ChoiceOption[];
   multiSelect: boolean;
   randomPick: boolean;
+  displayMode: ChoiceDisplayMode;
+  optionSort: ChoiceOptionSort;
+}
+
+const CHOICE_LISTBOX_AUTO_THRESHOLD = 8;
+
+function readChoiceDisplayMode(value: unknown): ChoiceDisplayMode {
+  return value === "buttons" || value === "listbox" ? value : "auto";
+}
+
+function readChoiceOptionSort(value: unknown): ChoiceOptionSort {
+  return value === "alphabetical" ? "alphabetical" : "manual";
+}
+
+function getPresentedOptions(variable: VariableData) {
+  if (variable.optionSort !== "alphabetical") return variable.options;
+  return [...variable.options].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+}
+
+function shouldUseListbox(variable: VariableData) {
+  if (variable.options.length <= 1 && !variable.multiSelect) return false;
+  if (variable.displayMode === "buttons") return false;
+  if (variable.displayMode === "listbox") return true;
+  return variable.options.length >= CHOICE_LISTBOX_AUTO_THRESHOLD;
 }
 
 function sanitizeChoiceSelection(
@@ -85,6 +112,8 @@ export function ChoiceSelectionModal({
         options: opts,
         multiSelect: cb.multiSelect === "true" || cb.multiSelect === true || cb.multi_select === "true",
         randomPick: cb.randomPick === "true" || cb.randomPick === true || cb.random_pick === "true",
+        displayMode: readChoiceDisplayMode(cb.displayMode ?? cb.display_mode),
+        optionSort: readChoiceOptionSort(cb.optionSort ?? cb.option_sort),
       };
     });
   }, [data?.choiceBlocks]);
@@ -189,8 +218,11 @@ export function ChoiceSelectionModal({
             This preset has configurable variables. Select option(s) for each to customize your experience.
           </p>
 
-          {variables.map((v) => (
-            <div key={v.id} className="rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3">
+          {variables.map((v) => {
+            const presentedOptions = getPresentedOptions(v);
+            const listboxMode = shouldUseListbox(v);
+            return (
+              <div key={v.id} className="rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3">
               <h4 className="mb-1 text-xs font-semibold text-[var(--foreground)]">{v.question}</h4>
               <div className="mb-2 flex items-center gap-2">
                 <p className="text-[0.625rem] text-[var(--muted-foreground)]">
@@ -216,9 +248,38 @@ export function ChoiceSelectionModal({
                 )}
               </div>
               <div className="space-y-1.5">
-                {v.multiSelect
+                {listboxMode && v.multiSelect ? (
+                  <select
+                    multiple
+                    value={Array.isArray(selections[v.variableName]) ? (selections[v.variableName] as string[]) : []}
+                    onChange={(e) => {
+                      const next = Array.from(e.currentTarget.selectedOptions, (option) => option.value);
+                      setOverrides((prev) => ({ ...prev, [v.variableName]: next }));
+                    }}
+                    size={Math.min(8, Math.max(4, presentedOptions.length))}
+                    className="min-h-28 w-full rounded-lg bg-[var(--background)] px-2 py-2 text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  >
+                    {presentedOptions.map((opt) => (
+                      <option key={opt.id} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : listboxMode ? (
+                  <select
+                    value={typeof selections[v.variableName] === "string" ? (selections[v.variableName] as string) : ""}
+                    onChange={(e) => setOverrides((prev) => ({ ...prev, [v.variableName]: e.target.value }))}
+                    className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  >
+                    {presentedOptions.map((opt) => (
+                      <option key={opt.id} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : v.multiSelect
                   ? // ── Multi-select: checkboxes ──
-                    v.options.map((opt) => {
+                    presentedOptions.map((opt) => {
                       const selected = Array.isArray(selections[v.variableName])
                         ? (selections[v.variableName] as string[])
                         : [];
@@ -253,10 +314,11 @@ export function ChoiceSelectionModal({
                         </button>
                       );
                     })
-                  : v.options.length === 1
+                  : presentedOptions.length === 1
                     ? // ── Boolean toggle: single option ──
                       (() => {
-                        const opt = v.options[0];
+                        const opt = presentedOptions[0];
+                        if (!opt) return null;
                         const isOn = selections[v.variableName] === opt.value;
                         return (
                           <button
@@ -301,7 +363,7 @@ export function ChoiceSelectionModal({
                         );
                       })()
                     : // ── Single-select: radio-style ──
-                      v.options.map((opt) => {
+                      presentedOptions.map((opt) => {
                         const isSelected = selections[v.variableName] === opt.value;
                         return (
                           <button
@@ -334,8 +396,9 @@ export function ChoiceSelectionModal({
                         );
                       })}
               </div>
-            </div>
-          ))}
+              </div>
+            );
+          })}
 
           <div className="flex items-center justify-between gap-2 pt-2">
             <label className="flex cursor-pointer items-center gap-1.5 text-[0.6875rem] text-[var(--muted-foreground)]">

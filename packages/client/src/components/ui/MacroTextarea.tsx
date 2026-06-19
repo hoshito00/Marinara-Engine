@@ -35,6 +35,7 @@ interface ExpandedMacroEditorProps {
   onChange: (value: string) => void;
   onClose: () => void;
   placeholder?: string;
+  formatOnChange?: (textarea: HTMLTextAreaElement) => string;
 }
 
 function insertTextAtSelection(target: HTMLTextAreaElement, insertText: string): { value: string; cursor: number } {
@@ -45,7 +46,15 @@ function insertTextAtSelection(target: HTMLTextAreaElement, insertText: string):
   };
 }
 
-function ExpandedMacroEditor({ open, title, value, onChange, onClose, placeholder }: ExpandedMacroEditorProps) {
+function ExpandedMacroEditor({
+  open,
+  title,
+  value,
+  onChange,
+  onClose,
+  placeholder,
+  formatOnChange,
+}: ExpandedMacroEditorProps) {
   const [localValue, setLocalValue] = useState(value);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -76,10 +85,11 @@ function ExpandedMacroEditor({ open, title, value, onChange, onClose, placeholde
 
   const handleChange = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
-      setLocalValue(event.target.value);
-      onChange(event.target.value);
+      const nextValue = formatOnChange ? formatOnChange(event.currentTarget) : event.currentTarget.value;
+      setLocalValue(nextValue);
+      onChange(nextValue);
     },
-    [onChange],
+    [formatOnChange, onChange],
   );
 
   const handleKeyDown = useCallback(
@@ -238,6 +248,7 @@ export interface MacroTextareaProps {
   toolbarClassName?: string;
   controlPaddingClassName?: string;
   toolbarExtra?: ReactNode;
+  formatOnChange?: (textarea: HTMLTextAreaElement) => string;
   showMacroReference?: boolean;
   showExpand?: boolean;
   spellCheck?: boolean;
@@ -259,6 +270,7 @@ export function MacroTextarea({
   toolbarClassName,
   controlPaddingClassName,
   toolbarExtra,
+  formatOnChange,
   showMacroReference = true,
   showExpand = true,
   spellCheck = true,
@@ -273,9 +285,9 @@ export function MacroTextarea({
 
   const handleChange = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
-      onChange(event.target.value);
+      onChange(formatOnChange ? formatOnChange(event.currentTarget) : event.currentTarget.value);
     },
-    [onChange],
+    [formatOnChange, onChange],
   );
 
   const handleKeyDown = useCallback(
@@ -348,7 +360,15 @@ export function MacroTextarea({
           </div>
         )}
       </div>
-      <ExpandedMacroEditor open={expanded} title={title} value={value} onChange={onChange} onClose={handleExpandedClose} placeholder={placeholder} />
+      <ExpandedMacroEditor
+        open={expanded}
+        title={title}
+        value={value}
+        onChange={onChange}
+        onClose={handleExpandedClose}
+        placeholder={placeholder}
+        formatOnChange={formatOnChange}
+      />
       <MacrosReferenceModal open={showMacroRef} onClose={() => setShowMacroRef(false)} />
     </>
   );

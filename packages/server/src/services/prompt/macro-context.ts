@@ -7,6 +7,7 @@
 
 import {
   resolveMacros,
+  type CharacterMacroProfile,
   type CharacterData,
   type MacroContext,
   type ResolveMacroOptions,
@@ -32,8 +33,14 @@ export interface BuildPromptMacroContextInput {
 export interface CharacterMacroData {
   names: string[];
   profiles: NonNullable<MacroContext["characterProfiles"]>;
+  profilesById: Map<string, CharacterMacroProfile>;
   primaryFields?: NonNullable<MacroContext["characterFields"]>;
 }
+
+export type PromptMacroMessage = {
+  content: string;
+  characterId?: string | null;
+};
 
 export interface MacroResolutionTransaction {
   content: string;
@@ -83,11 +90,12 @@ function parseCharacterData(raw: unknown): CharacterData | null {
 }
 
 export async function resolveCharacterMacroData(db: DB, characterIds: string[]): Promise<CharacterMacroData> {
-  if (characterIds.length === 0) return { names: [], profiles: [] };
+  if (characterIds.length === 0) return { names: [], profiles: [], profilesById: new Map() };
 
   const chars = createCharactersStorage(db);
   const names: string[] = [];
   const profiles: CharacterMacroData["profiles"] = [];
+  const profilesById = new Map<string, CharacterMacroProfile>();
   let primaryFields: CharacterMacroData["primaryFields"] | undefined;
 
   for (const id of characterIds) {
@@ -111,6 +119,7 @@ export async function resolveCharacterMacroData(db: DB, characterIds: string[]):
     };
 
     profiles.push(profile);
+    profilesById.set(id, profile);
 
     if (!primaryFields) {
       primaryFields = {
@@ -126,7 +135,7 @@ export async function resolveCharacterMacroData(db: DB, characterIds: string[]):
     }
   }
 
-  return { names, profiles, primaryFields };
+  return { names, profiles, profilesById, primaryFields };
 }
 
 export async function buildPromptMacroContext(input: BuildPromptMacroContextInput): Promise<MacroContext> {
@@ -151,6 +160,59 @@ export async function buildPromptMacroContext(input: BuildPromptMacroContextInpu
       ...(input.personaFields ?? {}),
     },
   };
+}
+
+function characterFieldsFromProfile(profile: CharacterMacroProfile): NonNullable<MacroContext["characterFields"]> {
+  return {
+    description: profile.description ?? "",
+    personality: profile.personality ?? "",
+    backstory: profile.backstory ?? "",
+    appearance: profile.appearance ?? "",
+    scenario: profile.scenario ?? "",
+    example: profile.example ?? "",
+    systemPrompt: profile.systemPrompt ?? "",
+    postHistoryInstructions: profile.postHistoryInstructions ?? "",
+  };
+}
+
+function macroContextForMessage(
+  message: PromptMacroMessage,
+  macroCtx: MacroContext,
+  profilesById?: ReadonlyMap<string, CharacterMacroProfile>,
+): MacroContext {
+  const profile = message.characterId ? profilesById?.get(message.characterId) : undefined;
+  if (!profile) return macroCtx;
+
+  return {
+    ...macroCtx,
+    char: profile.name,
+    characterFields: characterFieldsFromProfile(profile),
+  };
+}
+
+export function resolvePromptMessageMacros<T extends PromptMacroMessage>(
+  messages: T[],
+  macroCtx: MacroContext,
+  profilesById?: ReadonlyMap<string, CharacterMacroProfile>,
+  options: ResolveMacroOptions = { trimResult: false },
+): T[] {
+  return messages.map((message) => {
+    if (!message.content.includes("{{")) return message;
+
+    const messageMacroCtx = macroContextForMessage(message, macroCtx, profilesById);
+    const content = resolveMacros(
+      message.content,
+      {
+        ...messageMacroCtx,
+        variables: { ...messageMacroCtx.variables },
+      },
+      {
+        trimResult: false,
+        ...options,
+      },
+    );
+    return content === message.content ? message : { ...message, content };
+  });
 }
 
 function normalizeDepthPrompt(

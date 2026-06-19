@@ -627,6 +627,7 @@ function normalizeV2(raw: Record<string, unknown>): CharacterData {
     character_version: String(raw.character_version ?? ""),
     alternate_greetings: Array.isArray(raw.alternate_greetings) ? raw.alternate_greetings.map(String) : [],
     extensions: {
+      ...rawExtensions,
       talkativeness: Number(rawExtensions.talkativeness ?? 0.5),
       fav: Boolean(rawExtensions.fav),
       world: String(rawExtensions.world ?? ""),

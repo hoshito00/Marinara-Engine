@@ -37,6 +37,7 @@ import { api, ApiError } from "../../lib/api-client";
 import { getChatDisplayName, getConnectedChatDisplayName, parseChatMetadata } from "../../lib/chat-display";
 import { getChatCharacterIds } from "../../lib/chat-macros";
 import { resolveCurrentGameSessionChatId } from "../../lib/game-session-resolution";
+import { resolveSpriteExpression } from "../../lib/sprite-expression-match";
 import { parseCharacterDisplayData } from "../../lib/character-display";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { chatBackgroundMetadataToUrl, chatBackgroundUrlToMetadata } from "../../lib/backgrounds";
@@ -133,14 +134,8 @@ function getPersonaSnapshotName(extra: Record<string, unknown>): string | null {
 }
 
 function resolveExpressionAvatarSpriteUrl(sprites: SpriteInfo[] | undefined, expression: string): string | null {
-  const normalizedExpression = expression.trim().toLowerCase();
-  if (!normalizedExpression) return null;
-  const exact = (sprites ?? []).find(
-    (sprite) =>
-      !sprite.expression.toLowerCase().startsWith("full_") &&
-      sprite.expression.trim().toLowerCase() === normalizedExpression,
-  );
-  return exact?.url ?? null;
+  const expressionSprites = (sprites ?? []).filter((sprite) => !sprite.expression.toLowerCase().startsWith("full_"));
+  return resolveSpriteExpression(expressionSprites, expression)?.url ?? null;
 }
 
 const INTUITIVE_SWIPE_MIN_DISTANCE = 56;
@@ -2076,7 +2071,9 @@ export function ChatArea() {
             onCloseSettings={handleCloseSettingsPanel}
             onCloseFiles={() => setFilesOpen(false)}
             onCloseGallery={handleCloseGalleryPanel}
-            onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
+            onIllustrate={() => {
+              void retryAgents(activeChatId, ["illustrator"]);
+            }}
             onWizardFinish={() => {
               setWizardOpen(false);
               handleOpenSettingsPanel();
@@ -2273,7 +2270,9 @@ export function ChatArea() {
           onCloseSettings={handleCloseSettingsPanel}
           onCloseFiles={() => setFilesOpen(false)}
           onCloseGallery={handleCloseGalleryPanel}
-          onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
+          onIllustrate={() => {
+            void retryAgents(activeChatId, ["illustrator"]);
+          }}
           onWizardFinish={() => {
             setWizardOpen(false);
             handleOpenSettingsPanel();

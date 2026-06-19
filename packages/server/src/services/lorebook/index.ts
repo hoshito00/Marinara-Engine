@@ -72,6 +72,7 @@ type RelevantLorebook = Pick<
   | "enabled"
   | "scanDepth"
   | "tokenBudget"
+  | "entryLimit"
   | "recursiveScanning"
   | "maxRecursionDepth"
   | "isGlobal"
@@ -380,6 +381,7 @@ type LorebookBudgetSelectionState = {
   selected: ActivatedEntry[];
   selectedIds: Set<string>;
   perLorebookTokens: Map<string, number>;
+  perLorebookEntryCounts: Map<string, number>;
   totalTokens: number;
 };
 
@@ -398,6 +400,7 @@ function createLorebookBudgetSelectionState(): LorebookBudgetSelectionState {
     selected: [],
     selectedIds: new Set(),
     perLorebookTokens: new Map(),
+    perLorebookEntryCounts: new Map(),
     totalTokens: 0,
   };
 }
@@ -407,6 +410,7 @@ function cloneLorebookBudgetSelectionState(state: LorebookBudgetSelectionState):
     selected: [...state.selected],
     selectedIds: new Set(state.selectedIds),
     perLorebookTokens: new Map(state.perLorebookTokens),
+    perLorebookEntryCounts: new Map(state.perLorebookEntryCounts),
     totalTokens: state.totalTokens,
   };
 }
@@ -467,19 +471,34 @@ function getBudgetSkipReason(exceedsLorebookBudget: boolean, exceedsGlobalBudget
   return "chat";
 }
 
+function normalizeLorebookEntryLimit(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT;
+  return Math.max(
+    LIMITS.LOREBOOK_ENTRY_LIMIT_MIN,
+    Math.min(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX, Math.trunc(parsed)),
+  );
+}
+
 function trySelectBudgetedLorebookEntry(
   candidate: ActivatedEntry,
   state: LorebookBudgetSelectionState,
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
 ): BudgetedLorebookEntrySelection {
   if (state.selectedIds.has(candidate.entry.id)) return { selected: false };
   if (maxEntries > 0 && state.selected.length >= maxEntries) return { selected: false };
 
+  const lorebookId = candidate.entry.lorebookId;
+  const lorebook = lorebooksById.get(lorebookId);
+  const lorebookEntryLimit = normalizeLorebookEntryLimit(lorebook?.entryLimit);
+  const lorebookEntryCount = state.perLorebookEntryCounts.get(lorebookId) ?? 0;
+  if (lorebookEntryCount >= lorebookEntryLimit) return { selected: false };
+
   const entryTokens = estimateLorebookTokens(candidate.entry.content);
-  const lorebookBudget = lorebooksById.get(candidate.entry.lorebookId)?.tokenBudget ?? 0;
-  const lorebookTokens = state.perLorebookTokens.get(candidate.entry.lorebookId) ?? 0;
+  const lorebookBudget = lorebook?.tokenBudget ?? 0;
+  const lorebookTokens = state.perLorebookTokens.get(lorebookId) ?? 0;
   const exceedsLorebookBudget = lorebookBudget > 0 && lorebookTokens + entryTokens > lorebookBudget;
   const exceedsGlobalBudget = tokenBudget > 0 && state.totalTokens + entryTokens > tokenBudget;
 
@@ -500,7 +519,8 @@ function trySelectBudgetedLorebookEntry(
 
   state.selected.push(candidate);
   state.selectedIds.add(candidate.entry.id);
-  state.perLorebookTokens.set(candidate.entry.lorebookId, lorebookTokens + entryTokens);
+  state.perLorebookTokens.set(lorebookId, lorebookTokens + entryTokens);
+  state.perLorebookEntryCounts.set(lorebookId, lorebookEntryCount + 1);
   state.totalTokens += entryTokens;
 
   return { selected: true, entry: candidate };
@@ -538,7 +558,7 @@ function toBudgetSkippedEntries(
 function selectBudgetedLorebookEntryBatch(
   candidates: ActivatedEntry[],
   baseState: LorebookBudgetSelectionState,
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
   resolveContent?: LorebookFinalContentResolver,
@@ -632,7 +652,7 @@ function selectBudgetedLorebookEntryBatch(
 
 export function resolveAndBudgetActivatedLorebookEntriesWithDiagnostics(
   activatedEntries: ActivatedEntry[],
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
   resolveContent?: LorebookFinalContentResolver,
@@ -656,7 +676,7 @@ export function resolveAndBudgetActivatedLorebookEntriesWithDiagnostics(
 
 export function resolveAndBudgetActivatedLorebookEntries(
   activatedEntries: ActivatedEntry[],
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
   resolveContent?: LorebookFinalContentResolver,
@@ -675,7 +695,7 @@ export function resolveBudgetAndRecursivelyActivateLorebookEntriesWithDiagnostic
   entries: LorebookEntry[],
   options: ScanOptions,
   maxDepth: number,
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
   resolveContent?: LorebookFinalContentResolver,
@@ -731,7 +751,7 @@ export function resolveBudgetAndRecursivelyActivateLorebookEntries(
   entries: LorebookEntry[],
   options: ScanOptions,
   maxDepth: number,
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
   resolveContent?: LorebookFinalContentResolver,
@@ -898,14 +918,14 @@ export async function processLorebooks(
         maxRecursionDepth,
         relevantLorebooksById,
         tokenBudget,
-        LIMITS.MAX_LOREBOOK_ENTRIES,
+        0,
         options?.resolveContent,
       )
     : resolveAndBudgetActivatedLorebookEntriesWithDiagnostics(
         scanForActivatedEntries(messages, allEntries, scanOpts),
         relevantLorebooksById,
         tokenBudget,
-        LIMITS.MAX_LOREBOOK_ENTRIES,
+        0,
         options?.resolveContent,
       );
   const finalActivated = budgetResult.selected;

@@ -54,8 +54,14 @@ export const MAX_FILE_SIZES = {
 export const LIMITS = {
   /** Max messages to include in context for agents */
   AGENT_CONTEXT_MESSAGES: 20,
-  /** Max lorebook entries that can be injected */
+  /** Legacy default for the previous global lorebook entry cap. Prefer LOREBOOK_ENTRY_LIMIT_* for new code. */
   MAX_LOREBOOK_ENTRIES: 100,
+  /** Default max active entries a single lorebook may contribute per generation. */
+  LOREBOOK_ENTRY_LIMIT_DEFAULT: 100,
+  /** Minimum configurable active-entry limit for a lorebook. */
+  LOREBOOK_ENTRY_LIMIT_MIN: 1,
+  /** Maximum configurable active-entry limit for a lorebook. */
+  LOREBOOK_ENTRY_LIMIT_MAX: 1000,
   /**
    * Default keyword-scan depth (messages back) for the per-turn lorebook scan
    * when neither the entry nor its lorebook sets one. An explicit per-entry or

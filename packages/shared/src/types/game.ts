@@ -188,9 +188,9 @@ export interface GameSetupConfig {
   enableCustomWidgets?: boolean;
   /** User-defined starting HUD widgets. When present, these replace model-designed setup widgets. */
   customHudWidgets?: HudWidget[];
-  /** Enable Spotify DJ for this game and use Spotify music instead of local game music assets. */
+  /** Enable Music DJ for this game and use Spotify music instead of local game music assets. */
   enableSpotifyDj?: boolean;
-  /** Music source constraint for Spotify DJ. */
+  /** Music source constraint for Music DJ. */
   spotifySourceType?: GameSpotifySourceType;
   /** Spotify playlist ID used when spotifySourceType is "playlist". */
   spotifyPlaylistId?: string | null;

@@ -76,6 +76,7 @@ import { HelpTooltip } from "../ui/HelpTooltip";
 import { api } from "../../lib/api-client";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
+  LIMITS,
   testPrimaryKeys,
   testSecondaryKeys,
   buildFolderForest,
@@ -448,6 +449,7 @@ export function LorebookEditor() {
   const [formIsGlobal, setFormIsGlobal] = useState(false);
   const [formScanDepth, setFormScanDepth] = useState(2);
   const [formTokenBudget, setFormTokenBudget] = useState(2048);
+  const [formEntryLimit, setFormEntryLimit] = useState<number>(LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT);
   const [formRecursive, setFormRecursive] = useState(false);
   const [formMaxRecursionDepth, setFormMaxRecursionDepth] = useState(3);
   const [formExcludeFromVectorization, setFormExcludeFromVectorization] = useState(false);
@@ -521,6 +523,7 @@ export function LorebookEditor() {
     setFormIsGlobal(lorebook.isGlobal ?? false);
     setFormScanDepth(lorebook.scanDepth);
     setFormTokenBudget(lorebook.tokenBudget);
+    setFormEntryLimit(lorebook.entryLimit ?? LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT);
     setFormRecursive(lorebook.recursiveScanning);
     setFormMaxRecursionDepth(lorebook.maxRecursionDepth ?? 3);
     setFormExcludeFromVectorization(lorebook.excludeFromVectorization ?? false);
@@ -1071,6 +1074,7 @@ export function LorebookEditor() {
         isGlobal: formIsGlobal,
         scanDepth: formScanDepth,
         tokenBudget: formTokenBudget,
+        entryLimit: formEntryLimit,
         recursiveScanning: formRecursive,
         maxRecursionDepth: formMaxRecursionDepth,
         excludeFromVectorization: formExcludeFromVectorization,
@@ -1091,6 +1095,7 @@ export function LorebookEditor() {
     formIsGlobal,
     formScanDepth,
     formTokenBudget,
+    formEntryLimit,
     formRecursive,
     formMaxRecursionDepth,
     formExcludeFromVectorization,
@@ -1675,7 +1680,7 @@ export function LorebookEditor() {
                 </div>
 
                 {/* Scan settings */}
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                   <div>
                     <label className="mb-1.5 flex items-center gap-1 text-xs font-medium">
                       Scan Depth{" "}
@@ -1705,6 +1710,30 @@ export function LorebookEditor() {
                         markLorebookDirty();
                       }}
                       min={0}
+                      className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 flex items-center gap-1 text-xs font-medium">
+                      Entry Limit{" "}
+                      <HelpTooltip text="Maximum active entries this lorebook can contribute per generation. Token budgets still trim the final prompt." />
+                    </label>
+                    <input
+                      type="number"
+                      value={formEntryLimit}
+                      onChange={(e) => {
+                        const next = Math.max(
+                          LIMITS.LOREBOOK_ENTRY_LIMIT_MIN,
+                          Math.min(
+                            LIMITS.LOREBOOK_ENTRY_LIMIT_MAX,
+                            parseInt(e.target.value) || LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT,
+                          ),
+                        );
+                        setFormEntryLimit(next);
+                        markLorebookDirty();
+                      }}
+                      min={LIMITS.LOREBOOK_ENTRY_LIMIT_MIN}
+                      max={LIMITS.LOREBOOK_ENTRY_LIMIT_MAX}
                       className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                     />
                   </div>

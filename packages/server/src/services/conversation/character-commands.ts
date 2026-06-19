@@ -258,6 +258,8 @@ export interface CreatePresetChoiceBlockCommand {
   multiSelect?: boolean;
   separator?: string;
   randomPick?: boolean;
+  displayMode?: "auto" | "buttons" | "listbox";
+  optionSort?: "manual" | "alphabetical";
 }
 
 export interface CreatePresetCommand {
@@ -686,6 +688,12 @@ function parseCreatePresetBlock(raw: string): CreatePresetCommand | null {
           multiSelect: typeof data.multiSelect === "boolean" ? data.multiSelect : undefined,
           separator: typeof data.separator === "string" ? data.separator : undefined,
           randomPick: typeof data.randomPick === "boolean" ? data.randomPick : undefined,
+          displayMode:
+            data.displayMode === "auto" || data.displayMode === "buttons" || data.displayMode === "listbox"
+              ? data.displayMode
+              : undefined,
+          optionSort:
+            data.optionSort === "manual" || data.optionSort === "alphabetical" ? data.optionSort : undefined,
         };
       })
       .filter((choiceBlock): choiceBlock is CreatePresetChoiceBlockCommand => choiceBlock !== null);

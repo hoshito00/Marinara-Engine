@@ -30,6 +30,7 @@ import {
   type ToolCall,
 } from "@earendil-works/pi-ai";
 import type {
+  BaseLLMProvider,
   ChatCompletionResult,
   ChatMessage,
   ChatOptions,
@@ -38,6 +39,7 @@ import type {
   LLMUsage,
 } from "../llm/base-provider.js";
 import { createLLMProvider } from "../llm/provider-registry.js";
+import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../llm/local-sidecar.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import {
   resolveBaseUrl,
@@ -49,7 +51,13 @@ import { apiConnections } from "../../db/schema/index.js";
 import { decryptApiKey } from "../../utils/crypto.js";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { logger } from "../../lib/logger.js";
-import { findKnownModel, MODEL_LISTS, PROFESSOR_MARI_ID, type APIProvider } from "@marinara-engine/shared";
+import {
+  findKnownModel,
+  LOCAL_SIDECAR_CONNECTION_ID,
+  MODEL_LISTS,
+  PROFESSOR_MARI_ID,
+  type APIProvider,
+} from "@marinara-engine/shared";
 import type {
   MariWorkspaceConnectionSummary,
   MariWorkspacePromptEvent,
@@ -59,8 +67,24 @@ import type {
 } from "@marinara-engine/shared";
 import { getMariDbService } from "../mari-db/mari-db.service.js";
 import { getProfessorMariWorkspaceSkillsService } from "./workspace-skills.service.js";
+import { sidecarModelService } from "../sidecar/sidecar-model.service.js";
 
-type ConnectionWithKey = typeof apiConnections.$inferSelect & { apiKey: string };
+type DbConnectionWithKey = typeof apiConnections.$inferSelect & { apiKey: string };
+type WorkspaceConnection = Pick<
+  DbConnectionWithKey,
+  | "id"
+  | "name"
+  | "model"
+  | "baseUrl"
+  | "apiKey"
+  | "maxContext"
+  | "maxTokensOverride"
+  | "defaultParameters"
+  | "openrouterProvider"
+  | "claudeFastMode"
+  | "enableCaching"
+  | "cachingAtDepth"
+> & { provider: string; isLocalSidecar?: boolean };
 type PromptEventSink = (event: MariWorkspacePromptEvent) => void;
 
 const WORKSPACE_TOOLS: MariWorkspaceToolName[] = ["read", "grep", "find", "ls", "edit", "write", "bash"];
@@ -69,28 +93,41 @@ const MARINARA_MODEL = "current-connection";
 const MARINARA_API = "marinara-chat";
 const RUNTIME_API_KEY = "local-marinara-runtime";
 const SESSION_ID = "professor-mari-workspace";
-const NATIVE_TOOL_PROVIDERS = new Set([
-  "openai",
-  "openrouter",
-  "nanogpt",
-  "xai",
-  "mistral",
-  "custom",
-  "cohere",
-  "anthropic",
-  "google",
-  "google_vertex",
-]);
-const JSON_RESPONSE_FORMAT_PROVIDERS = new Set([
-  "openai",
-  "openrouter",
-  "nanogpt",
-  "xai",
-  "mistral",
-  "cohere",
-  "google",
-  "google_vertex",
-]);
+const JSON_RESPONSE_FORMAT_PROVIDERS = new Set(["custom", "local_sidecar"]);
+
+function isPrivateOrLoopbackHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (
+    host === "localhost" ||
+    host === "host.docker.internal" ||
+    host === "host.containers.internal" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    (!host.includes(".") && !host.includes(":"))
+  ) {
+    return true;
+  }
+  if (host === "::" || host === "::1" || host === "0:0:0:0:0:0:0:0" || host === "0:0:0:0:0:0:0:1") return true;
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const a = Number.parseInt(ipv4[1] ?? "", 10);
+    const b = Number.parseInt(ipv4[2] ?? "", 10);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+  }
+  return host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80");
+}
+
+function isProbablyLocalEndpoint(baseUrl: string | null | undefined): boolean {
+  if (!baseUrl) return false;
+  try {
+    return isPrivateOrLoopbackHostname(new URL(baseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
 
 function getPathEnvKey(env: NodeJS.ProcessEnv) {
   return Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
@@ -398,11 +435,30 @@ function convertTools(context: Context): LLMToolDefinition[] | undefined {
 
 type JsonToolProtocolResult = { kind: "final"; content: string } | { kind: "tool_calls"; calls: LLMToolCall[] };
 
-function providerSupportsNativeTools(connection: ConnectionWithKey, tools?: LLMToolDefinition[]): boolean {
-  return !!tools?.length && NATIVE_TOOL_PROVIDERS.has(connection.provider);
+function isLocalSidecarConnection(connection: WorkspaceConnection): boolean {
+  return connection.isLocalSidecar === true || connection.id === LOCAL_SIDECAR_CONNECTION_ID;
 }
 
-function providerSupportsJsonResponseFormat(connection: ConnectionWithKey): boolean {
+function isLocalCustomOpenAIConnection(connection: WorkspaceConnection): boolean {
+  return connection.provider === "custom" && isProbablyLocalEndpoint(connection.baseUrl);
+}
+
+function shouldUseGuardedNativeToolAttempt(connection: WorkspaceConnection): boolean {
+  return isLocalSidecarConnection(connection) || isLocalCustomOpenAIConnection(connection);
+}
+
+function canFallbackToJsonToolProtocol(connection: WorkspaceConnection): boolean {
+  return shouldUseGuardedNativeToolAttempt(connection);
+}
+
+function providerSupportsNativeTools(_connection: WorkspaceConnection, tools?: LLMToolDefinition[]): boolean {
+  // Always attempt provider-native tool calls first. Hosted connections never use
+  // the JSON prompt fallback; local sidecar/custom endpoints may fall back only
+  // after native tools fail or fake a tool call in text.
+  return !!tools?.length;
+}
+
+function providerSupportsJsonResponseFormat(connection: WorkspaceConnection): boolean {
   return JSON_RESPONSE_FORMAT_PROVIDERS.has(connection.provider);
 }
 
@@ -511,6 +567,73 @@ function parseToolArgumentsValue(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function parseTaggedParameterValue(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const parsed = parseJsonish(trimmed);
+  return parsed ?? trimmed;
+}
+
+function toolCallFromTaggedBlock(block: string, allowedTools: Set<string>, index: number): LLMToolCall | null {
+  const parsed = parseJsonish(block);
+  if (parsed !== null) {
+    if (Array.isArray(parsed)) {
+      for (const [itemIndex, item] of parsed.entries()) {
+        const parsedCall = toolCallFromJsonCall(item, allowedTools, index + itemIndex);
+        if (parsedCall) return parsedCall;
+      }
+    } else {
+      const parsedCall = toolCallFromJsonCall(parsed, allowedTools, index);
+      if (parsedCall) return parsedCall;
+    }
+  }
+
+  const functionMatch = block.match(/<function=([a-zA-Z0-9_-]+)>\s*([\s\S]*?)(?:<\/function>|$)/i);
+  if (!functionMatch) return null;
+  const name = functionMatch[1] ?? "";
+  if (!allowedTools.has(name)) return null;
+  const body = functionMatch[2] ?? "";
+  const args: Record<string, unknown> = {};
+  const paramRegex = /<parameter=([^>]+)>\s*([\s\S]*?)\s*<\/parameter>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = paramRegex.exec(body)) !== null) {
+    const key = (match[1] ?? "").trim();
+    if (!key) continue;
+    args[key] = parseTaggedParameterValue(match[2] ?? "");
+  }
+  return {
+    id: `tagged_tool_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 7)}`,
+    type: "function",
+    function: { name, arguments: JSON.stringify(args) },
+  };
+}
+
+function parseTaggedToolCalls(raw: string, allowedTools: Set<string>): LLMToolCall[] {
+  const calls: LLMToolCall[] = [];
+  const blockPatterns = [/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi, /<tool_calls>\s*([\s\S]*?)\s*<\/tool_calls>/gi];
+  for (const pattern of blockPatterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(raw)) !== null) {
+      const block = match[1] ?? "";
+      const parsed = parseJsonish(block);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          const call = toolCallFromJsonCall(item, allowedTools, calls.length);
+          if (call) calls.push(call);
+        }
+        continue;
+      }
+      const call = toolCallFromTaggedBlock(block, allowedTools, calls.length);
+      if (call) calls.push(call);
+    }
+  }
+  return calls;
+}
+
+function looksLikeToolProtocolText(raw: string): boolean {
+  return /<\/?tool_calls?>|"tool_calls"|"type"\s*:\s*"tool_calls"|<function=/i.test(raw);
+}
+
 function toolCallFromJsonCall(value: unknown, allowedTools: Set<string>, index: number): LLMToolCall | null {
   if (!isRecord(value)) return null;
   const functionRecord = isRecord(value.function) ? value.function : null;
@@ -527,10 +650,38 @@ function toolCallFromJsonCall(value: unknown, allowedTools: Set<string>, index: 
   };
 }
 
+function parseLineToolProtocol(raw: string, allowedTools: Set<string>): JsonToolProtocolResult | null {
+  const toolLine = raw.match(/(?:^|\n)\s*TOOL_CALL\s+([a-zA-Z0-9_-]+)\s+([\s\S]*?)\s*$/i);
+  if (toolLine) {
+    const name = toolLine[1] ?? "";
+    if (allowedTools.has(name)) {
+      return {
+        kind: "tool_calls",
+        calls: [
+          {
+            id: `line_tool_${Date.now()}_0_${Math.random().toString(36).slice(2, 7)}`,
+            type: "function",
+            function: { name, arguments: JSON.stringify(parseToolArgumentsValue(toolLine[2] ?? "{}")) },
+          },
+        ],
+      };
+    }
+  }
+
+  const finalLine = raw.match(/(?:^|\n)\s*FINAL\s+([\s\S]+)$/i);
+  if (finalLine?.[1]?.trim()) return { kind: "final", content: finalLine[1].trim() };
+  return null;
+}
+
 function parseJsonToolProtocol(raw: string, tools: LLMToolDefinition[]): JsonToolProtocolResult | null {
+  const allowedTools = new Set(tools.map((tool) => tool.function.name));
+  const lineProtocol = parseLineToolProtocol(raw, allowedTools);
+  if (lineProtocol) return lineProtocol;
+  const taggedCalls = parseTaggedToolCalls(raw, allowedTools);
+  if (taggedCalls.length > 0) return { kind: "tool_calls", calls: taggedCalls };
+
   const parsed = parseJsonish(raw);
   if (parsed === null) return null;
-  const allowedTools = new Set(tools.map((tool) => tool.function.name));
   const normalizeCalls = (items: unknown[]) =>
     items
       .map((item, index) => toolCallFromJsonCall(item, allowedTools, index))
@@ -558,6 +709,44 @@ function parseJsonToolProtocol(raw: string, tools: LLMToolDefinition[]): JsonToo
   if (singleCall) return { kind: "tool_calls", calls: [singleCall] };
   if (typeof content === "string") return { kind: "final", content };
   return null;
+}
+
+function normalizeTextToolProtocolResult(
+  result: ChatCompletionResult,
+  tools: LLMToolDefinition[],
+): ChatCompletionResult | null {
+  const raw = result.content?.trim();
+  if (!raw) return null;
+  const parsed = parseJsonToolProtocol(raw, tools);
+  if (parsed?.kind === "final") return { ...result, content: parsed.content, toolCalls: [] };
+  if (parsed?.kind === "tool_calls") {
+    return { ...result, content: null, toolCalls: parsed.calls, finishReason: "tool_calls" };
+  }
+  return null;
+}
+
+function contentClaimsUnexecutedToolUse(content: string | null | undefined): boolean {
+  const text = content?.trim();
+  if (!text) return false;
+  return /\b(?:i(?:'ve| have| just)?\s+(?:asked|requested|called|used|ran|listed|checked|looked|searched|created|added|updated|saved|read|inspected)|asked the system|waiting for (?:the )?(?:data|result|tool)|hang tight|once i see|tool result)\b/i.test(
+    text,
+  );
+}
+
+function latestUserLikelyNeedsTools(messages: ChatMessage[]): boolean {
+  const request = getLatestUserContent(messages);
+  if (!request) return false;
+  const action = /\b(add|create|make|save|insert|update|edit|delete|remove|rename|import|export|list|show|search|find|check|look up|inspect|read|open|change|fix|install|run)\b/i.test(
+    request,
+  );
+  const target = /\b(character|characters|persona|personas|lorebook|lorebooks|chat|chats|preset|presets|theme|themes|file|files|folder|folders|connection|connections|database|db|workspace|storage|list)\b/i.test(
+    request,
+  );
+  return action && (target || /\bmy\b/i.test(request));
+}
+
+function shouldFallbackFromNativeText(messages: ChatMessage[], content: string | null | undefined): boolean {
+  return contentClaimsUnexecutedToolUse(content) || latestUserLikelyNeedsTools(messages);
 }
 
 function flattenToolHistoryForJsonFallback(messages: ChatMessage[]): ChatMessage[] {
@@ -599,21 +788,131 @@ function buildJsonToolFallbackPrompt(tools: LLMToolDefinition[]): string {
     parameters: tool.function.parameters,
   }));
   return [
-    "Native function/tool calling is unavailable for this connection. Use this JSON tool protocol instead.",
-    "Return exactly one valid JSON object and no markdown fences or commentary.",
-    'If you need a tool, return: {"type":"tool_calls","calls":[{"name":"tool_name","arguments":{...}}]}',
+    "Native function/tool calling is unavailable for this connection. Use this private JSON tool protocol instead.",
+    "Your entire assistant response MUST be exactly one valid JSON object. No markdown fences, no XML tags, no prose before/after JSON.",
+    'If you need a tool, return: {"type":"tool_calls","calls":[{"name":"tool_name","arguments":{}}]}',
     'If you are ready to answer the user, return: {"type":"final","content":"your answer"}',
+    "Do not print shell commands, tool-call tags, or explanations when you intend to use a tool. Put the tool request in JSON so the application can execute it privately.",
+    "Never say you asked the system, listed data, checked files, created something, or are waiting for a tool result unless your current response is a tool_calls object.",
+    "For requests to add, create, update, delete, inspect, list, search, or change Marinara data/files, use tool_calls first. Do not return final until after tool results are provided.",
+    'Emergency fallback for weak local models only: if you cannot obey JSON, output exactly one line: TOOL_CALL tool_name {"arg":"value"} or FINAL your answer.',
     "You may request any listed tool, including bash, edit, and write. The application will validate and apply its usual safety checks.",
     "Only use tool names from this manifest:",
     JSON.stringify(manifest, null, 2),
   ].join("\n");
 }
 
-function buildJsonToolFallbackMessages(messages: ChatMessage[], tools: LLMToolDefinition[]): ChatMessage[] {
+function buildJsonToolFallbackSchema(tools: LLMToolDefinition[]): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["tool_calls", "final"] },
+      content: { type: "string" },
+      calls: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string" },
+            name: { type: "string", enum: tools.map((tool) => tool.function.name) },
+            arguments: { type: "object" },
+          },
+          required: ["name", "arguments"],
+        },
+      },
+    },
+    required: ["type"],
+  };
+}
+
+function buildJsonToolFallbackResponseFormats(
+  connection: WorkspaceConnection,
+  tools: LLMToolDefinition[],
+): Array<ChatOptions["responseFormat"] | undefined> {
+  if (!providerSupportsJsonResponseFormat(connection)) return [undefined];
+  if (isLocalSidecarConnection(connection)) {
+    return [{ type: "json_schema", schema: buildJsonToolFallbackSchema(tools) }, { type: "json_object" }, undefined];
+  }
+  return [{ type: "json_object" }, undefined];
+}
+
+function getLatestUserContent(messages: ChatMessage[]): string {
+  for (const message of [...messages].reverse()) {
+    if (message.role === "user" && message.content.trim()) return message.content.trim();
+  }
+  return "";
+}
+
+function buildJsonToolFallbackMessages(
+  messages: ChatMessage[],
+  tools: LLMToolDefinition[],
+  retryInstruction?: string,
+): ChatMessage[] {
+  const protocolPrompt = buildJsonToolFallbackPrompt(tools);
+  const flattened = flattenToolHistoryForJsonFallback(messages);
+  const systemContent = flattened
+    .filter((message) => message.role === "system" && message.content.trim())
+    .map((message) => message.content.trim())
+    .join("\n\n");
+  const nonSystemMessages = flattened.filter((message) => message.role !== "system");
   return [
-    ...flattenToolHistoryForJsonFallback(messages),
-    { role: "system", content: buildJsonToolFallbackPrompt(tools), contextKind: "prompt" },
+    {
+      role: "system",
+      content: [
+        protocolPrompt,
+        systemContent ? `Original assistant instructions still apply inside final.content only:\n${systemContent}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+      contextKind: "prompt",
+    },
+    ...nonSystemMessages,
+    {
+      role: "user",
+      content:
+        retryInstruction ??
+        "Return the next assistant action for the user's latest request using exactly the JSON protocol above. Do not include anything outside the JSON object.",
+      contextKind: "prompt",
+    },
   ];
+}
+
+function buildJsonToolRepairMessages(
+  messages: ChatMessage[],
+  tools: LLMToolDefinition[],
+  invalidResponse: string,
+): ChatMessage[] {
+  const latestUser = getLatestUserContent(messages);
+  return [
+    {
+      role: "system",
+      content: buildJsonToolFallbackPrompt(tools),
+      contextKind: "prompt",
+    },
+    {
+      role: "user",
+      content: [
+        "The previous assistant response was invalid because it wrote normal prose instead of the private tool protocol.",
+        latestUser ? `Latest user request:\n${latestUser}` : "",
+        "Previous invalid response:",
+        invalidResponse.slice(0, 4000),
+        "Convert that intended next action into exactly one valid JSON object now.",
+        "If the response claims it asked/listed/checked/read/created/updated anything, it did NOT happen. Return a tool_calls object for the needed tool now.",
+        'For character/database inspection, a valid first step is: {"type":"tool_calls","calls":[{"name":"bash","arguments":{"command":"mari db list characters --limit 50 --parsed"}}]}',
+        'For a final answer only when no tool is needed, use: {"type":"final","content":"..."}',
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+      contextKind: "prompt",
+    },
+  ];
+}
+
+function requiresStrictToolProtocol(connection: WorkspaceConnection): boolean {
+  return canFallbackToJsonToolProtocol(connection);
 }
 
 function emptyUsage(): AssistantMessage["usage"] {
@@ -644,10 +943,11 @@ function normalizeCatalogProvider(provider: string): APIProvider | null {
   return normalized in MODEL_LISTS ? (normalized as APIProvider) : null;
 }
 
-function resolveMariMaxOutputTokens(connection: ConnectionWithKey) {
+function resolveMariMaxOutputTokens(connection: WorkspaceConnection) {
   if (connection.maxTokensOverride && connection.maxTokensOverride > 0) {
     return Math.floor(connection.maxTokensOverride);
   }
+  if (isLocalSidecarConnection(connection)) return sidecarModelService.getConfig().maxTokens;
   const provider = normalizeCatalogProvider(connection.provider);
   const knownModel = provider ? findKnownModel(provider, connection.model.trim()) : undefined;
   if (knownModel?.maxOutput && knownModel.maxOutput > 0) return Math.floor(knownModel.maxOutput);
@@ -659,7 +959,7 @@ function isLengthFinishReason(reason: string | undefined | null) {
   return normalized === "length" || normalized === "max_tokens" || normalized === "max_output_tokens";
 }
 
-function createPiModel(connection: ConnectionWithKey): Model<string> {
+function createPiModel(connection: WorkspaceConnection): Model<string> {
   const maxContext =
     Number.isFinite(connection.maxContext) && connection.maxContext > 0 ? connection.maxContext : 128000;
   const maxTokens = resolveMariMaxOutputTokens(connection);
@@ -677,7 +977,7 @@ function createPiModel(connection: ConnectionWithKey): Model<string> {
   };
 }
 
-function connectionSummary(connection: ConnectionWithKey | null): MariWorkspaceConnectionSummary | null {
+function connectionSummary(connection: WorkspaceConnection | null): MariWorkspaceConnectionSummary | null {
   if (!connection) return null;
   return {
     id: connection.id,
@@ -685,6 +985,30 @@ function connectionSummary(connection: ConnectionWithKey | null): MariWorkspaceC
     provider: connection.provider,
     model: connection.model,
   };
+}
+
+function createProviderForConnection(connection: WorkspaceConnection): BaseLLMProvider {
+  if (isLocalSidecarConnection(connection)) return getLocalSidecarProvider();
+  return createLLMProvider(
+    connection.provider,
+    resolveBaseUrl(connection),
+    connection.apiKey,
+    connection.maxContext,
+    connection.openrouterProvider,
+    connection.maxTokensOverride,
+    bool(connection.claudeFastMode),
+  );
+}
+
+function connectionSessionKey(connection: WorkspaceConnection): string {
+  if (!isLocalSidecarConnection(connection)) return connection.id;
+  return [
+    connection.id,
+    sidecarModelService.getConfiguredModelRef() ?? "none",
+    sidecarModelService.getResolvedBackend(),
+    sidecarModelService.getConfig().contextSize,
+    sidecarModelService.getConfig().maxTokens,
+  ].join(":");
 }
 
 export class ProfessorMariWorkspaceService {
@@ -915,8 +1239,9 @@ export class ProfessorMariWorkspaceService {
     this.sessionConnectionId = null;
   }
 
-  private async ensureSession(connection: ConnectionWithKey): Promise<AgentSession> {
-    if (this.session && this.sessionConnectionId === connection.id) return this.session;
+  private async ensureSession(connection: WorkspaceConnection): Promise<AgentSession> {
+    const sessionKey = connectionSessionKey(connection);
+    if (this.session && this.sessionConnectionId === sessionKey) return this.session;
     await this.disposeSession();
     const mariCliBinDir = await this.ensureMariCliShim();
 
@@ -989,7 +1314,7 @@ export class ProfessorMariWorkspaceService {
       settingsManager,
     });
     this.session = result.session;
-    this.sessionConnectionId = connection.id;
+    this.sessionConnectionId = sessionKey;
     this.lastError = result.modelFallbackMessage ?? null;
     return result.session;
   }
@@ -1015,15 +1340,7 @@ export class ProfessorMariWorkspaceService {
       try {
         if (!connection) throw new Error("No Marinara language connection available.");
         stream.push({ type: "start", partial: output });
-        const provider = createLLMProvider(
-          connection.provider,
-          resolveBaseUrl(connection),
-          connection.apiKey,
-          connection.maxContext,
-          connection.openrouterProvider,
-          connection.maxTokensOverride,
-          bool(connection.claudeFastMode),
-        );
+        const provider = createProviderForConnection(connection);
         const defaultParameters = parseJsonObject(connection.defaultParameters);
         const messages = convertMessages(context);
         const tools = convertTools(context);
@@ -1099,54 +1416,124 @@ export class ProfessorMariWorkspaceService {
           signal: options?.signal,
           onThinking: pushThinkingDelta,
         };
-        const runJsonToolFallback = async (): Promise<ChatCompletionResult> => {
+        const runJsonToolFallback = async (invalidNativeResponse?: string | null): Promise<ChatCompletionResult> => {
+          if (!canFallbackToJsonToolProtocol(connection)) {
+            throw new Error("JSON tool fallback is disabled for hosted Professor Mari connections.");
+          }
           if (!tools?.length) {
             return provider.chatComplete(messages, { ...baseOptions, stream: true, onToken: pushTextDelta });
           }
-          const fallbackMessages = buildJsonToolFallbackMessages(messages, tools);
-          const useResponseFormat = providerSupportsJsonResponseFormat(connection);
-          const callFallback = (responseFormat: ChatOptions["responseFormat"] | undefined) =>
+          const responseFormats = buildJsonToolFallbackResponseFormats(connection, tools);
+          const structuredCustomParameters = isLocalSidecarConnection(connection)
+            ? mergeCustomParameters(baseOptions.customParameters, {
+                reasoning_format: "none",
+                chat_template_kwargs: { enable_thinking: false },
+              })
+            : baseOptions.customParameters;
+          const callFallback = (
+            fallbackMessages: ChatMessage[],
+            responseFormat: ChatOptions["responseFormat"] | undefined,
+          ) =>
             provider.chatComplete(fallbackMessages, {
               ...baseOptions,
+              maxTokens: Math.min(resolveMariMaxOutputTokens(connection), 2048),
+              temperature: 0,
+              topP: 1,
+              topK: 0,
               stream: false,
               responseFormat,
+              customParameters: structuredCustomParameters,
             });
-          let fallbackResult: ChatCompletionResult;
-          try {
-            fallbackResult = await callFallback(useResponseFormat ? { type: "json_object" } : undefined);
-          } catch (err) {
-            if (!useResponseFormat || !isResponseFormatUnsupportedError(err)) throw err;
-            fallbackResult = await callFallback(undefined);
+          const runAttempt = async (fallbackMessages: ChatMessage[]): Promise<ChatCompletionResult> => {
+            let fallbackResult: ChatCompletionResult | null = null;
+            let lastResponseFormatError: unknown = null;
+            for (const responseFormat of responseFormats) {
+              try {
+                fallbackResult = await callFallback(fallbackMessages, responseFormat);
+                break;
+              } catch (err) {
+                if (!responseFormat || !isResponseFormatUnsupportedError(err)) throw err;
+                lastResponseFormatError = err;
+              }
+            }
+            if (!fallbackResult) {
+              if (lastResponseFormatError) throw lastResponseFormatError;
+              fallbackResult = await callFallback(fallbackMessages, undefined);
+            }
+            return fallbackResult;
+          };
+          const parseFallbackResult = (fallbackResult: ChatCompletionResult): ChatCompletionResult | null => {
+            const raw = fallbackResult.content?.trim() ?? "";
+            const parsed = raw ? parseJsonToolProtocol(raw, tools) : null;
+            if (parsed?.kind === "final") return { ...fallbackResult, content: parsed.content, toolCalls: [] };
+            if (parsed?.kind === "tool_calls") {
+              return { ...fallbackResult, content: null, toolCalls: parsed.calls, finishReason: "tool_calls" };
+            }
+            return null;
+          };
+
+          const firstMessages = invalidNativeResponse?.trim()
+            ? buildJsonToolRepairMessages(messages, tools, invalidNativeResponse)
+            : buildJsonToolFallbackMessages(messages, tools);
+          const firstResult = await runAttempt(firstMessages);
+          const parsedFirst = parseFallbackResult(firstResult);
+          if (parsedFirst) return parsedFirst;
+
+          const raw = firstResult.content?.trim() ?? "";
+          if (raw) {
+            const retryResult = await runAttempt(buildJsonToolRepairMessages(messages, tools, raw));
+            const parsedRetry = parseFallbackResult(retryResult);
+            if (parsedRetry) return parsedRetry;
           }
-          const raw = fallbackResult.content?.trim() ?? "";
-          const parsed = raw ? parseJsonToolProtocol(raw, tools) : null;
-          if (parsed?.kind === "final") return { ...fallbackResult, content: parsed.content, toolCalls: [] };
-          if (parsed?.kind === "tool_calls") {
-            return { ...fallbackResult, content: null, toolCalls: parsed.calls, finishReason: "tool_calls" };
+
+          if (requiresStrictToolProtocol(connection) || (raw && looksLikeToolProtocolText(raw))) {
+            logger.warn(
+              "[Professor Mari] Model did not return a valid tool protocol for provider=%s model=%s",
+              connection.provider,
+              connection.model,
+            );
+            return {
+              ...firstResult,
+              content:
+                "The local model answered in normal prose instead of returning a private tool request, so I could not actually run the workspace step. Try again, or use a model/runtime with stronger JSON or tool-call support.",
+              toolCalls: [],
+              finishReason: "stop",
+            };
           }
-          return fallbackResult;
+          return firstResult;
         };
 
         let result: ChatCompletionResult;
         if (providerSupportsNativeTools(connection, tools)) {
+          const allowJsonFallback = canFallbackToJsonToolProtocol(connection);
           try {
-            result = await provider.chatComplete(messages, {
-              ...baseOptions,
-              stream: true,
-              tools,
-              onToken: pushTextDelta,
-            });
+            if (shouldUseGuardedNativeToolAttempt(connection)) {
+              const nativeResult = await provider.chatComplete(messages, {
+                ...baseOptions,
+                stream: false,
+                tools,
+              });
+              result = normalizeTextToolProtocolResult(nativeResult, tools ?? []) ?? nativeResult;
+              if (allowJsonFallback && !result.toolCalls.length && shouldFallbackFromNativeText(messages, result.content)) {
+                result = await runJsonToolFallback(result.content);
+              }
+            } else {
+              result = await provider.chatComplete(messages, {
+                ...baseOptions,
+                stream: true,
+                tools,
+                onToken: pushTextDelta,
+              });
+            }
           } catch (err) {
-            if (!tools?.length || sawTextDelta || !isNativeToolUnsupportedError(err)) throw err;
+            if (!tools?.length || sawTextDelta || !isNativeToolUnsupportedError(err) || !allowJsonFallback) throw err;
             logger.info(
-              "[Professor Mari] Native tools unavailable for provider=%s model=%s; falling back to JSON tool protocol",
+              "[Professor Mari] Native tools unavailable for local provider=%s model=%s; falling back to JSON tool protocol",
               connection.provider,
               connection.model,
             );
             result = await runJsonToolFallback();
           }
-        } else if (tools?.length) {
-          result = await runJsonToolFallback();
         } else {
           result = await provider.chatComplete(messages, { ...baseOptions, stream: true, onToken: pushTextDelta });
         }
@@ -1199,7 +1586,32 @@ export class ProfessorMariWorkspaceService {
     return undefined;
   }
 
-  private async resolveConnection(connectionId?: string | null): Promise<ConnectionWithKey | null> {
+  private buildLocalSidecarConnection(): WorkspaceConnection {
+    const config = sidecarModelService.getConfig();
+    const status = sidecarModelService.getStatus();
+    return {
+      id: LOCAL_SIDECAR_CONNECTION_ID,
+      name: "Local Model (sidecar)",
+      provider: "local_sidecar",
+      model: status.modelDisplayName ?? LOCAL_SIDECAR_MODEL,
+      baseUrl: "local-sidecar://runtime",
+      apiKey: "local-sidecar",
+      maxContext: config.contextSize,
+      maxTokensOverride: config.maxTokens,
+      defaultParameters: null,
+      openrouterProvider: null,
+      claudeFastMode: "false",
+      enableCaching: "false",
+      cachingAtDepth: 5,
+      isLocalSidecar: true,
+    };
+  }
+
+  private async resolveConnection(connectionId?: string | null): Promise<WorkspaceConnection | null> {
+    if (connectionId === LOCAL_SIDECAR_CONNECTION_ID) {
+      return this.buildLocalSidecarConnection();
+    }
+
     const rows = (await this.app.db.select().from(apiConnections)) as Array<typeof apiConnections.$inferSelect>;
     const languageRows = rows.filter((row) => row.provider !== "image_generation");
     const selected = connectionId ? languageRows.find((row) => row.id === connectionId) : null;
@@ -1209,7 +1621,9 @@ export class ProfessorMariWorkspaceService {
       languageRows.find((row) => bool(row.isDefault)) ??
       languageRows[0] ??
       null;
-    if (!fallback) return null;
+    if (!fallback) {
+      return sidecarModelService.getConfiguredModelRef() ? this.buildLocalSidecarConnection() : null;
+    }
     return { ...fallback, apiKey: decryptApiKey(fallback.apiKeyEncrypted) };
   }
 

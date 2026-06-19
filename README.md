@@ -148,7 +148,7 @@ Character expression sprites with automatic emotion switching, custom scene back
 
 ### AI Agent System
 
-25+ built-in agents that run alongside your chat — world state tracking, quest management, combat, expression detection, background selection, narrative direction, prose analysis, Spotify DJ, CYOA choices, and more. All disabled by default; enable only what you want, or create custom agents.
+25+ built-in agents that run alongside your chat — world state tracking, quest management, combat, expression detection, background selection, narrative direction, prose analysis, Music DJ, CYOA choices, and more. All disabled by default; enable only what you want, or create custom agents.
 
 ### Prompt Engineering
 

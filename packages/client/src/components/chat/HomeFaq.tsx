@@ -309,7 +309,7 @@ const HOME_FAQ_ITEMS: HomeFaqItem[] = [
   {
     id: "music-dj",
     category: "Agents",
-    question: "Where did Spotify DJ and YouTube DJ go?",
+    question: "Where did the separate Spotify and YouTube music agents go?",
     answer: "They are merged into Music DJ.",
     bullets: [
       "Configure Spotify, YouTube, or both from the Music DJ agent menu.",

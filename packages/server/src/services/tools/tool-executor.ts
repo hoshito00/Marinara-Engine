@@ -4,7 +4,11 @@
 import type { LLMToolCall } from "../llm/base-provider.js";
 import vm from "node:vm";
 import { createHash } from "node:crypto";
-import { isCustomToolScriptEnabled, isWebhookLocalUrlsEnabled } from "../../config/runtime-config.js";
+import {
+  getCustomToolTimeoutMs,
+  isCustomToolScriptEnabled,
+  isWebhookLocalUrlsEnabled,
+} from "../../config/runtime-config.js";
 import { safeFetch } from "../../utils/security.js";
 import { logger } from "../../lib/logger.js";
 import { normalizeSpotifySearchQuery } from "../spotify/spotify.service.js";
@@ -24,7 +28,10 @@ export interface CustomToolDef {
   webhookUrl: string | null;
   staticResult: string | null;
   scriptBody: string | null;
+  includeHiddenContext?: boolean;
 }
+
+export type CustomToolHiddenContext = Record<string, unknown>;
 
 /** Lorebook search function injected from the route layer. */
 export type LorebookSearchFn = (
@@ -156,6 +163,7 @@ const SPOTIFY_MOOD_EXPANSIONS: Array<[RegExp, string[]]> = [
 export interface ToolExecutionContext {
   gameState?: Record<string, unknown>;
   chatMeta?: Record<string, unknown>;
+  hiddenContext?: CustomToolHiddenContext;
   onUpdateMetadata?: (patch: MetadataPatchInput) => Promise<MetadataPatch>;
   customTools?: CustomToolDef[];
   searchLorebook?: LorebookSearchFn;
@@ -247,7 +255,7 @@ async function executeSingleTool(
     default: {
       // Try custom tools
       const custom = context?.customTools?.find((t) => t.name === name);
-      if (custom) return executeCustomTool(custom, args);
+      if (custom) return executeCustomTool(custom, args, context);
       return {
         error: `Unknown tool: ${name}`,
         available: [
@@ -276,8 +284,19 @@ async function executeSingleTool(
 
 // ── Custom Tool Execution ──
 
-async function executeCustomTool(tool: CustomToolDef, args: Record<string, unknown>): Promise<unknown> {
+function getCustomToolHiddenContext(tool: CustomToolDef, context?: ToolExecutionContext): CustomToolHiddenContext | undefined {
+  if (tool.includeHiddenContext !== true) return undefined;
+  return context?.hiddenContext ?? {};
+}
+
+async function executeCustomTool(
+  tool: CustomToolDef,
+  args: Record<string, unknown>,
+  context?: ToolExecutionContext,
+): Promise<unknown> {
   logger.info("[custom-tools] Executing %s custom tool %s", tool.executionType, tool.name);
+  const customToolTimeoutMs = getCustomToolTimeoutMs();
+  const hiddenContext = getCustomToolHiddenContext(tool, context);
   switch (tool.executionType) {
     case "static":
       return { result: tool.staticResult ?? "OK", tool: tool.name, args };
@@ -289,8 +308,12 @@ async function executeCustomTool(tool: CustomToolDef, args: Record<string, unkno
         const res = await safeFetch(tool.webhookUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tool: tool.name, arguments: args }),
-          signal: AbortSignal.timeout(10_000),
+          body: JSON.stringify({
+            tool: tool.name,
+            arguments: args,
+            ...(hiddenContext !== undefined ? { context: hiddenContext } : {}),
+          }),
+          signal: AbortSignal.timeout(customToolTimeoutMs),
           policy: {
             allowLocal,
             allowedProtocols: allowLocal ? ["https:", "http:"] : ["https:"],
@@ -321,6 +344,7 @@ async function executeCustomTool(tool: CustomToolDef, args: Record<string, unkno
         // The script only has access to the explicitly provided sandbox objects
         const sandbox = {
           args,
+          context: hiddenContext ?? null,
           JSON: { parse: JSON.parse, stringify: JSON.stringify },
           Math,
           String,
@@ -334,7 +358,7 @@ async function executeCustomTool(tool: CustomToolDef, args: Record<string, unkno
           console: { log: () => {} },
         };
         const result = vm.runInNewContext(`"use strict"; (function() { ${tool.scriptBody} })()`, sandbox, {
-          timeout: 5000,
+          timeout: customToolTimeoutMs,
           breakOnSigint: true,
         });
         return result ?? { result: "OK" };

@@ -35,7 +35,7 @@ import {
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { api } from "../../lib/api-client";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SelectionActionBar } from "../ui/SelectionActionBar";
 import {
@@ -198,6 +198,7 @@ function serializeCustomTool(tool: CustomToolRow) {
     webhookUrl: tool.webhookUrl,
     staticResult: tool.staticResult,
     scriptBody: tool.scriptBody,
+    includeHiddenContext: parseBooleanValue(tool.includeHiddenContext),
     enabled: parseBooleanValue(tool.enabled),
   };
 }
@@ -221,6 +222,7 @@ function normalizeCustomToolImportEntry(entry: unknown) {
     webhookUrl: executionType === "webhook" && typeof source.webhookUrl === "string" ? source.webhookUrl : null,
     staticResult: executionType === "static" && typeof source.staticResult === "string" ? source.staticResult : null,
     scriptBody: executionType === "script" && typeof source.scriptBody === "string" ? source.scriptBody : null,
+    includeHiddenContext: parseBooleanValue(source.includeHiddenContext, false),
     enabled: parseBooleanValue(source.enabled),
   };
 }
@@ -311,8 +313,14 @@ export function PresetsPanel() {
     [filteredPresets, folderedPresetIds],
   );
 
+  // Presets shows GLOBAL regex scripts only. Character-scoped scripts (non-empty
+  // targetCharacterIds) live on the character (Advanced tab) and in a chat's
+  // Scoped Regex Scripts settings, so they are filtered out here.
   const sortedRegexScripts = useMemo(
-    () => [...((regexScripts ?? []) as RegexScriptRow[])].sort((a, b) => a.order - b.order),
+    () =>
+      ((regexScripts ?? []) as RegexScriptRow[])
+        .filter((script) => parseStringArray(script.targetCharacterIds).length === 0)
+        .sort((a, b) => a.order - b.order),
     [regexScripts],
   );
 
@@ -970,8 +978,18 @@ export function PresetsPanel() {
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        deletePresetFolder.mutate(folder.id);
-                        if (expandedFolderId === folder.id) setExpandedFolderId(null);
+                        void confirmNonEmptyFolderDelete(folder.itemIds.length, {
+                          title: "Delete Folder",
+                          message: `Delete "${folder.name}"? Its ${folder.itemIds.length} preset${
+                            folder.itemIds.length === 1 ? "" : "s"
+                          } will move out of the folder.`,
+                          confirmLabel: "Delete",
+                          tone: "destructive",
+                        }).then((ok) => {
+                          if (!ok) return;
+                          deletePresetFolder.mutate(folder.id);
+                          if (expandedFolderId === folder.id) setExpandedFolderId(null);
+                        });
                       }}
                       className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
                       title="Delete folder"
