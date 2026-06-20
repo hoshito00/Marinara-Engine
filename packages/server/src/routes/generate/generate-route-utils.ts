@@ -540,7 +540,11 @@ export function appendGenerationTailMessages(
   const assistantPrefill = options.assistantPrefill.trim();
 
   if (assistantPrefill) {
-    messages.push({ role: "assistant", content: options.assistantPrefill });
+    // Strip the trailing edge: Anthropic's Messages API rejects a final assistant
+    // message ending in whitespace (HTTP 400), which surfaces to users as a refusal.
+    // A prefill ending in "\n" or a space is common. The user-facing prefill is
+    // rendered separately, so only what is sent to the API is trimmed.
+    messages.push({ role: "assistant", content: options.assistantPrefill.trimEnd() });
   }
 
   if (shouldAppendGoogleUserRegeneration) {
