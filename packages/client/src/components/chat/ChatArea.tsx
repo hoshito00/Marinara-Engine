@@ -86,7 +86,7 @@ import { HomeCreditsModal } from "./HomeCreditsModal";
 import { HomeProfessorMariChat } from "./HomeProfessorMariChat";
 import { HomeAchievements } from "./HomeAchievements";
 import { NewChatConnectionGate } from "./NewChatConnectionGate";
-import { ChatCommonOverlays } from "./ChatCommonOverlays";
+import { ChatCommonOverlays, type ChatSettingsInitialSection } from "./ChatCommonOverlays";
 import { CreatorNotesCssInjector, type CardCssMode } from "./CreatorNotesCssInjector";
 import type { ChatModeFilter } from "../../lib/card-css";
 
@@ -217,6 +217,7 @@ const GameSurface = lazy(async () => {
 });
 
 type FloatingPanelAnchor = { right: number; top: number } | null;
+type OpenSettingsOptions = { initialSection?: ChatSettingsInitialSection };
 
 type HomeGlistenStar = {
   id: number;
@@ -311,6 +312,7 @@ export function ChatArea() {
   // skip the entry animation to avoid a visible flash on refetch.
   const hasAnimatedRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<ChatSettingsInitialSection>(null);
   const [filesOpen, setFilesOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [settingsAnchor, setSettingsAnchor] = useState<FloatingPanelAnchor>(null);
@@ -353,8 +355,9 @@ export function ChatArea() {
     };
   }, []);
   const handleOpenSettingsPanel = useCallback(
-    (event?: ReactMouseEvent<HTMLElement>) => {
+    (event?: ReactMouseEvent<HTMLElement>, options?: OpenSettingsOptions) => {
       setSettingsAnchor(readFloatingPanelAnchor(event));
+      setSettingsInitialSection(options?.initialSection ?? null);
       setSettingsOpen(true);
     },
     [readFloatingPanelAnchor],
@@ -369,6 +372,7 @@ export function ChatArea() {
   const handleCloseSettingsPanel = useCallback(() => {
     setSettingsOpen(false);
     setSettingsAnchor(null);
+    setSettingsInitialSection(null);
   }, []);
   const handleCloseGalleryPanel = useCallback(() => {
     setGalleryOpen(false);
@@ -2198,6 +2202,7 @@ export function ChatArea() {
             sceneInfo={conversationSceneInfo}
             settingsOpen={settingsOpen}
             settingsAnchor={settingsAnchor}
+            settingsInitialSection={settingsInitialSection}
             galleryOpen={galleryOpen}
             galleryAnchor={galleryAnchor}
             wizardOpen={wizardOpen}
@@ -2308,6 +2313,7 @@ export function ChatArea() {
           lastAssistantMessageId={lastAssistantMessageId}
           settingsOpen={settingsOpen}
           settingsAnchor={settingsAnchor}
+          settingsInitialSection={settingsInitialSection}
           filesOpen={filesOpen}
           galleryOpen={galleryOpen}
           galleryAnchor={galleryAnchor}

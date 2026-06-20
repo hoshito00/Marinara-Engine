@@ -11,6 +11,7 @@ import { chatBackgroundMetadataToUrl } from "../lib/backgrounds";
 import { requestChatScrollToBottom } from "../lib/chat-scroll-events";
 import { agentKeys } from "./use-agents";
 import type { PendingAgentWriteApproval, PendingCardUpdate } from "../stores/agent.store";
+import type { DelayedCharacterInfo } from "../stores/chat.store";
 import {
   applyQuestUpdatesToPlayerStats,
   applyTrackerFieldLocksToGameStatePatch,
@@ -899,9 +900,13 @@ export function useGenerate() {
       userMessage?: string;
       regenerateMessageId?: string;
       impersonate?: boolean;
+      autonomous?: boolean;
+      autonomousIntent?: string;
+      autonomousIntentKey?: string;
       attachments?: Array<{ type: string; data: string; filename?: string; name?: string }>;
       mentionedCharacterNames?: string[];
       forCharacterId?: string;
+      skipPresenceDelay?: boolean;
       narrativeDirectorMode?: "natural" | "random";
       generationGuide?: string;
       generationGuideSource?: "narrator" | "guide" | "game_start";
@@ -2105,9 +2110,21 @@ export function useGenerate() {
               const delayedNames = (event as any).characters as string[] | undefined;
               const delayedLabel =
                 delayedNames?.length === 1 ? delayedNames[0] : (delayedNames?.join(", ") ?? "Character");
-              const delayedStatus = ((event as any).status as string) ?? "idle";
-              useChatStore.getState().setPerChatDelayed(params.chatId, { name: delayedLabel, status: delayedStatus });
-              if (isActiveChat()) setDelayedCharacterInfo({ name: delayedLabel, status: delayedStatus });
+              const delayedStatus = (((event as any).status as DelayedCharacterInfo["status"] | undefined) ?? "idle");
+              const delayedInfo: DelayedCharacterInfo = {
+                name: delayedLabel,
+                status: delayedStatus,
+                characterIds: Array.isArray((event as any).characterIds)
+                  ? ((event as any).characterIds as string[])
+                  : undefined,
+                characterNames: delayedNames,
+                characterStatuses:
+                  (event as any).characterStatuses && typeof (event as any).characterStatuses === "object"
+                    ? ((event as any).characterStatuses as DelayedCharacterInfo["characterStatuses"])
+                    : undefined,
+              };
+              useChatStore.getState().setPerChatDelayed(params.chatId, delayedInfo);
+              if (isActiveChat()) setDelayedCharacterInfo(delayedInfo);
               // Refresh character data so sidebar status dots update immediately
               qc.invalidateQueries({ queryKey: characterKeys.list() });
               break;

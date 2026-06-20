@@ -807,6 +807,7 @@ type RoleplaySurfaceProps = {
   lastAssistantMessageId: string | null;
   settingsOpen: boolean;
   settingsAnchor: ComponentProps<typeof ChatCommonOverlays>["settingsAnchor"];
+  settingsInitialSection?: ComponentProps<typeof ChatCommonOverlays>["settingsInitialSection"];
   filesOpen: boolean;
   galleryOpen: boolean;
   galleryAnchor: ComponentProps<typeof ChatCommonOverlays>["galleryAnchor"];
@@ -911,6 +912,7 @@ export function ChatRoleplaySurface({
   lastAssistantMessageId,
   settingsOpen,
   settingsAnchor,
+  settingsInitialSection,
   filesOpen,
   galleryOpen,
   galleryAnchor,
@@ -1610,6 +1612,7 @@ export function ChatRoleplaySurface({
         activeChatId={activeChatId}
         settingsOpen={settingsOpen}
         settingsAnchor={settingsAnchor}
+        settingsInitialSection={settingsInitialSection}
         filesOpen={filesOpen}
         galleryOpen={galleryOpen}
         galleryAnchor={galleryAnchor}

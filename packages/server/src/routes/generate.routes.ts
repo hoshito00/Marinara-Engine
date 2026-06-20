@@ -135,11 +135,13 @@ import {
   playConversationSpotifyCommand,
 } from "../services/spotify/conversation-spotify-command.service.js";
 import {
+  buildAutonomousDailyBudgetPatch,
   clearGenerationInProgress,
   markGenerationInProgress,
   recordAssistantActivity,
   recordUserActivity,
 } from "../services/conversation/autonomous.service.js";
+import { buildIntentCooldownPatch, isMessageIntent } from "../services/conversation/intent.service.js";
 import { buildImpersonateInstruction } from "../services/conversation/impersonate-prompt.js";
 import { stripConversationPromptTimestamps } from "../services/conversation/transcript-sanitize.js";
 import {
@@ -298,6 +300,7 @@ import {
 import {
   areConversationSchedulesEnabled,
   getEnabledConversationSchedules,
+  parseConversationStatusOverrides,
   parsePromptPresetChoices,
 } from "../services/generation/conversation-context-utils.js";
 import { recoverImplicitSelfieCommand } from "../services/generation/selfie-command-recovery.js";
@@ -1088,6 +1091,8 @@ export async function generateRoutes(app: FastifyInstance) {
     }
     let conversationGenerationStartedAt: number | null = null;
     let conversationAssistantSaved = false;
+    const shouldAccountAutonomousGeneration =
+      requestChatMode === "conversation" && input.autonomous === true && !input.impersonate && !input.regenerateMessageId;
     const activeGenerations = (app as any).activeGenerations as Map<
       string,
       { abortController: AbortController; backendUrl: string | null }
@@ -1297,6 +1302,27 @@ export async function generateRoutes(app: FastifyInstance) {
     if (requestChatMode === "conversation" && !input.impersonate) {
       conversationGenerationStartedAt = markGenerationInProgress(input.chatId);
     }
+
+    const recordSavedAutonomousGeneration = async (characterId: string | null | undefined) => {
+      if (!shouldAccountAutonomousGeneration || !characterId) return;
+      try {
+        const updatedChat = await chats.patchMetadata(
+          input.chatId,
+          (current) => ({
+            ...buildAutonomousDailyBudgetPatch(current, characterId),
+            ...(isMessageIntent(input.autonomousIntentKey)
+              ? buildIntentCooldownPatch(current, characterId, input.autonomousIntentKey)
+              : {}),
+          }),
+          { touchUpdatedAt: false },
+        );
+        if (updatedChat) {
+          chatMeta = parseExtra(updatedChat.metadata) as Record<string, unknown>;
+        }
+      } catch (err) {
+        logger.warn(err, "[generate] Failed to record autonomous accounting for chat %s", input.chatId);
+      }
+    };
 
     // ── SSE progress helper: tells the client what phase we're in ──
     const sendProgress = (phase: string) => {
@@ -2003,6 +2029,7 @@ export async function generateRoutes(app: FastifyInstance) {
               string,
               import("../services/conversation/schedule.service.js").WeekSchedule
             >;
+          const statusOverrides = parseConversationStatusOverrides(chatMeta.conversationStatusOverrides);
           const convoCharInfo: {
             charId: string;
             name: string;
@@ -2014,24 +2041,27 @@ export async function generateRoutes(app: FastifyInstance) {
             const charRow = await chars.getById(cid);
             if (charRow) {
               const d = JSON.parse(charRow.data as string);
+              const schedSvc = await import("../services/conversation/schedule.service.js");
+              const override = statusOverrides[cid];
               // Schedules are chat-scoped. If this chat has no schedule for the character,
               // don't inherit a stale conversationStatus from some other chat.
-              let status = "online";
-              let activity = "";
+              const fallback = schedSvc.getEffectiveCurrentStatus(undefined, override, promptNow, "");
+              let status = fallback.status;
+              let activity = fallback.activity;
               let todaySchedule = "";
               const schedule = schedules[cid];
               if (schedule) {
-                const schedSvc = await import("../services/conversation/schedule.service.js");
-                const derived = schedSvc.getCurrentStatus(schedule, promptNow);
+                const derived = schedSvc.getEffectiveCurrentStatus(schedule, override, promptNow);
                 status = derived.status;
                 activity = derived.activity;
                 todaySchedule = schedSvc.getTodaySchedule(schedule, promptNow);
-                // Sync status to character DB so sidebar/header dots stay in sync
-                const prevStatus = d.extensions?.conversationStatus;
-                if (prevStatus !== status) {
-                  const extensions = { ...(d.extensions ?? {}), conversationStatus: status };
-                  await chars.update(cid, { extensions } as any).catch(() => {});
-                }
+              }
+              // Sync status to character DB so sidebar/header dots stay in sync
+              const prevStatus = d.extensions?.conversationStatus;
+              const prevActivity = d.extensions?.conversationActivity;
+              if (prevStatus !== status || prevActivity !== activity) {
+                const extensions = { ...(d.extensions ?? {}), conversationStatus: status, conversationActivity: activity };
+                await chars.update(cid, { extensions } as any).catch(() => {});
               }
               convoCharInfo.push({ charId: cid, name: d.name ?? "Unknown", status, activity, todaySchedule });
             }
@@ -2066,7 +2096,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
 
           // ── Typing delay: DND/idle characters don't respond instantly ──
-          if (!input.regenerateMessageId && !input.impersonate) {
+          if (!input.regenerateMessageId && !input.impersonate && !input.skipPresenceDelay) {
             const schedSvc = await import("../services/conversation/schedule.service.js");
             // Check if any characters were @mentioned
             const hasMentions = requestedMentionNames.size > 0 || !!manualTargetCharId;
@@ -2087,11 +2117,36 @@ export async function generateRoutes(app: FastifyInstance) {
                   );
                 }, 0);
             if (delayMs > 0) {
+              const characterStatuses = Object.fromEntries(
+                respondingConvoCharInfo.map((character) => [character.charId, character.status]),
+              );
               // Send "delayed" event first — client shows "will respond in a moment" / "when they're back"
               reply.raw.write(
-                `data: ${JSON.stringify({ type: "delayed", characters: respondingConvoCharNames, status: worstStatus, delayMs })}\n\n`,
+                `data: ${JSON.stringify({
+                  type: "delayed",
+                  characters: respondingConvoCharNames,
+                  characterIds: respondingConvoCharInfo.map((character) => character.charId),
+                  characterStatuses,
+                  status: worstStatus,
+                  delayMs,
+                })}\n\n`,
               );
-              await new Promise((r) => setTimeout(r, delayMs));
+              await new Promise<void>((resolve) => {
+                if (abortController.signal.aborted) {
+                  resolve();
+                  return;
+                }
+                const timeout = setTimeout(resolve, delayMs);
+                abortController.signal.addEventListener(
+                  "abort",
+                  () => {
+                    clearTimeout(timeout);
+                    resolve();
+                  },
+                  { once: true },
+                );
+              });
+              if (abortController.signal.aborted) return;
 
               // Re-read messages after the delay — the user may have sent
               // follow-up messages while the character was busy/idle.
@@ -2790,6 +2845,7 @@ export async function generateRoutes(app: FastifyInstance) {
             latestVisiblePromptTurn?.role === "assistant" && !input.userMessage?.trim()
               ? `No new message from ${personaName} was sent in this request; this is a proactive/autonomous turn. Do not write ${personaName}'s side of the conversation.`
               : null;
+          const intentHint = (input.autonomousIntent ?? "").trim();
 
           const contextBlock = [
             `<context>`,
@@ -2797,6 +2853,7 @@ export async function generateRoutes(app: FastifyInstance) {
             ...(shouldIncludeUserStatus ? [`${personaName}'s status: ${userStatusLine}.`] : []),
             ...(proactiveTurnLine ? [proactiveTurnLine] : []),
             ...(mentionLine ? [mentionLine] : []),
+            ...(intentHint ? [`Reason for this message: ${intentHint}`] : []),
             ...scheduleLines,
             `The current time and date: ${timeStr}, ${dateStr}.`,
             ...(isGroup && earlyGroupMode !== "individual"
@@ -6376,6 +6433,11 @@ export async function generateRoutes(app: FastifyInstance) {
                 if (markGenerationCommitted && anchoredMsg?.id) {
                   generationComplete = true;
                 }
+                if (chatMode === "conversation" && !input.regenerateMessageId) {
+                  recordAssistantActivity(input.chatId, targetCharId ?? undefined);
+                  conversationAssistantSaved = true;
+                }
+                await recordSavedAutonomousGeneration(targetCharId);
                 return {
                   savedMsg: anchoredMsg,
                   response: "",
@@ -6409,6 +6471,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
             if (chatMode === "conversation" && !input.impersonate && !input.regenerateMessageId) {
               recordAssistantActivity(input.chatId, targetCharId ?? undefined);
+              await recordSavedAutonomousGeneration(targetCharId);
               conversationAssistantSaved = true;
             }
 
@@ -8681,8 +8744,18 @@ export async function generateRoutes(app: FastifyInstance) {
                         const charRow = await chars.getById(characterId);
                         if (charRow) {
                           const charData = JSON.parse(charRow.data as string);
-                          const newStatus = schedCmd.status ?? charData.extensions?.conversationStatus ?? "online";
-                          const extensions = { ...(charData.extensions ?? {}), conversationStatus: newStatus };
+                          const schedSvc = await import("../services/conversation/schedule.service.js");
+                          const statusOverrides = parseConversationStatusOverrides(freshMeta.conversationStatusOverrides);
+                          const derived = schedSvc.getEffectiveCurrentStatus(
+                            schedule,
+                            statusOverrides[characterId],
+                          );
+                          const newStatus = derived.status;
+                          const extensions = {
+                            ...(charData.extensions ?? {}),
+                            conversationStatus: newStatus,
+                            conversationActivity: derived.activity,
+                          };
                           await chars.update(characterId, { extensions } as any);
                         }
 

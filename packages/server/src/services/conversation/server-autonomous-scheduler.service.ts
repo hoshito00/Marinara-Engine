@@ -1,7 +1,19 @@
 import type { FastifyInstance } from "fastify";
 import { logger } from "../../lib/logger.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
-import { clearGenerationInProgress, getRecentAutonomousClientPresence } from "./autonomous.service.js";
+import {
+  clearGenerationInProgress,
+  getActivityState,
+  getRecentAutonomousClientPresence,
+} from "./autonomous.service.js";
+import {
+  getIntentHint,
+  isIntentOnCooldown,
+  resolveIntent,
+  type MessageIntent,
+} from "./intent.service.js";
+import { getBusyDelay, getEffectiveCurrentStatus, type WeekSchedule } from "./schedule.service.js";
+import { parseConversationStatusOverrides } from "../generation/conversation-context-utils.js";
 
 const SERVER_AUTONOMOUS_INITIAL_DELAY_MS = 20_000;
 const SERVER_AUTONOMOUS_POLL_MS = 60_000;
@@ -20,6 +32,22 @@ type AutonomousCheckResult = {
   reason?: string;
   inactivityMs?: number;
 };
+
+function resolveAvailableIntent(
+  chatId: string,
+  characterId: string,
+  schedule: WeekSchedule | null,
+  chatMeta: Record<string, unknown>,
+): { intent: MessageIntent | null; onCooldown: boolean } {
+  if (!schedule) return { intent: null, onCooldown: false };
+
+  const state = getActivityState(chatId);
+  const msSinceUserLastSpoke = state ? Date.now() - state.lastUserMessageAt : 0;
+  const hadUnansweredUserMessage = state ? state.lastUserMessageAt > state.lastAssistantMessageAt : false;
+  const intent = resolveIntent(schedule, msSinceUserLastSpoke, hadUnansweredUserMessage);
+
+  return { intent, onCooldown: isIntentOnCooldown(chatMeta, characterId, intent) };
+}
 
 function parseMetadata(raw: RawChat["metadata"]): Record<string, unknown> {
   if (!raw) return {};
@@ -80,16 +108,32 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
     pollTimer.unref?.();
   };
 
-  const generateAutonomousMessage = async (chatId: string, characterId: string): Promise<boolean> => {
+  const generateAutonomousMessage = async (
+    chatId: string,
+    characterId: string,
+    schedule: WeekSchedule | null,
+    chatMeta: Record<string, unknown>,
+  ): Promise<boolean> => {
+    const { intent, onCooldown } = resolveAvailableIntent(chatId, characterId, schedule, chatMeta);
+    if (onCooldown) {
+      clearGenerationInProgress(chatId);
+      return false;
+    }
+    const autonomousIntent = intent ? getIntentHint(intent) : "";
+
     const response = await app.inject({
       method: "POST",
       url: "/api/generate",
       payload: {
         chatId,
         connectionId: null,
+        forCharacterId: characterId,
         streaming: false,
         userStatus: "idle",
         userActivity: "away or offline",
+        autonomous: true,
+        autonomousIntentKey: intent ?? "",
+        autonomousIntent,
       },
     });
 
@@ -156,7 +200,28 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
       const characterId = result.shouldTrigger ? result.characterIds?.[0] : null;
       if (!characterId) return;
 
-      const generated = await generateAutonomousMessage(chat.id, characterId);
+      await chats.inheritFreshConversationSchedules(chat.id);
+      const freshChat = await chats.getById(chat.id);
+      if (!freshChat) return;
+      const freshMeta = parseMetadata(freshChat.metadata);
+      const freshSchedules = (freshMeta.characterSchedules ?? {}) as Record<string, WeekSchedule>;
+      const statusOverrides = parseConversationStatusOverrides(freshMeta.conversationStatusOverrides);
+      const schedule = freshSchedules[characterId] ?? null;
+
+      if (schedule) {
+        const { status } = getEffectiveCurrentStatus(schedule, statusOverrides[characterId]);
+        const delayMs = getBusyDelay(status, schedule);
+        if (delayMs > 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+          const recentPresenceAfterDelay = getRecentAutonomousClientPresence(chat.id, RECENT_CLIENT_PRESENCE_MS);
+          if (recentPresenceAfterDelay) {
+            clearGenerationInProgress(chat.id);
+            return;
+          }
+        }
+      }
+
+      const generated = await generateAutonomousMessage(chat.id, characterId, schedule, freshMeta);
       if (generated) {
         logger.info("[autonomous-scheduler] Generated autonomous message for chat %s", chat.id);
       }
