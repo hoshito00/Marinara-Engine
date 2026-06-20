@@ -405,8 +405,8 @@ export class GoogleProvider extends BaseLLMProvider {
     const authHeaders =
       this.providerKind === "google_vertex"
         ? await googleAuthHeadersForVertex(this.apiKey)
-        : this.apiKey
-          ? { "x-goog-api-key": this.apiKey }
+        : this.apiKey.trim()
+          ? { "x-goog-api-key": this.apiKey.trim() }
           : {};
 
     const response = await llmFetch(url, {
@@ -568,8 +568,8 @@ export class GoogleProvider extends BaseLLMProvider {
     const authHeaders =
       this.providerKind === "google_vertex"
         ? await googleAuthHeadersForVertex(this.apiKey)
-        : this.apiKey
-          ? { "x-goog-api-key": this.apiKey }
+        : this.apiKey.trim()
+          ? { "x-goog-api-key": this.apiKey.trim() }
           : {};
 
     const response = await llmFetch(url, {

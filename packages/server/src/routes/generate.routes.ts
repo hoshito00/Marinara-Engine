@@ -1976,7 +1976,9 @@ export async function generateRoutes(app: FastifyInstance) {
           assistantPrefill = assembled.parameters.assistantPrefill ?? "";
           customThinkingTags = normalizeThinkingTagPairs(assembled.parameters.customThinkingTags);
           customParameters = mergeCustomParameters(customParameters, assembled.parameters.customParameters);
-          stopSequences = assembled.parameters.stopSequences ?? [];
+          stopSequences = (assembled.parameters.stopSequences ?? [])
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0);
 
           effectiveMaxContext = mergeModelContextLimit(
             modelAccessPolicy,
@@ -3279,7 +3281,9 @@ export async function generateRoutes(app: FastifyInstance) {
             customThinkingTags = normalizeThinkingTagPairs(params.customThinkingTags);
           }
           customParameters = mergeCustomParameters(customParameters, params.customParameters);
-          if (Array.isArray(params.stopSequences)) stopSequences = params.stopSequences;
+          if (Array.isArray(params.stopSequences)) {
+            stopSequences = params.stopSequences.map((value) => value.trim()).filter((value) => value.length > 0);
+          }
 
           effectiveMaxContext = mergeModelContextLimit(
             modelAccessPolicy,

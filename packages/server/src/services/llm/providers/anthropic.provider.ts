@@ -288,7 +288,7 @@ export class AnthropicProvider extends BaseLLMProvider {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(this.apiKey ? { "x-api-key": this.apiKey } : {}),
+        ...(this.apiKey.trim() ? { "x-api-key": this.apiKey.trim() } : {}),
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(body),
@@ -446,7 +446,7 @@ export class AnthropicProvider extends BaseLLMProvider {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(this.apiKey ? { "x-api-key": this.apiKey } : {}),
+        ...(this.apiKey.trim() ? { "x-api-key": this.apiKey.trim() } : {}),
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(body),
