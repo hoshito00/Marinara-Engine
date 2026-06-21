@@ -322,19 +322,31 @@ export function assembleEntries(
 /** Synthetic user prompt when no history exists (connection-test pings, dry runs). */
 const SYNTHETIC_START = "[Start]";
 /**
- * Synthetic user prompt when the trailing message is an assistant turn
- * (prefill / "continue this" flows). This is the closest in-SDK approximation
- * of Anthropic Messages API native prefill — the SDK's `prompt` is user-only,
- * so we can't author a trailing assistant in the outbound API call. The
- * trailing assistant turn stays in JSONL (real assistant entry) and this
- * synthetic user message asks the model to continue.
+ * Build the closest in-SDK approximation of Anthropic Messages API native
+ * assistant prefill. The Claude Agent SDK `prompt` is user-only, and Marinara
+ * already streams/saves the prefill before provider output, so the synthetic
+ * turn tells Claude to continue after the prefilled text rather than repeat it.
  *
- * TODO(passthrough): If/when the loopback-passthrough is added, rewrite the
+ * TODO(passthrough): If/when loopback-passthrough is added, rewrite the
  * outbound API body to keep the trailing assistant in its proper position and
  * elide this synthetic continuation — that unlocks native prefill semantics
- * (model extends the prefill turn rather than producing a new turn).
+ * (model extends the prefill turn directly).
  */
-const SYNTHETIC_CONTINUE = "(continue)";
+export function buildAssistantPrefillContinuationPrompt(prefill: string): string {
+  const normalized = prefill.trimEnd();
+  if (!normalized.trim()) {
+    return "Continue the assistant's reply.";
+  }
+  return [
+    "Continue the assistant's reply as if it already began with the prefill below.",
+    "The prefill is already part of the assistant message, so do not repeat it.",
+    "Start with the very next text that should follow it, preserving the same voice, format, and momentum.",
+    "",
+    "<assistant_prefill>",
+    normalized,
+    "</assistant_prefill>",
+  ].join("\n");
+}
 
 export interface SplitResult {
   /** Messages that go into the JSONL session file as prior history. */
@@ -343,6 +355,8 @@ export interface SplitResult {
   current: ChatMessage;
   /** Diagnostic tag describing which branch shaped `current`. */
   shape: "trailing-user" | "trailing-tool" | "trailing-assistant-continue" | "synthetic-start";
+  /** Present when a trailing assistant prefill was converted into synthetic continuation steering. */
+  assistantPrefillLength?: number;
 }
 
 /**
@@ -350,8 +364,8 @@ export interface SplitResult {
  * SDK prompt) shape the resume path needs.
  *
  * - Trailing `user` or `tool`: JSONL = all-but-trailing; prompt source = trailing.
- * - Trailing `assistant`: JSONL = all messages (prefill stays in JSONL);
- *   prompt source = synthetic "(continue)" user turn.
+ * - Trailing `assistant`: JSONL = all-but-trailing; prompt source =
+ *   synthetic continuation instruction containing the prefill text.
  * - Empty or system-only: JSONL = [] (system messages ride `systemPrompt`,
  *   not the JSONL); prompt source = synthetic "[Start]" user turn.
  *
@@ -360,7 +374,7 @@ export interface SplitResult {
  * assistant turn from `finalMessages` BEFORE calling provider.chat(). Any
  * trailing assistant reaching this function is therefore intentional —
  * specifically the `assistantPrefill` feature (see
- * packages/shared/src/types/prompt.ts:177 and generate.routes.ts:5953,
+ * packages/shared/src/types/prompt.ts and appendGenerationTailMessages(),
  * where the prefill is pushed as the final assistant message).
  *
  * If that upstream contract ever changes — i.e. regen starts leaving the
@@ -390,9 +404,10 @@ export function splitHistoryForResume(messages: readonly ChatMessage[]): SplitRe
 
   if (trailing.role === "assistant") {
     return {
-      history: nonSystem,
-      current: { role: "user", content: SYNTHETIC_CONTINUE },
+      history: nonSystem.slice(0, nonSystem.length - 1),
+      current: { role: "user", content: buildAssistantPrefillContinuationPrompt(trailing.content ?? "") },
       shape: "trailing-assistant-continue",
+      assistantPrefillLength: (trailing.content ?? "").length,
     };
   }
 

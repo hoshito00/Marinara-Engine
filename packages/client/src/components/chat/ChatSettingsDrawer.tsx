@@ -2254,6 +2254,7 @@ export function ChatSettingsDrawer({
 
       await updateMeta.mutateAsync({
         id: chat.id,
+        enableAgents: true,
         activeAgentIds: Array.from(new Set([...activeAgentIds, agent.id])),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
@@ -2596,6 +2597,63 @@ export function ChatSettingsDrawer({
           </p>
         )}
       </AgentCategorySection>
+    );
+  };
+
+  const renderActiveCustomAgentSettingsCard = () => {
+    if (!metadata.enableAgents || activeCustomAgents.length === 0) return null;
+    return (
+      <AgentSettingsCard
+        id={getAgentSettingsMenuId(chat.id, "custom-agents")}
+        icon={renderRoleplayAgentMenuIcon("custom-agents")}
+        title="Custom Agents"
+        description="Configure custom agents currently attached to this chat."
+        order={CUSTOM_AGENT_SETTINGS_ORDER}
+      >
+        <div className="space-y-1.5">
+          {activeCustomAgents.map((agent) => {
+            const tokenEst = agentLoadCost.tokensByType.get(agent.id);
+            const promptOptions = getPromptOptionsForAgent(agent.id);
+            return (
+              <div key={agent.id} className="rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
+                <div className="flex items-start gap-2.5">
+                  <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="block min-w-0 truncate text-xs font-medium">{agent.name}</span>
+                      {tokenEst != null ? (
+                        <span
+                          className="shrink-0 tabular-nums text-[0.625rem] text-[var(--muted-foreground)]"
+                          title={`~${tokenEst.toLocaleString()} tokens of agent instructions (estimated)`}
+                        >
+                          ~{tokenEst.toLocaleString()}
+                        </span>
+                      ) : null}
+                    </div>
+                    <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
+                      {agent.description}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      void toggleAgent(agent.id);
+                    }}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                    title="Remove from chat"
+                  >
+                    <Trash2 size="0.6875rem" />
+                  </button>
+                </div>
+                <AgentPromptTemplateSelect
+                  options={promptOptions}
+                  selectedId={agentPromptTemplateSelections[agent.id] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID}
+                  onChange={(promptTemplateId) => updateAgentPromptTemplateSelection(agent.id, promptTemplateId)}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </AgentSettingsCard>
     );
   };
 
@@ -4753,8 +4811,8 @@ export function ChatSettingsDrawer({
               <div className="space-y-2">
                 {isGame && metadata.enableAgents && (
                   <p className="px-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                    Toggle agents for this game session. Only the ones below are allowed to ensure the game's format
-                    doesn't break.
+                    Toggle scene analysis and custom agents for this game session. Roleplay-only built-ins stay hidden so
+                    the game's format doesn't break.
                   </p>
                 )}
                 <button
@@ -4769,10 +4827,10 @@ export function ChatSettingsDrawer({
                   )}
                 >
                   <div className="flex-1 min-w-0">
-                    <span className="text-xs font-medium">{isGame ? "Enable Scene Analysis" : "Enable Agents"}</span>
+                    <span className="text-xs font-medium">Enable Agents</span>
                     <p className="text-[0.625rem] text-[var(--muted-foreground)]">
                       {isGame
-                        ? "Analyse scenes for backgrounds, music, weather, and cinematic effects after each GM turn."
+                        ? "Run scene analysis and any attached custom agents during generation."
                         : "Run AI agents during generation (world state, expressions, etc.)"}
                     </p>
                     {isGame &&
@@ -5846,66 +5904,7 @@ export function ChatSettingsDrawer({
                       </AgentSettingsCard>
                     )}
 
-                    {metadata.enableAgents && activeCustomAgents.length > 0 && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "custom-agents")}
-                        icon={renderRoleplayAgentMenuIcon("custom-agents")}
-                        title="Custom Agents"
-                        description="Configure custom agents currently attached to this chat."
-                        order={CUSTOM_AGENT_SETTINGS_ORDER}
-                      >
-                        <div className="space-y-1.5">
-                          {activeCustomAgents.map((agent) => {
-                            const tokenEst = agentLoadCost.tokensByType.get(agent.id);
-                            const promptOptions = getPromptOptionsForAgent(agent.id);
-                            return (
-                              <div
-                                key={agent.id}
-                                className="rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]"
-                              >
-                                <div className="flex items-start gap-2.5">
-                                  <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex min-w-0 items-center gap-1.5">
-                                      <span className="block min-w-0 truncate text-xs font-medium">{agent.name}</span>
-                                      {tokenEst != null ? (
-                                        <span
-                                          className="shrink-0 tabular-nums text-[0.625rem] text-[var(--muted-foreground)]"
-                                          title={`~${tokenEst.toLocaleString()} tokens of agent instructions (estimated)`}
-                                        >
-                                          ~{tokenEst.toLocaleString()}
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                    <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
-                                      {agent.description}
-                                    </span>
-                                  </div>
-                                  <button
-                                    onClick={() => {
-                                      void toggleAgent(agent.id);
-                                    }}
-                                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                                    title="Remove from chat"
-                                  >
-                                    <Trash2 size="0.6875rem" />
-                                  </button>
-                                </div>
-                                <AgentPromptTemplateSelect
-                                  options={promptOptions}
-                                  selectedId={
-                                    agentPromptTemplateSelections[agent.id] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID
-                                  }
-                                  onChange={(promptTemplateId) =>
-                                    updateAgentPromptTemplateSelection(agent.id, promptTemplateId)
-                                  }
-                                />
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </AgentSettingsCard>
-                    )}
+                    {renderActiveCustomAgentSettingsCard()}
 
                     {/* Haptic Feedback — not for game mode */}
                     {metadata.enableAgents && !isGame && hapticActive && (
@@ -6219,6 +6218,7 @@ export function ChatSettingsDrawer({
                           </div>
                         )}
                         {renderCustomAgentPicker()}
+                        {renderActiveCustomAgentSettingsCard()}
                       </div>
                     ) : (
                       <>

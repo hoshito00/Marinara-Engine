@@ -27,6 +27,7 @@ import { logger } from "../../../lib/logger.js";
 import { isClaudeSubscriptionResumeEnabled } from "../../../config/runtime-config.js";
 import {
   assembleEntries,
+  buildAssistantPrefillContinuationPrompt,
   currentToSdkUserMessage,
   SDK_VERSION,
   splitHistoryForResume,
@@ -169,8 +170,14 @@ function extractSystemPrompt(messages: ChatMessage[]): string | undefined {
 function renderTranscript(messages: ChatMessage[]): { systemPrompt: string | undefined; prompt: string } {
   const systemBlocks: string[] = [];
   const turns: string[] = [];
+  const nonSystemMessages = messages.filter((message) => message.role !== "system");
+  const trailingAssistant =
+    nonSystemMessages.length > 0 && nonSystemMessages[nonSystemMessages.length - 1]!.role === "assistant"
+      ? nonSystemMessages[nonSystemMessages.length - 1]!
+      : null;
 
   for (const message of messages) {
+    if (message === trailingAssistant) continue;
     const text = message.content?.trim();
     if (!text) continue;
     if (message.role === "system") {
@@ -179,6 +186,10 @@ function renderTranscript(messages: ChatMessage[]): { systemPrompt: string | und
     }
     const label = message.role === "user" ? "User" : "Assistant";
     turns.push(`${label}: ${text}`);
+  }
+
+  if (trailingAssistant) {
+    turns.push(`User: ${buildAssistantPrefillContinuationPrompt(trailingAssistant.content ?? "")}`);
   }
 
   // Claude Agent SDK requires a non-empty prompt; if the caller only supplied
@@ -232,6 +243,12 @@ function selectPromptPath(messages: ChatMessage[], model: string): PromptSelecti
 function buildResumeSelection(messages: ChatMessage[], model: string): PromptSelection {
   const split = splitHistoryForResume(messages);
   const systemPrompt = extractSystemPrompt(messages);
+  if (split.shape === "trailing-assistant-continue") {
+    logger.warn(
+      "[claude-subscription] assistant prefill routed through synthetic continuation prompt because SDK prompts are user-only (prefillChars=%d)",
+      split.assistantPrefillLength ?? 0,
+    );
+  }
 
   if (split.history.length === 0) {
     // Resuming an empty transcript makes the SDK throw "No conversation found
