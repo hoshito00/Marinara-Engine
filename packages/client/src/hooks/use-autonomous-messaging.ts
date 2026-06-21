@@ -21,6 +21,9 @@ interface AutonomousCheckResult {
   characterIds: string[];
   reason: string;
   inactivityMs: number;
+  generationStartedAt?: number;
+  autonomousIntent?: string;
+  autonomousIntentKey?: string;
 }
 
 interface BusyDelayResult {
@@ -45,6 +48,7 @@ export function useAutonomousMessaging(
   const qc = useQueryClient();
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const busyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const busyGenerationStartedAtRef = useRef<number | undefined>(undefined);
   const generatingRef = useRef(false);
   const onAutonomousMessageRef = useRef(onAutonomousMessage);
   onAutonomousMessageRef.current = onAutonomousMessage;
@@ -143,19 +147,28 @@ export function useAutonomousMessaging(
           const delay = await api.post<BusyDelayResult>("/conversation/busy-delay", { chatId, characterId });
 
           if (delay.delayMs > 0) {
+            busyGenerationStartedAtRef.current = result.generationStartedAt;
             // Wait for the busy delay, then generate
             busyTimerRef.current = setTimeout(() => {
+              const generationStartedAt = busyGenerationStartedAtRef.current;
+              busyTimerRef.current = null;
+              busyGenerationStartedAtRef.current = undefined;
               // Re-check guards after delay — user may have started a manual generation
               if (generatingRef.current || useChatStore.getState().abortControllers.has(chatId)) {
+                if (typeof generationStartedAt === "number") {
+                  void api
+                    .post("/conversation/autonomous/clear-in-progress", { chatId, startedAt: generationStartedAt })
+                    .catch(() => {});
+                }
                 schedulePoll();
                 return;
               }
-              triggerAutonomousGeneration(characterId);
+              triggerAutonomousGeneration(characterId, result.autonomousIntentKey, true);
             }, delay.delayMs);
             return; // Don't schedule next poll until generation completes
           }
 
-          await triggerAutonomousGeneration(characterId);
+          await triggerAutonomousGeneration(characterId, result.autonomousIntentKey);
           return; // Generation will schedule next poll when done
         }
       } catch {
@@ -165,7 +178,11 @@ export function useAutonomousMessaging(
       schedulePoll();
     };
 
-    const triggerAutonomousGeneration = async (characterId: string) => {
+    const triggerAutonomousGeneration = async (
+      characterId: string,
+      autonomousIntentKey?: string,
+      skipPresenceDelay = false,
+    ) => {
       generatingRef.current = true;
       let produced: boolean | undefined = false;
       let shouldSchedulePoll = true;
@@ -173,6 +190,10 @@ export function useAutonomousMessaging(
         produced = await generate({
           chatId,
           connectionId: null,
+          forCharacterId: characterId,
+          autonomous: true,
+          autonomousIntentKey,
+          skipPresenceDelay,
         });
         if (produced) {
           // Re-sort sidebar so this chat floats to the top
@@ -233,7 +254,19 @@ export function useAutonomousMessaging(
 
     return () => {
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
-      if (busyTimerRef.current) clearTimeout(busyTimerRef.current);
+      if (busyTimerRef.current) {
+        clearTimeout(busyTimerRef.current);
+        if (typeof busyGenerationStartedAtRef.current === "number") {
+          void api
+            .post("/conversation/autonomous/clear-in-progress", {
+              chatId,
+              startedAt: busyGenerationStartedAtRef.current,
+            })
+            .catch(() => {});
+        }
+        busyTimerRef.current = null;
+        busyGenerationStartedAtRef.current = undefined;
+      }
     };
   }, [chatId, enabled, exchangesEnabled, generate, recordAssistantActivity, recordClientPresence, qc]);
 

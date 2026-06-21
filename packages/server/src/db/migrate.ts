@@ -275,6 +275,7 @@ const CREATE_TABLES: string[] = [
     image_path TEXT,
     max_context INTEGER NOT NULL DEFAULT 128000,
     max_parallel_jobs INTEGER NOT NULL DEFAULT 1,
+    treat_as_local_endpoint TEXT NOT NULL DEFAULT 'false',
     is_default TEXT NOT NULL DEFAULT 'false',
     use_for_random TEXT NOT NULL DEFAULT 'false',
     enable_caching TEXT NOT NULL DEFAULT 'false',
@@ -769,6 +770,11 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     definition: "INTEGER NOT NULL DEFAULT 1",
   },
   {
+    table: "api_connections",
+    column: "treat_as_local_endpoint",
+    definition: "TEXT NOT NULL DEFAULT 'false'",
+  },
+  {
     table: "lorebook_entries",
     column: "description",
     definition: "TEXT NOT NULL DEFAULT ''",
@@ -1019,7 +1025,9 @@ export async function runMigrations(db: DB) {
     ),
   );
   await db.run(
-    sql.raw(`CREATE INDEX IF NOT EXISTS idx_persona_card_versions ON persona_card_versions(persona_id, created_at DESC)`),
+    sql.raw(
+      `CREATE INDEX IF NOT EXISTS idx_persona_card_versions ON persona_card_versions(persona_id, created_at DESC)`,
+    ),
   );
   await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_custom_themes_active ON custom_themes(is_active)`));
   await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_chat_presets_mode_active ON chat_presets(mode, is_active)`));

@@ -5,7 +5,8 @@
 // should send autonomous messages. Also handles character-to-character
 // exchanges in group chats.
 
-import { getCurrentStatus, type WeekSchedule } from "./schedule.service.js";
+import type { ConversationStatusOverride } from "@marinara-engine/shared";
+import { getEffectiveCurrentStatus, type WeekSchedule } from "./schedule.service.js";
 
 // ── Types ──
 
@@ -15,9 +16,18 @@ export interface AutonomousCheckResult {
   /** Which character(s) should send a message */
   characterIds: string[];
   /** Why this was triggered */
-  reason: "user_inactivity" | "user_reaction" | "character_exchange" | "none";
+  reason:
+    | "user_inactivity"
+    | "user_reaction"
+    | "character_exchange"
+    | "none"
+    | "generation_in_progress"
+    | "daily_budget_exhausted"
+    | "intent_cooldown";
   /** How long the user has been inactive (ms) */
   inactivityMs: number;
+  /** Timestamp when a generation claim started, if one was created */
+  generationStartedAt?: number;
 }
 
 export type AutonomousClientPresenceStatus = "active" | "idle" | "dnd";
@@ -49,9 +59,83 @@ export interface ChatActivityState {
   clientPresence?: { status: AutonomousClientPresenceStatus; updatedAt: number };
 }
 
+export type DailyBudgetMeta = {
+  date: string;
+  counts: Record<string, number>;
+};
+
 // ── In-memory activity tracker ──
 // Keyed by chatId. This is intentionally in-memory since it's just timing state.
 const activityStates = new Map<string, ChatActivityState>();
+
+export function getActivityState(chatId: string): ChatActivityState | undefined {
+  return activityStates.get(chatId);
+}
+
+function toScheduleDateKey(now: Date): string {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function readDailyBudgetMeta(value: unknown): DailyBudgetMeta | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.date !== "string" || !record.counts || typeof record.counts !== "object") return null;
+
+  const counts: Record<string, number> = {};
+  for (const [characterId, count] of Object.entries(record.counts as Record<string, unknown>)) {
+    if (typeof count === "number" && Number.isFinite(count) && count > 0) {
+      counts[characterId] = Math.floor(count);
+    }
+  }
+
+  return { date: record.date, counts };
+}
+
+export function getAutonomousDailyBudget(
+  chatMeta: Record<string, unknown>,
+  now: Date = new Date(),
+): DailyBudgetMeta {
+  const today = toScheduleDateKey(now);
+  const budget = readDailyBudgetMeta(chatMeta.autonomousDailyBudget);
+  return budget?.date === today ? budget : { date: today, counts: {} };
+}
+
+function readAutonomousDailyCapOverride(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(1, Math.floor(value));
+}
+
+export function dailyCapForCharacter(schedule: WeekSchedule | undefined, chatMeta?: Record<string, unknown>): number {
+  const override = chatMeta ? readAutonomousDailyCapOverride(chatMeta.autonomousDailyCapOverride) : null;
+  if (override != null) return override;
+
+  const talkativeness = schedule?.talkativeness ?? 50;
+  if (talkativeness >= 80) return 8;
+  if (talkativeness >= 60) return 6;
+  if (talkativeness >= 40) return 5;
+  if (talkativeness >= 20) return 3;
+  return 2;
+}
+
+export function buildAutonomousDailyBudgetPatch(
+  chatMeta: Record<string, unknown>,
+  characterId: string,
+  now: Date = new Date(),
+): { autonomousDailyBudget: DailyBudgetMeta } {
+  const budget = getAutonomousDailyBudget(chatMeta, now);
+  return {
+    autonomousDailyBudget: {
+      date: budget.date,
+      counts: {
+        ...budget.counts,
+        [characterId]: (budget.counts[characterId] ?? 0) + 1,
+      },
+    },
+  };
+}
 
 /**
  * Record that the user sent a message in a chat.
@@ -215,7 +299,7 @@ export function checkAutonomousMessaging(
   chatId: string,
   characterSchedules: Record<string, WeekSchedule>,
   isGroupChat: boolean,
-  opts: { maxFollowups?: number } = {},
+  opts: { maxFollowups?: number; statusOverrides?: Record<string, ConversationStatusOverride> } = {},
 ): AutonomousCheckResult {
   const noTrigger: AutonomousCheckResult = {
     shouldTrigger: false,
@@ -232,7 +316,7 @@ export function checkAutonomousMessaging(
     if (Date.now() - state.generationInProgressSince > GENERATION_TIMEOUT_MS) {
       state.generationInProgressSince = null;
     } else {
-      return noTrigger;
+      return { ...noTrigger, reason: "generation_in_progress" };
     }
   }
 
@@ -255,7 +339,7 @@ export function checkAutonomousMessaging(
   const maxFollowups = Math.max(1, Math.min(3, Math.floor(opts.maxFollowups ?? 3)));
 
   for (const [charId, schedule] of Object.entries(characterSchedules)) {
-    const { status } = getCurrentStatus(schedule);
+    const { status } = getEffectiveCurrentStatus(schedule, opts.statusOverrides?.[charId]);
 
     // Can't send if offline or sleeping
     if (status === "offline") continue;
@@ -335,6 +419,7 @@ export function checkCharacterExchange(
   chatId: string,
   lastSpeakerCharId: string,
   characterSchedules: Record<string, WeekSchedule>,
+  statusOverrides: Record<string, ConversationStatusOverride> = {},
 ): AutonomousCheckResult {
   const noTrigger: AutonomousCheckResult = {
     shouldTrigger: false,
@@ -349,7 +434,7 @@ export function checkCharacterExchange(
     if (Date.now() - state.generationInProgressSince > GENERATION_TIMEOUT_MS) {
       state.generationInProgressSince = null;
     } else {
-      return noTrigger;
+      return { ...noTrigger, reason: "generation_in_progress" };
     }
   }
 
@@ -362,7 +447,7 @@ export function checkCharacterExchange(
   for (const [charId, schedule] of Object.entries(characterSchedules)) {
     if (charId === lastSpeakerCharId) continue;
 
-    const { status } = getCurrentStatus(schedule);
+    const { status } = getEffectiveCurrentStatus(schedule, statusOverrides[charId]);
     if (status === "offline") continue;
     if (status === "dnd") continue; // Busy characters don't join casual exchanges
 

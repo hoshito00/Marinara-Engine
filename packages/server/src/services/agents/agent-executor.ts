@@ -300,9 +300,13 @@ export async function executeAgent(
     const maxTokens = applyProviderMaxTokensOverride(provider, normalizeAgentMaxTokens(config.settings.maxTokens));
     const streamResponses = context.streaming !== false;
 
-    // If tools are available, use the tool call loop
+    // If tools are available, use the tool call loop.
+    // `await` so a rethrow from the tool loop is caught by this function's
+    // catch below and converted into a failed AgentResult for THIS agent only,
+    // instead of rejecting the promise and corrupting co-grouped agents in the
+    // pipeline (see executeGroup's Promise.all).
     if (toolContext && toolContext.tools.length > 0) {
-      return executeAgentWithTools(
+      return await executeAgentWithTools(
         config,
         messages,
         provider,

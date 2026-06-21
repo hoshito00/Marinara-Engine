@@ -186,7 +186,7 @@ export class OpenAIProvider extends BaseLLMProvider {
 
   private static normalizeTopP(topP: number | null | undefined): number | undefined {
     if (topP == null || !Number.isFinite(topP)) return undefined;
-    if (topP <= 0) return 1;
+    if (topP < 0) return undefined;
     return Math.min(topP, 1);
   }
 
@@ -434,9 +434,13 @@ export class OpenAIProvider extends BaseLLMProvider {
 
   /** Build standard request headers, adding OpenRouter app tracking when applicable. */
   private buildHeaders(): Record<string, string> {
+    const apiKey = this.apiKey.trim();
     const h: Record<string, string> = {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${this.apiKey}`,
+      // Only send auth when a real key is present: a blank `Bearer ` (a decrypt
+      // failure, a whitespace-only key, or an intentionally keyless local
+      // endpoint) is worse than none.
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       ...(this.extraHeaders ?? {}),
     };
     if (!this.isGenericCustomProvider() && this.baseUrl.includes("openrouter.ai")) {

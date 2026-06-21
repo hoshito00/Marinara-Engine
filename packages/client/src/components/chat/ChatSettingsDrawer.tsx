@@ -216,6 +216,7 @@ interface ChatSettingsDrawerProps {
   open: boolean;
   onClose: () => void;
   anchor?: { right: number; top: number } | null;
+  initialSection?: "autonomous" | null;
   spriteArrangeMode?: boolean;
   onToggleSpriteArrange?: () => void;
   onResetSpritePlacements?: () => void;
@@ -230,6 +231,8 @@ const SPOTIFY_SOURCE_OPTIONS: Array<{ id: SpotifySourceType; label: string; desc
   { id: "artist", label: "Artist", description: "Search only around a named artist, like HOYO-MiX." },
   { id: "any", label: "Any Spotify", description: "Let the DJ use Spotify search when it fits." },
 ];
+
+const AUTONOMOUS_DAILY_CAP_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 const DEFAULT_PROSE_GUARDIAN_BANNED_WORDS = "ozone";
 const DEFAULT_PROSE_GUARDIAN_AVOID =
@@ -557,12 +560,14 @@ export function ChatSettingsDrawer({
   open,
   onClose,
   anchor,
+  initialSection,
   spriteArrangeMode = false,
   onToggleSpriteArrange,
   onResetSpritePlacements,
   onSpriteSideChange,
 }: ChatSettingsDrawerProps) {
   const qc = useQueryClient();
+  const scheduleControlsRef = useRef<HTMLDivElement | null>(null);
   const updateChat = useUpdateChat();
   const updateMeta = useUpdateChatMetadata();
   const updateGameWidgets = useUpdateGameWidgets();
@@ -721,6 +726,13 @@ export function ChatSettingsDrawer({
   );
   const supportsCharacterActivityToggle = chatCharIds.length > 1 && !isGame;
   const isSceneChat = metadata.sceneStatus === "active" || typeof metadata.sceneOriginChatId === "string";
+  useEffect(() => {
+    if (!open || initialSection !== "autonomous" || !isConversation) return;
+    const frame = window.requestAnimationFrame(() => {
+      scheduleControlsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [initialSection, isConversation, open]);
   const hasGeneratedConversationSchedules =
     !!metadata.characterSchedules &&
     typeof metadata.characterSchedules === "object" &&
@@ -728,6 +740,10 @@ export function ChatSettingsDrawer({
   const conversationSchedulesEnabled =
     metadata.conversationSchedulesEnabled === true ||
     (metadata.conversationSchedulesEnabled == null && hasGeneratedConversationSchedules);
+  const autonomousDailyCapOverride =
+    typeof metadata.autonomousDailyCapOverride === "number" && Number.isFinite(metadata.autonomousDailyCapOverride)
+      ? Math.max(1, Math.floor(metadata.autonomousDailyCapOverride))
+      : null;
   const activeLorebookIds = useMemo<string[]>(
     () => (Array.isArray(metadata.activeLorebookIds) ? metadata.activeLorebookIds : []),
     [metadata.activeLorebookIds],
@@ -2018,6 +2034,11 @@ export function ChatSettingsDrawer({
   // Synchronous lock to close the re-entry gap: React state commits are async, so two
   // fast clicks can both pass the `isRegeneratingSchedules` check before the state updates.
   const isRegeneratingSchedulesRef = useRef(false);
+  type ScheduleGenerationResult = { status: string; schedule?: Record<string, unknown> };
+  type ScheduleGenerationResponse = {
+    results?: Record<string, ScheduleGenerationResult>;
+    schedules?: Record<string, unknown>;
+  };
   const generateConversationSchedules = useCallback(
     async (forceRefresh = false) => {
       if (isRegeneratingSchedulesRef.current) return;
@@ -2025,15 +2046,56 @@ export function ChatSettingsDrawer({
       setIsRegeneratingSchedules(true);
       try {
         const scheduleGenerationPreferences = useUIStore.getState().scheduleGenerationPreferences;
-        await api.post("/conversation/schedule/generate", {
+        const result = await api.post<ScheduleGenerationResponse>("/conversation/schedule/generate", {
           chatId: chat.id,
           characterIds: chatCharIds,
           forceRefresh,
           scheduleGenerationPreferences,
         });
-        qc.invalidateQueries({ queryKey: chatKeys.detail(chat.id) });
-      } catch {
-        // non-critical
+        await qc.refetchQueries({ queryKey: chatKeys.detail(chat.id) });
+        await qc.invalidateQueries({ queryKey: chatKeys.list() });
+
+        const statuses = Object.values(result.results ?? {}).map((entry) => entry.status);
+        const generatedCount = statuses.filter((status) => status === "generated").length;
+        const sharedCount = statuses.filter((status) => status === "shared").length;
+        const freshCount = statuses.filter((status) => status === "fresh").length;
+        const skippedCount = statuses.filter((status) => status === "skipped_assistant").length;
+        const errorMessages = statuses
+          .filter((status) => status.startsWith("error:"))
+          .map((status) => status.slice("error:".length).trim())
+          .filter(Boolean);
+
+        if (errorMessages.length > 0) {
+          const prefix = errorMessages[0]?.startsWith("Refused to fetch") ? "Connection failed" : "Schedule generation failed";
+          const summary = `${prefix}: ${errorMessages[0]}`;
+          if (generatedCount + sharedCount + freshCount > 0) {
+            toast.error(`${summary} (${generatedCount} generated, ${sharedCount} reused, ${freshCount} already fresh).`);
+          } else {
+            toast.error(summary);
+          }
+          return;
+        }
+
+        if (generatedCount > 0 || sharedCount > 0) {
+          const parts: string[] = [];
+          if (generatedCount > 0) parts.push(`${generatedCount} generated`);
+          if (sharedCount > 0) parts.push(`${sharedCount} reused`);
+          if (freshCount > 0) parts.push(`${freshCount} already fresh`);
+          if (skippedCount > 0) parts.push(`${skippedCount} skipped`);
+          toast.success(`Schedules ready: ${parts.join(", ")}.`);
+          return;
+        }
+
+        if (freshCount > 0) {
+          toast.info(`Schedules are already up to date${freshCount > 1 ? ` for ${freshCount} characters` : ""}.`);
+          return;
+        }
+
+        if (skippedCount > 0) {
+          toast.info("No schedules were needed for the selected characters.");
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to generate schedules.");
       } finally {
         isRegeneratingSchedulesRef.current = false;
         setIsRegeneratingSchedules(false);
@@ -2545,7 +2607,9 @@ export function ChatSettingsDrawer({
       <div
         className={cn(
           ROLEPLAY_POPOVER_SHELL,
-          "mari-chat-settings-popover fixed bottom-3 z-[70] flex min-h-0 w-[min(34rem,calc(100vw-1.5rem))] flex-col overflow-hidden max-md:inset-x-2 max-md:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] max-md:top-[calc(3.5rem+env(safe-area-inset-top))] max-md:w-auto",
+          "mari-chat-settings-popover",
+          "mari-chat-settings-drawer",
+          "fixed bottom-3 z-[70] flex min-h-0 w-[min(34rem,calc(100vw-1.5rem))] flex-col overflow-hidden max-md:inset-x-2 max-md:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] max-md:top-[calc(3.5rem+env(safe-area-inset-top))] max-md:w-auto",
           anchor ? "" : "right-3 top-14",
         )}
         style={panelStyle}
@@ -3855,38 +3919,73 @@ export function ChatSettingsDrawer({
               label="Autonomous Messaging"
               icon={<Bot size="0.875rem" />}
               help="Characters can message you unprompted based on their personality, your status, and optional schedules. Chatty characters will reach out sooner when you're inactive."
+              initialOpen={initialSection === "autonomous"}
             >
               <div className="space-y-2">
                 {/* Enable autonomous messages toggle */}
-                <button
-                  onClick={() => {
-                    updateMeta.mutate({ id: chat.id, autonomousMessages: !metadata.autonomousMessages });
-                  }}
+                <div
                   className={cn(
-                    "mari-chat-option-field flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+                    "mari-chat-option-field rounded-lg transition-all",
                     metadata.autonomousMessages && "mari-chat-option-field--active",
                   )}
                 >
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xs font-medium">Autonomous Messages</span>
-                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Characters message you when you&apos;re inactive, even without schedules
-                    </p>
-                  </div>
-                  <div
-                    className={cn(
-                      "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                      metadata.autonomousMessages && "mari-chat-option-switch--active",
-                    )}
+                  <button
+                    onClick={() => {
+                      updateMeta.mutate({ id: chat.id, autonomousMessages: !metadata.autonomousMessages });
+                    }}
+                    className="flex w-full items-center justify-between px-3 py-2.5 text-left"
                   >
+                    <div className="flex-1 min-w-0">
+                      <span className="text-xs font-medium">Autonomous Messages</span>
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                        Characters message you when you&apos;re inactive, even without schedules
+                      </p>
+                    </div>
                     <div
                       className={cn(
-                        "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                        metadata.autonomousMessages && "translate-x-3.5",
+                        "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                        metadata.autonomousMessages && "mari-chat-option-switch--active",
                       )}
-                    />
-                  </div>
-                </button>
+                    >
+                      <div
+                        className={cn(
+                          "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                          metadata.autonomousMessages && "translate-x-3.5",
+                        )}
+                      />
+                    </div>
+                  </button>
+
+                  {metadata.autonomousMessages && (
+                    <div className="border-t border-[var(--border)]/50 px-3 pb-2.5 pt-2">
+                      <label className="space-y-1.5">
+                        <span className="block text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                          Daily Check-In Cap
+                        </span>
+                        <select
+                          value={autonomousDailyCapOverride ?? ""}
+                          onChange={(e) =>
+                            updateMeta.mutate({
+                              id: chat.id,
+                              autonomousDailyCapOverride: e.target.value ? Number(e.target.value) : null,
+                            })
+                          }
+                          className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
+                        >
+                          <option value="">Default (talkativeness-based)</option>
+                          {AUTONOMOUS_DAILY_CAP_OPTIONS.map((cap) => (
+                            <option key={cap} value={cap}>
+                              {cap} check-in{cap === 1 ? "" : "s"} / day
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[0.55rem] text-[var(--muted-foreground)]">
+                          Overrides the talkativeness-based daily limit for each character.
+                        </p>
+                      </label>
+                    </div>
+                  )}
+                </div>
 
                 <button
                   onClick={() => {
@@ -3959,10 +4058,15 @@ export function ChatSettingsDrawer({
                 <button
                   onClick={() => {
                     const nextEnabled = !conversationSchedulesEnabled;
-                    updateMeta.mutate({ id: chat.id, conversationSchedulesEnabled: nextEnabled });
                     if (nextEnabled && !hasGeneratedConversationSchedules) {
+                      if (chatCharIds.length === 0) {
+                        updateMeta.mutate({ id: chat.id, conversationSchedulesEnabled: nextEnabled });
+                        return;
+                      }
                       void generateConversationSchedules(false);
+                      return;
                     }
+                    updateMeta.mutate({ id: chat.id, conversationSchedulesEnabled: nextEnabled });
                   }}
                   className={cn(
                     "mari-chat-option-field flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
@@ -3990,58 +4094,57 @@ export function ChatSettingsDrawer({
                   </div>
                 </button>
 
-                {/* Schedule status */}
-                <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2.5">
-                  <div className="flex-1 min-w-0">
-                    <span className="text-[0.6875rem] leading-snug text-[var(--muted-foreground)]">
-                      {!conversationSchedulesEnabled
-                        ? "Schedules are off: autonomy uses talkativeness and your status."
+                <div ref={scheduleControlsRef} className="scroll-mt-2 space-y-2">
+                  {/* Schedule status */}
+                  <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2.5">
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[0.6875rem] leading-snug text-[var(--muted-foreground)]">
+                        {!conversationSchedulesEnabled
+                          ? "Schedules are off: autonomy uses talkativeness and your status."
+                          : hasGeneratedConversationSchedules
+                            ? "Schedules generated — status is derived from character routines."
+                            : "Schedules enabled — generate routines when you're ready."}
+                      </span>
+                      <p className="text-[0.59375rem] mt-0.5 text-[var(--muted-foreground)]/60">
+                        {conversationSchedulesEnabled
+                          ? "Schedules refresh only after you enable or regenerate them."
+                          : "Turn schedules on if you want availability and busy delays to matter."}
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        await generateConversationSchedules(true);
+                      }}
+                      disabled={isRegeneratingSchedules || chatCharIds.length === 0}
+                      className={cn(
+                        "flex items-center gap-1 rounded-md px-2 py-1 text-[0.625rem] font-medium transition-colors",
+                        isRegeneratingSchedules || chatCharIds.length === 0
+                          ? "cursor-not-allowed text-[var(--muted-foreground)]/60"
+                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                      )}
+                      title={isRegeneratingSchedules ? "Regenerating schedules…" : "Generate schedules"}
+                    >
+                      <RefreshCw size="0.6875rem" className={cn(isRegeneratingSchedules && "animate-spin")} />
+                      {isRegeneratingSchedules
+                        ? "Regenerating…"
                         : hasGeneratedConversationSchedules
-                          ? "Schedules generated — status is derived from character routines."
-                          : "Schedules enabled — generate routines when you're ready."}
-                    </span>
-                    <p className="text-[0.59375rem] text-[var(--muted-foreground)]/60 mt-0.5">
-                      {conversationSchedulesEnabled
-                        ? "Schedules refresh only after you enable or regenerate them."
-                        : "Turn schedules on if you want availability and busy delays to matter."}
-                    </p>
+                          ? "Regenerate"
+                          : "Generate"}
+                    </button>
                   </div>
-                  <button
-                    onClick={async () => {
-                      if (!conversationSchedulesEnabled) {
-                        updateMeta.mutate({ id: chat.id, conversationSchedulesEnabled: true });
-                      }
-                      await generateConversationSchedules(true);
-                    }}
-                    disabled={isRegeneratingSchedules || chatCharIds.length === 0}
-                    className={cn(
-                      "flex items-center gap-1 rounded-md px-2 py-1 text-[0.625rem] font-medium transition-colors",
-                      isRegeneratingSchedules || chatCharIds.length === 0
-                        ? "cursor-not-allowed text-[var(--muted-foreground)]/60"
-                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                    )}
-                    title={isRegeneratingSchedules ? "Regenerating schedules…" : "Generate schedules"}
-                  >
-                    <RefreshCw size="0.6875rem" className={cn(isRegeneratingSchedules && "animate-spin")} />
-                    {isRegeneratingSchedules
-                      ? "Regenerating…"
-                      : hasGeneratedConversationSchedules
-                        ? "Regenerate"
-                        : "Generate"}
-                  </button>
-                </div>
 
-                {/* Schedule editor per character */}
-                {conversationSchedulesEnabled && hasGeneratedConversationSchedules && (
-                  <ScheduleEditor
-                    characterSchedules={metadata.characterSchedules}
-                    chatCharIds={chatCharIds}
-                    charNameMap={charNameMap}
-                    onSave={(updated) => {
-                      updateMeta.mutate({ id: chat.id, characterSchedules: updated });
-                    }}
-                  />
-                )}
+                  {/* Schedule editor per character */}
+                  {conversationSchedulesEnabled && hasGeneratedConversationSchedules && (
+                    <ScheduleEditor
+                      characterSchedules={metadata.characterSchedules}
+                      chatCharIds={chatCharIds}
+                      charNameMap={charNameMap}
+                      onSave={(updated) => {
+                        updateMeta.mutate({ id: chat.id, characterSchedules: updated });
+                      }}
+                    />
+                  )}
+                </div>
               </div>
             </Section>
           )}

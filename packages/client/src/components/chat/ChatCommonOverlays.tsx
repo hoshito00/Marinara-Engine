@@ -31,6 +31,7 @@ const PeekPromptModal = lazy(async () => {
 
 type ChatData = ComponentProps<typeof ChatSettingsDrawer>["chat"];
 export type ChatFloatingPanelAnchor = { right: number; top: number } | null;
+export type ChatSettingsInitialSection = ComponentProps<typeof ChatSettingsDrawer>["initialSection"];
 
 type SharedSceneSettingsProps = {
   spriteArrangeMode: boolean;
@@ -181,6 +182,7 @@ type ChatCommonOverlaysProps = {
   activeChatId: string;
   settingsOpen: boolean;
   settingsAnchor: ChatFloatingPanelAnchor;
+  settingsInitialSection?: ChatSettingsInitialSection;
   filesOpen: boolean;
   galleryOpen: boolean;
   galleryAnchor: ChatFloatingPanelAnchor;
@@ -216,6 +218,7 @@ export function ChatCommonOverlays({
   activeChatId,
   settingsOpen,
   settingsAnchor,
+  settingsInitialSection,
   filesOpen,
   galleryOpen,
   galleryAnchor,
@@ -254,6 +257,7 @@ export function ChatCommonOverlays({
               open={settingsOpen}
               onClose={onCloseSettings}
               anchor={settingsAnchor}
+              initialSection={settingsInitialSection}
               spriteArrangeMode={sceneSettings.spriteArrangeMode}
               onToggleSpriteArrange={sceneSettings.onToggleSpriteArrange}
               onResetSpritePlacements={sceneSettings.onResetSpritePlacements}

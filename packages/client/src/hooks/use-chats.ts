@@ -484,14 +484,14 @@ export function useUpdateChatMetadata() {
     mutationFn: ({ id, ...metadata }: { id: string; [key: string]: unknown }) =>
       api.patch<Chat>(`/chats/${id}/metadata`, metadata),
     onSuccess: (data, vars) => {
-      // Write the server response straight into the detail cache. Plain
-      // invalidation alone leaves stale data in place when no observer is
-      // mounted to trigger a refetch (e.g. user navigated away after firing
-      // the mutation), causing later renders to re-read the pre-mutation
-      // value — which is what made cleared chat backgrounds reappear after
-      // a chat switch round-trip.
+      // Metadata PATCH returns a full chat row, but concurrent updates to
+      // non-metadata fields (for example promptPresetId) may still be in
+      // flight. Merge only the metadata fields so a stale full-row response
+      // cannot clobber fresher chat detail state.
       if (data) {
-        qc.setQueryData(chatKeys.detail(vars.id), data);
+        qc.setQueryData<Chat>(chatKeys.detail(vars.id), (existing) =>
+          existing ? { ...existing, metadata: data.metadata, updatedAt: data.updatedAt } : data,
+        );
       } else {
         qc.invalidateQueries({ queryKey: chatKeys.detail(vars.id) });
       }

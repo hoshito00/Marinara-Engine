@@ -135,11 +135,15 @@ import {
   playConversationSpotifyCommand,
 } from "../services/spotify/conversation-spotify-command.service.js";
 import {
+  buildAutonomousDailyBudgetPatch,
   clearGenerationInProgress,
+  dailyCapForCharacter,
+  getAutonomousDailyBudget,
   markGenerationInProgress,
   recordAssistantActivity,
   recordUserActivity,
 } from "../services/conversation/autonomous.service.js";
+import { buildIntentCooldownPatch, getIntentHint, isMessageIntent } from "../services/conversation/intent.service.js";
 import { buildImpersonateInstruction } from "../services/conversation/impersonate-prompt.js";
 import { stripConversationPromptTimestamps } from "../services/conversation/transcript-sanitize.js";
 import {
@@ -298,6 +302,7 @@ import {
 import {
   areConversationSchedulesEnabled,
   getEnabledConversationSchedules,
+  parseConversationStatusOverrides,
   parsePromptPresetChoices,
 } from "../services/generation/conversation-context-utils.js";
 import { recoverImplicitSelfieCommand } from "../services/generation/selfie-command-recovery.js";
@@ -1042,6 +1047,26 @@ function addMessageReactor(
   return next;
 }
 
+function buildGlobalCustomEmojiUrl(filePath: string): string {
+  return `/api/custom-emojis/file/${encodeURIComponent(filePath)}`;
+}
+
+function buildConversationCustomEmojiKey(scope: "global" | "persona" | "character", scopeId: string | null, name: string): string {
+  return scopeId ? `${scope}:${scopeId}:${name}` : `${scope}:${name}`;
+}
+
+function getStoredFilename(filePath: string): string {
+  return filePath.split("/").pop() ?? filePath;
+}
+
+function buildCharacterGalleryEmojiUrl(characterId: string, filename: string): string {
+  return `/api/characters/${encodeURIComponent(characterId)}/gallery/file/${encodeURIComponent(filename)}`;
+}
+
+function buildPersonaGalleryEmojiUrl(personaId: string, filename: string): string {
+  return `/api/characters/personas/${encodeURIComponent(personaId)}/gallery/file/${encodeURIComponent(filename)}`;
+}
+
 export async function generateRoutes(app: FastifyInstance) {
   const isDebug = logger.isLevelEnabled("debug");
 
@@ -1082,12 +1107,15 @@ export async function generateRoutes(app: FastifyInstance) {
     if (!chat) {
       return reply.status(404).send({ error: "Chat not found" });
     }
-    const requestChatMode = (chat.mode as ChatMode) ?? "roleplay";
+      const requestChatMode = (chat.mode as ChatMode) ?? "roleplay";
     if (requestChatMode === "conversation" && input.impersonate) {
       return reply.status(400).send({ error: "Impersonate is not available in Conversation mode" });
     }
-    let conversationGenerationStartedAt: number | null = null;
-    let conversationAssistantSaved = false;
+      let conversationGenerationStartedAt: number | null = null;
+      let conversationAssistantSaved = false;
+      const conversationCustomEmojiUrlByName = new Map<string, string>();
+      const shouldAccountAutonomousGeneration =
+        requestChatMode === "conversation" && input.autonomous === true && !input.impersonate && !input.regenerateMessageId;
     const activeGenerations = (app as any).activeGenerations as Map<
       string,
       { abortController: AbortController; backendUrl: string | null }
@@ -1297,6 +1325,27 @@ export async function generateRoutes(app: FastifyInstance) {
     if (requestChatMode === "conversation" && !input.impersonate) {
       conversationGenerationStartedAt = markGenerationInProgress(input.chatId);
     }
+
+    const recordSavedAutonomousGeneration = async (characterId: string | null | undefined) => {
+      if (!shouldAccountAutonomousGeneration || !characterId) return;
+      try {
+        const updatedChat = await chats.patchMetadata(
+          input.chatId,
+          (current) => ({
+            ...buildAutonomousDailyBudgetPatch(current, characterId),
+            ...(isMessageIntent(input.autonomousIntentKey)
+              ? buildIntentCooldownPatch(current, characterId, input.autonomousIntentKey)
+              : {}),
+          }),
+          { touchUpdatedAt: false },
+        );
+        if (updatedChat) {
+          chatMeta = parseExtra(updatedChat.metadata) as Record<string, unknown>;
+        }
+      } catch (err) {
+        logger.warn(err, "[generate] Failed to record autonomous accounting for chat %s", input.chatId);
+      }
+    };
 
     // ── SSE progress helper: tells the client what phase we're in ──
     const sendProgress = (phase: string) => {
@@ -1585,6 +1634,7 @@ export async function generateRoutes(app: FastifyInstance) {
         let assistantPrefill = "";
         let customThinkingTags: ThinkingTagPair[] = [];
         let customParameters: Record<string, unknown> = {};
+        let stopSequences: string[] = [];
         let wrapFormat: "xml" | "markdown" | "none" = "xml";
         const runtimeAgentSectionTypes = new Set<RuntimeAgentSectionType>();
         const runtimeAgentSectionTokens = new Map<RuntimeAgentSectionType, RuntimeAgentSectionTokens>();
@@ -1975,6 +2025,9 @@ export async function generateRoutes(app: FastifyInstance) {
           assistantPrefill = assembled.parameters.assistantPrefill ?? "";
           customThinkingTags = normalizeThinkingTagPairs(assembled.parameters.customThinkingTags);
           customParameters = mergeCustomParameters(customParameters, assembled.parameters.customParameters);
+          stopSequences = (assembled.parameters.stopSequences ?? [])
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0);
 
           effectiveMaxContext = mergeModelContextLimit(
             modelAccessPolicy,
@@ -1993,9 +2046,9 @@ export async function generateRoutes(app: FastifyInstance) {
           });
         }
 
-        // ── Conversation mode: inject built-in DM-style system prompt when no preset ──
+        // ── Conversation mode: inject built-in DM-style system prompt ──
         let convoAwarenessBlock: string | null = null;
-        if (!presetId && chatMode === "conversation") {
+        if (chatMode === "conversation") {
           // Gather character names and status for the prompt.
           // If schedules exist in chat metadata, derive status dynamically.
           const schedules: Record<string, import("../services/conversation/schedule.service.js").WeekSchedule> =
@@ -2003,6 +2056,7 @@ export async function generateRoutes(app: FastifyInstance) {
               string,
               import("../services/conversation/schedule.service.js").WeekSchedule
             >;
+          const statusOverrides = parseConversationStatusOverrides(chatMeta.conversationStatusOverrides);
           const convoCharInfo: {
             charId: string;
             name: string;
@@ -2014,27 +2068,36 @@ export async function generateRoutes(app: FastifyInstance) {
             const charRow = await chars.getById(cid);
             if (charRow) {
               const d = JSON.parse(charRow.data as string);
+              const schedSvc = await import("../services/conversation/schedule.service.js");
+              const override = statusOverrides[cid];
               // Schedules are chat-scoped. If this chat has no schedule for the character,
               // don't inherit a stale conversationStatus from some other chat.
-              let status = "online";
-              let activity = "";
+              const fallback = schedSvc.getEffectiveCurrentStatus(undefined, override, promptNow, "");
+              let status = fallback.status;
+              let activity = fallback.activity;
               let todaySchedule = "";
               const schedule = schedules[cid];
               if (schedule) {
-                const schedSvc = await import("../services/conversation/schedule.service.js");
-                const derived = schedSvc.getCurrentStatus(schedule, promptNow);
+                const derived = schedSvc.getEffectiveCurrentStatus(schedule, override, promptNow);
                 status = derived.status;
                 activity = derived.activity;
                 todaySchedule = schedSvc.getTodaySchedule(schedule, promptNow);
-                // Sync status to character DB so sidebar/header dots stay in sync
-                const prevStatus = d.extensions?.conversationStatus;
-                if (prevStatus !== status) {
-                  const extensions = { ...(d.extensions ?? {}), conversationStatus: status };
-                  await chars.update(cid, { extensions } as any).catch(() => {});
-                }
               }
               convoCharInfo.push({ charId: cid, name: d.name ?? "Unknown", status, activity, todaySchedule });
             }
+          }
+          // Persist per-chat presence state so sidebar dots stay scoped to this chat.
+          if (convoCharInfo.length > 0) {
+            void chats.patchMetadata(
+              input.chatId,
+              (current) => ({
+                conversationCharacterStatuses: {
+                  ...(current.conversationCharacterStatuses ?? {}),
+                  ...Object.fromEntries(convoCharInfo.map((c) => [c.charId, { status: c.status, activity: c.activity }])),
+                },
+              }),
+              { touchUpdatedAt: false },
+            ).catch(() => {});
           }
           const convoCharNames = convoCharInfo.map((c) => c.name);
           const charNameList = convoCharNames.length ? convoCharNames.join(", ") : "the character";
@@ -2050,7 +2113,23 @@ export async function generateRoutes(app: FastifyInstance) {
             : requestedMentionNames.size > 0
               ? convoCharInfo.filter((c) => requestedMentionNames.has(c.name.toLowerCase()))
               : convoCharInfo;
-          const respondingConvoCharInfo = scopedConvoCharInfo.length > 0 ? scopedConvoCharInfo : convoCharInfo;
+          let respondingConvoCharInfo = scopedConvoCharInfo.length > 0 ? scopedConvoCharInfo : convoCharInfo;
+
+          if (shouldAccountAutonomousGeneration && !input.regenerateMessageId && !input.impersonate) {
+            const budget = getAutonomousDailyBudget(chatMeta);
+            respondingConvoCharInfo = respondingConvoCharInfo.filter((character) => {
+              const count = budget.counts[character.charId] ?? 0;
+              const cap = dailyCapForCharacter(schedules[character.charId], chatMeta);
+              return count < cap;
+            });
+
+            if (respondingConvoCharInfo.length === 0) {
+              reply.raw.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+              reply.raw.end();
+              return;
+            }
+          }
+
           const respondingConvoCharNames = respondingConvoCharInfo.map((c) => c.name);
 
           // ── Offline skip: if ALL characters are offline, don't generate ──
@@ -2066,7 +2145,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
 
           // ── Typing delay: DND/idle characters don't respond instantly ──
-          if (!input.regenerateMessageId && !input.impersonate) {
+          if (!input.regenerateMessageId && !input.impersonate && !input.skipPresenceDelay) {
             const schedSvc = await import("../services/conversation/schedule.service.js");
             // Check if any characters were @mentioned
             const hasMentions = requestedMentionNames.size > 0 || !!manualTargetCharId;
@@ -2087,11 +2166,36 @@ export async function generateRoutes(app: FastifyInstance) {
                   );
                 }, 0);
             if (delayMs > 0) {
+              const characterStatuses = Object.fromEntries(
+                respondingConvoCharInfo.map((character) => [character.charId, character.status]),
+              );
               // Send "delayed" event first — client shows "will respond in a moment" / "when they're back"
               reply.raw.write(
-                `data: ${JSON.stringify({ type: "delayed", characters: respondingConvoCharNames, status: worstStatus, delayMs })}\n\n`,
+                `data: ${JSON.stringify({
+                  type: "delayed",
+                  characters: respondingConvoCharNames,
+                  characterIds: respondingConvoCharInfo.map((character) => character.charId),
+                  characterStatuses,
+                  status: worstStatus,
+                  delayMs,
+                })}\n\n`,
               );
-              await new Promise((r) => setTimeout(r, delayMs));
+              await new Promise<void>((resolve) => {
+                if (abortController.signal.aborted) {
+                  resolve();
+                  return;
+                }
+                const timeout = setTimeout(resolve, delayMs);
+                abortController.signal.addEventListener(
+                  "abort",
+                  () => {
+                    clearTimeout(timeout);
+                    resolve();
+                  },
+                  { once: true },
+                );
+              });
+              if (abortController.signal.aborted) return;
 
               // Re-read messages after the delay — the user may have sent
               // follow-up messages while the character was busy/idle.
@@ -2104,7 +2208,10 @@ export async function generateRoutes(app: FastifyInstance) {
                   break;
                 }
               }
-              chatMessages = rStartIdx > 0 ? refreshed.slice(rStartIdx) : refreshed;
+              const rScoped = rStartIdx > 0 ? refreshed.slice(rStartIdx) : refreshed;
+              chatMessages = supportsHiddenFromAI
+                ? rScoped.filter((m: any) => !isMessageHiddenFromAI(m))
+                : rScoped;
               if (contextMessageLimit && contextMessageLimit > 0 && chatMessages.length > contextMessageLimit) {
                 chatMessages = chatMessages.slice(-contextMessageLimit);
               }
@@ -2790,6 +2897,7 @@ export async function generateRoutes(app: FastifyInstance) {
             latestVisiblePromptTurn?.role === "assistant" && !input.userMessage?.trim()
               ? `No new message from ${personaName} was sent in this request; this is a proactive/autonomous turn. Do not write ${personaName}'s side of the conversation.`
               : null;
+          const intentHint = isMessageIntent(input.autonomousIntentKey) ? getIntentHint(input.autonomousIntentKey) : "";
 
           const contextBlock = [
             `<context>`,
@@ -2797,6 +2905,7 @@ export async function generateRoutes(app: FastifyInstance) {
             ...(shouldIncludeUserStatus ? [`${personaName}'s status: ${userStatusLine}.`] : []),
             ...(proactiveTurnLine ? [proactiveTurnLine] : []),
             ...(mentionLine ? [mentionLine] : []),
+            ...(intentHint ? [`What prompted this message: ${intentHint}`] : []),
             ...scheduleLines,
             `The current time and date: ${timeStr}, ${dateStr}.`,
             ...(isGroup && earlyGroupMode !== "individual"
@@ -3277,6 +3386,9 @@ export async function generateRoutes(app: FastifyInstance) {
             customThinkingTags = normalizeThinkingTagPairs(params.customThinkingTags);
           }
           customParameters = mergeCustomParameters(customParameters, params.customParameters);
+          if (Array.isArray(params.stopSequences)) {
+            stopSequences = params.stopSequences.map((value) => value.trim()).filter((value) => value.length > 0);
+          }
 
           effectiveMaxContext = mergeModelContextLimit(
             modelAccessPolicy,
@@ -3486,6 +3598,24 @@ export async function generateRoutes(app: FastifyInstance) {
             customStickersStore.list(),
             personaId ? personaGallery.listByPersonaId(personaId) : Promise.resolve([]),
           ]);
+          for (const emoji of globalEmojiRows) {
+            if (emoji.name && emoji.filePath) {
+              conversationCustomEmojiUrlByName.set(
+                buildConversationCustomEmojiKey("global", null, String(emoji.name)),
+                buildGlobalCustomEmojiUrl(String(emoji.filePath)),
+              );
+            }
+          }
+          if (personaId) {
+            for (const img of personaAssetRows) {
+              if (img.customKind === "emoji" && img.customName && img.filePath) {
+                conversationCustomEmojiUrlByName.set(
+                  buildConversationCustomEmojiKey("persona", personaId, img.customName),
+                  buildPersonaGalleryEmojiUrl(personaId, getStoredFilename(String(img.filePath))),
+                );
+              }
+            }
+          }
           const personaEmojiNames = uniqueEmojiNames(
             personaAssetRows
               .filter((img) => img.customKind === "emoji" && img.customName)
@@ -3511,6 +3641,14 @@ export async function generateRoutes(app: FastifyInstance) {
             const emojiNames = uniqueEmojiNames(
               images.filter((img) => img.customKind === "emoji" && img.customName).map((img) => img.customName as string),
             );
+            for (const img of images) {
+              if (img.customKind === "emoji" && img.customName && img.filePath) {
+                conversationCustomEmojiUrlByName.set(
+                  img.customName,
+                  buildCharacterGalleryEmojiUrl(info.charId, getStoredFilename(String(img.filePath))),
+                );
+              }
+            }
             const stickerNames = uniqueEmojiNames(
               images
                 .filter((img) => img.customKind === "sticker" && img.customName)
@@ -5828,6 +5966,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     topK: providerTopK,
                     frequencyPenalty: frequencyPenalty || undefined,
                     presencePenalty: presencePenalty || undefined,
+                    stop: stopSequences.length ? stopSequences : undefined,
                     tools: toolDefs,
                     enableCaching: conn.enableCaching === "true",
                     cachingAtDepth: conn.cachingAtDepth ?? 5,
@@ -5983,6 +6122,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     topK: providerTopK,
                     frequencyPenalty: frequencyPenalty || undefined,
                     presencePenalty: presencePenalty || undefined,
+                    stop: stopSequences.length ? stopSequences : undefined,
                     enableCaching: conn.enableCaching === "true",
                     cachingAtDepth: conn.cachingAtDepth ?? 5,
                     enableThinking,
@@ -6038,6 +6178,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 topK: providerTopK,
                 frequencyPenalty: frequencyPenalty || undefined,
                 presencePenalty: presencePenalty || undefined,
+                stop: stopSequences.length ? stopSequences : undefined,
                 stream: input.streaming,
                 enableCaching: conn.enableCaching === "true",
                 cachingAtDepth: conn.cachingAtDepth ?? 5,
@@ -6376,6 +6517,11 @@ export async function generateRoutes(app: FastifyInstance) {
                 if (markGenerationCommitted && anchoredMsg?.id) {
                   generationComplete = true;
                 }
+                if (chatMode === "conversation" && !input.regenerateMessageId) {
+                  recordAssistantActivity(input.chatId, targetCharId ?? undefined);
+                  conversationAssistantSaved = true;
+                }
+                await recordSavedAutonomousGeneration(targetCharId);
                 return {
                   savedMsg: anchoredMsg,
                   response: "",
@@ -6409,6 +6555,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
             if (chatMode === "conversation" && !input.impersonate && !input.regenerateMessageId) {
               recordAssistantActivity(input.chatId, targetCharId ?? undefined);
+              await recordSavedAutonomousGeneration(targetCharId);
               conversationAssistantSaved = true;
             }
 
@@ -8677,32 +8824,6 @@ export async function generateRoutes(app: FastifyInstance) {
                         schedules[characterId] = schedule;
                         await chats.updateMetadata(input.chatId, { ...freshMeta, characterSchedules: schedules });
 
-                        // Update character's conversationStatus
-                        const charRow = await chars.getById(characterId);
-                        if (charRow) {
-                          const charData = JSON.parse(charRow.data as string);
-                          const newStatus = schedCmd.status ?? charData.extensions?.conversationStatus ?? "online";
-                          const extensions = { ...(charData.extensions ?? {}), conversationStatus: newStatus };
-                          await chars.update(characterId, { extensions } as any);
-                        }
-
-                        // Sync to other chats with this character
-                        const allChatsList = await chats.list();
-                        for (const c of allChatsList) {
-                          if (c.id === input.chatId || c.mode !== "conversation") continue;
-                          const cCharIds: string[] =
-                            typeof c.characterIds === "string"
-                              ? JSON.parse(c.characterIds as string)
-                              : (c.characterIds as string[]);
-                          if (!cCharIds.includes(characterId)) continue;
-                          const cMeta =
-                            typeof c.metadata === "string" ? JSON.parse(c.metadata as string) : (c.metadata ?? {});
-                          if (!areConversationSchedulesEnabled(cMeta)) continue;
-                          const cScheds = cMeta.characterSchedules ?? {};
-                          cScheds[characterId] = schedule;
-                          await chats.updateMetadata(c.id, { ...cMeta, characterSchedules: cScheds });
-                        }
-
                         reply.raw.write(
                           `data: ${JSON.stringify({
                             type: "schedule_updated",
@@ -9160,8 +9281,19 @@ export async function generateRoutes(app: FastifyInstance) {
                       let imageUrl: string | null = null;
                       const customName = reactCmd.emoji.match(/^:([a-zA-Z0-9_]+):$/)?.[1];
                       if (customName) {
-                        const row = await customEmojisStore.getByName(customName);
-                        if (row?.filePath) imageUrl = `/api/custom-emojis/file/${encodeURIComponent(row.filePath)}`;
+                        const emojiLookupKeys = [
+                          characterId ? buildConversationCustomEmojiKey("character", characterId, customName) : null,
+                          personaId ? buildConversationCustomEmojiKey("persona", personaId, customName) : null,
+                          buildConversationCustomEmojiKey("global", null, customName),
+                        ].filter((key): key is string => Boolean(key));
+                        for (const key of emojiLookupKeys) {
+                          imageUrl = conversationCustomEmojiUrlByName.get(key) ?? null;
+                          if (imageUrl) break;
+                        }
+                        if (!imageUrl) {
+                          const row = await customEmojisStore.getByName(customName);
+                          if (row?.filePath) imageUrl = buildGlobalCustomEmojiUrl(String(row.filePath));
+                        }
                       }
                       const targetMsg = await chats.getMessage(targetId);
                       if (targetMsg) {

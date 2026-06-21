@@ -830,9 +830,17 @@ export function ChatSidebar() {
         <div className="relative flex-shrink-0">
           {(() => {
             const charIds = normalizeChatCharacterIds((chat as { characterIds?: unknown }).characterIds);
+            const chatCharStatuses = chat.mode === "conversation"
+              ? (parseChatMetadata(chat.metadata).conversationCharacterStatuses as Record<string, { status?: string }> | undefined)
+              : undefined;
             const avatars = charIds
               .slice(0, 3)
-              .map((id) => charLookup.get(id))
+              .map((id) => {
+                const base = charLookup.get(id);
+                if (!base) return null;
+                const chatStatus = chatCharStatuses?.[id]?.status;
+                return chatStatus ? { ...base, conversationStatus: chatStatus } : base;
+              })
               .filter(Boolean) as {
               name: string;
               avatarUrl: string | null;
@@ -858,6 +866,14 @@ export function ChatSidebar() {
                 />
               );
             };
+            const multiAvatarStatus = avatars.reduce<string | undefined>((worstStatus, avatar) => {
+              const nextStatus = avatar.conversationStatus ?? "online";
+              const priority = { online: 0, idle: 1, offline: 2, dnd: 3 } as const;
+              if (!worstStatus) return nextStatus;
+              return priority[nextStatus as keyof typeof priority] > priority[worstStatus as keyof typeof priority]
+                ? nextStatus
+                : worstStatus;
+            }, undefined);
 
             if (avatars.length === 0) {
               return (
@@ -929,6 +945,7 @@ export function ChatSidebar() {
                     </div>
                   ),
                 )}
+                {statusDot(multiAvatarStatus)}
               </div>
             );
           })()}

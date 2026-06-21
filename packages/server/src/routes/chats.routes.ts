@@ -1329,17 +1329,25 @@ export async function chatsRoutes(app: FastifyInstance) {
           );
         if (userReacted) recordUserReaction(req.params.chatId);
       }
+      const syncAllSwipeExtra: Record<string, unknown> = {};
       if (Object.prototype.hasOwnProperty.call(partial, "hiddenFromAI")) {
-        // hiddenFromAI is a message-level prompt-context control, so keep it
-        // stable across swipe changes instead of binding it to one swipe.
+        syncAllSwipeExtra.hiddenFromAI = partial.hiddenFromAI;
+      }
+      if (Object.prototype.hasOwnProperty.call(partial, "reactions")) {
+        syncAllSwipeExtra.reactions = partial.reactions;
+      }
+
+      if (Object.keys(syncAllSwipeExtra).length > 0) {
+        // hiddenFromAI and reactions are message-level fields, so keep them
+        // stable across swipe changes instead of binding them to one swipe.
         const swipes = await storage.getSwipes(req.params.messageId);
         for (const swipe of swipes) {
-          await storage.updateSwipeExtra(req.params.messageId, swipe.index, { hiddenFromAI: partial.hiddenFromAI });
+          await storage.updateSwipeExtra(req.params.messageId, swipe.index, syncAllSwipeExtra);
         }
-      } else {
-        // Keep swipe extra in sync so per-swipe data (like spriteExpressions) persists
-        await storage.updateSwipeExtra(req.params.messageId, updated.activeSwipeIndex, partial);
       }
+
+      // Keep swipe extra in sync so per-swipe data (like spriteExpressions) persists.
+      await storage.updateSwipeExtra(req.params.messageId, updated.activeSwipeIndex, partial);
       return updated;
     },
   );

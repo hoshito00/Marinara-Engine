@@ -30,6 +30,37 @@ interface GeminiPart {
   functionCall?: GeminiFunctionCall;
 }
 
+interface GeminiCandidate {
+  content?: { parts?: GeminiPart[] };
+  finishReason?: string;
+  finishMessage?: string;
+}
+
+interface GeminiPromptFeedback {
+  blockReason?: string;
+  blockReasonMessage?: string;
+}
+
+interface GeminiApiError {
+  code?: number;
+  message?: string;
+  status?: string;
+}
+
+interface GeminiUsageMetadata {
+  promptTokenCount: number;
+  candidatesTokenCount: number;
+  totalTokenCount: number;
+  thoughtsTokenCount?: number;
+}
+
+interface GeminiResponsePayload {
+  candidates?: GeminiCandidate[];
+  promptFeedback?: GeminiPromptFeedback;
+  error?: GeminiApiError;
+  usageMetadata?: GeminiUsageMetadata;
+}
+
 type GoogleProviderKind = "google" | "google_vertex";
 
 interface GoogleServiceAccountKey {
@@ -163,6 +194,52 @@ function capGeminiThinkingBudget(requestedBudget: number, maxOutputTokens: numbe
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function formatGeminiApiError(error: GeminiApiError | undefined): string | null {
+  if (!error) return null;
+  const status = typeof error.status === "string" && error.status.trim() ? error.status.trim() : null;
+  const message = typeof error.message === "string" && error.message.trim() ? error.message.trim() : null;
+  const code = typeof error.code === "number" ? error.code : null;
+  if (status && message) return `${status}: ${sanitizeApiError(message)}`;
+  if (message) return sanitizeApiError(message);
+  if (status) return status;
+  if (code !== null) return `code ${code}`;
+  return "unknown Gemini API error";
+}
+
+function formatGeminiPromptBlock(feedback: GeminiPromptFeedback | undefined): string | null {
+  const reason = typeof feedback?.blockReason === "string" ? feedback.blockReason.trim() : "";
+  if (!reason) return null;
+  const message = typeof feedback?.blockReasonMessage === "string" ? feedback.blockReasonMessage.trim() : "";
+  return message ? `${reason}: ${message}` : reason;
+}
+
+function geminiFinishReasonError(finishReason: string | undefined, hasOutput: boolean): string | null {
+  const normalized = typeof finishReason === "string" ? finishReason.trim().toUpperCase() : "";
+  if (!normalized || normalized === "STOP") return null;
+  if (hasOutput && normalized === "MAX_TOKENS") return null;
+  if (hasOutput) return null;
+  return `Gemini finished without content (${finishReason})`;
+}
+
+function assertGeminiUsableResponse(
+  payload: GeminiResponsePayload,
+  candidate: GeminiCandidate | undefined,
+  hasOutput: boolean,
+): void {
+  const apiError = formatGeminiApiError(payload.error);
+  if (apiError) throw new Error(`Gemini API error: ${apiError}`);
+
+  const blockReason = formatGeminiPromptBlock(payload.promptFeedback);
+  if (blockReason) throw new Error(`Gemini blocked the prompt (${blockReason})`);
+
+  if (!candidate) throw new Error("Gemini returned no candidates. The prompt may have been blocked or filtered.");
+
+  const finishError = geminiFinishReasonError(candidate.finishReason, hasOutput);
+  if (finishError) throw new Error(finishError);
+
+  if (!hasOutput) throw new Error("Gemini returned no content.");
 }
 
 function parseToolArguments(value: string): Record<string, unknown> {
@@ -302,12 +379,7 @@ function geminiToolCallFromPart(part: GeminiPart, index: number): LLMToolCall | 
   };
 }
 
-function geminiUsage(usage?: {
-  promptTokenCount: number;
-  candidatesTokenCount: number;
-  totalTokenCount: number;
-  thoughtsTokenCount?: number;
-}): LLMUsage | undefined {
+function geminiUsage(usage?: GeminiUsageMetadata): LLMUsage | undefined {
   if (!usage) return undefined;
   return {
     promptTokens: usage.promptTokenCount,
@@ -342,11 +414,11 @@ export class GoogleProvider extends BaseLLMProvider {
     if (this.shouldSuppressModelParameters(options) || !options.tools?.length)
       return super.chatComplete(messages, options);
 
-    const configuredMaxTokens = options.maxTokens ?? 4096;
+    const configuredMaxTokens = this.applyMaxTokensCap(options.maxTokens ?? 4096);
     const contextFit = this.fitMessagesToContext(messages, { ...options, maxTokens: configuredMaxTokens });
     messages = contextFit.messages;
     this.logContextTrim(contextFit, options.model || "gemini-2.0-flash");
-    const maxTokens = contextFit.maxTokens ?? configuredMaxTokens;
+    const maxTokens = this.applyMaxTokensCap(contextFit.maxTokens ?? configuredMaxTokens);
     const model = options.model || "gemini-2.0-flash";
 
     const isGemini3 = /gemini-3/i.test(model);
@@ -391,6 +463,7 @@ export class GoogleProvider extends BaseLLMProvider {
         ...(options.presencePenalty ? { presencePenalty: options.presencePenalty } : {}),
         ...(thinkingConfig ? { thinkingConfig } : {}),
         ...googleResponseFormatConfig(options.responseFormat),
+        ...(options.stop?.length ? { stopSequences: options.stop } : {}),
       },
       tools: formatGoogleTools(options.tools),
       toolConfig: { functionCallingConfig: { mode: "AUTO" } },
@@ -404,7 +477,9 @@ export class GoogleProvider extends BaseLLMProvider {
     const authHeaders =
       this.providerKind === "google_vertex"
         ? await googleAuthHeadersForVertex(this.apiKey)
-        : { "x-goog-api-key": this.apiKey };
+        : this.apiKey.trim()
+          ? { "x-goog-api-key": this.apiKey.trim() }
+          : {};
 
     const response = await llmFetch(url, {
       method: "POST",
@@ -421,18 +496,9 @@ export class GoogleProvider extends BaseLLMProvider {
       throw new Error(`${label} error ${response.status}: ${sanitizeApiError(errorText)}`);
     }
 
-    const json = JSON.parse(await readDecodedText()) as {
-      candidates?: Array<{ content?: { parts?: GeminiPart[] }; finishReason?: string }>;
-      usageMetadata?: {
-        promptTokenCount: number;
-        candidatesTokenCount: number;
-        totalTokenCount: number;
-        thoughtsTokenCount?: number;
-      };
-    };
+    const json = JSON.parse(await readDecodedText()) as GeminiResponsePayload;
     const candidate = json.candidates?.[0];
     const parts = candidate?.content?.parts ?? [];
-    options.onResponseParts?.(parts);
 
     let content = "";
     const toolCalls: LLMToolCall[] = [];
@@ -443,6 +509,8 @@ export class GoogleProvider extends BaseLLMProvider {
       const call = geminiToolCallFromPart(part, i);
       if (call) toolCalls.push(call);
     }
+    assertGeminiUsableResponse(json, candidate, content.length > 0 || toolCalls.length > 0);
+    options.onResponseParts?.(parts);
     if (content && options.onToken) await options.onToken(content);
 
     return {
@@ -455,7 +523,7 @@ export class GoogleProvider extends BaseLLMProvider {
 
   async *chat(messages: ChatMessage[], options: ChatOptions): AsyncGenerator<string, LLMUsage | void, unknown> {
     const suppressModelParameters = this.shouldSuppressModelParameters(options);
-    const configuredMaxTokens = options.maxTokens ?? 4096;
+    const configuredMaxTokens = suppressModelParameters ? undefined : this.applyMaxTokensCap(options.maxTokens ?? 4096);
     const contextFit = this.fitMessagesToContext(messages, { ...options, maxTokens: configuredMaxTokens });
     messages = contextFit.messages;
     this.logContextTrim(contextFit, options.model || "gemini-2.0-flash");
@@ -550,6 +618,7 @@ export class GoogleProvider extends BaseLLMProvider {
         ...(options.presencePenalty ? { presencePenalty: options.presencePenalty } : {}),
         ...(thinkingConfig ? { thinkingConfig } : {}),
         ...googleResponseFormatConfig(options.responseFormat),
+        ...(options.stop?.length ? { stopSequences: options.stop } : {}),
       };
     }
 
@@ -564,7 +633,9 @@ export class GoogleProvider extends BaseLLMProvider {
     const authHeaders =
       this.providerKind === "google_vertex"
         ? await googleAuthHeadersForVertex(this.apiKey)
-        : { "x-goog-api-key": this.apiKey };
+        : this.apiKey.trim()
+          ? { "x-goog-api-key": this.apiKey.trim() }
+          : {};
 
     const response = await llmFetch(url, {
       method: "POST",
@@ -588,18 +659,13 @@ export class GoogleProvider extends BaseLLMProvider {
 
     // ── Non-streaming path (also used when thinking is enabled) ──
     if (!useStreaming) {
-      const json = JSON.parse(await readDecodedText()) as {
-        candidates?: Array<{
-          content: { parts: GeminiPart[] };
-        }>;
-        usageMetadata?: {
-          promptTokenCount: number;
-          candidatesTokenCount: number;
-          totalTokenCount: number;
-          thoughtsTokenCount?: number;
-        };
-      };
-      const parts = json.candidates?.[0]?.content?.parts ?? [];
+      const json = JSON.parse(await readDecodedText()) as GeminiResponsePayload;
+      const candidate = json.candidates?.[0];
+      const parts = candidate?.content?.parts ?? [];
+      const hasVisibleText = parts.some(
+        (part) => !part.thought && typeof part.text === "string" && part.text.length > 0,
+      );
+      assertGeminiUsableResponse(json, candidate, hasVisibleText);
 
       // Report full parts (with thought signatures) for storage
       if (options.onResponseParts) options.onResponseParts(parts);
@@ -643,6 +709,8 @@ export class GoogleProvider extends BaseLLMProvider {
     let thoughtText = "";
     let responseText = "";
     let lastSignature: string | undefined;
+    let sawCandidate = false;
+    let lastFinishReason: string | undefined;
 
     try {
       while (true) {
@@ -661,38 +729,66 @@ export class GoogleProvider extends BaseLLMProvider {
           if (!trimmed.startsWith("data: ")) continue;
           const data = trimmed.slice(6);
 
+          let parsed: GeminiResponsePayload;
           try {
-            const parsed = JSON.parse(data);
-            if (parsed.usageMetadata) {
-              streamUsage = {
-                promptTokens: parsed.usageMetadata.promptTokenCount,
-                completionTokens: parsed.usageMetadata.candidatesTokenCount,
-                totalTokens: parsed.usageMetadata.totalTokenCount,
-                completionReasoningTokens: parsed.usageMetadata.thoughtsTokenCount,
-              };
-            }
-            const parts: GeminiPart[] = parsed.candidates?.[0]?.content?.parts ?? [];
-            for (const part of parts) {
-              // Capture thought signature from any part
-              if (part.thoughtSignature) lastSignature = part.thoughtSignature;
-
-              if (part.thought && part.text) {
-                // Thought summary part
-                thoughtText += part.text;
-                if (options.onThinking) options.onThinking(part.text);
-              } else if (part.text && !part.thought) {
-                // Regular text part
-                responseText += part.text;
-                yield part.text;
-              }
-            }
+            parsed = JSON.parse(data) as GeminiResponsePayload;
           } catch {
             // Skip malformed lines
+            continue;
+          }
+
+          const apiError = formatGeminiApiError(parsed.error);
+          if (apiError) throw new Error(`Gemini API streaming error: ${apiError}`);
+
+          const blockReason = formatGeminiPromptBlock(parsed.promptFeedback);
+          if (blockReason) throw new Error(`Gemini blocked the prompt (${blockReason})`);
+
+          if (parsed.usageMetadata) {
+            streamUsage = {
+              promptTokens: parsed.usageMetadata.promptTokenCount,
+              completionTokens: parsed.usageMetadata.candidatesTokenCount,
+              totalTokens: parsed.usageMetadata.totalTokenCount,
+              completionReasoningTokens: parsed.usageMetadata.thoughtsTokenCount,
+            };
+          }
+          const candidate = parsed.candidates?.[0];
+          const parts: GeminiPart[] = candidate?.content?.parts ?? [];
+          if (candidate) {
+            sawCandidate = true;
+            if (candidate.finishReason) lastFinishReason = candidate.finishReason;
+          }
+          const finishError = geminiFinishReasonError(
+            candidate?.finishReason,
+            responseText.length > 0 || parts.length > 0,
+          );
+          if (finishError) throw new Error(finishError);
+
+          for (const part of parts) {
+            // Capture thought signature from any part
+            if (part.thoughtSignature) lastSignature = part.thoughtSignature;
+
+            if (part.thought && part.text) {
+              // Thought summary part
+              thoughtText += part.text;
+              if (options.onThinking) options.onThinking(part.text);
+            } else if (part.text && !part.thought) {
+              // Regular text part
+              responseText += part.text;
+              yield part.text;
+            }
           }
         }
       }
     } finally {
       if (options.signal) options.signal.removeEventListener("abort", onAbort);
+    }
+
+    if (!responseText) {
+      const finishError = geminiFinishReasonError(lastFinishReason, false);
+      if (finishError) throw new Error(finishError);
+      if (!sawCandidate)
+        throw new Error("Gemini stream returned no candidates. The prompt may have been blocked or filtered.");
+      throw new Error("Gemini stream returned no content.");
     }
 
     // Reconstruct the canonical parts array for storage (thought signatures + summaries)
@@ -706,5 +802,12 @@ export class GoogleProvider extends BaseLLMProvider {
     }
 
     if (streamUsage) return streamUsage;
+  }
+
+  override async embed(_texts: string[], _model: string): Promise<number[][]> {
+    const label = this.providerKind === "google_vertex" ? "Vertex AI Gemini" : "Google Gemini";
+    throw new Error(
+      `${label} connections do not support embeddings through Marinara's OpenAI-compatible /embeddings path. Configure a dedicated OpenAI-compatible or local embedding connection.`,
+    );
   }
 }

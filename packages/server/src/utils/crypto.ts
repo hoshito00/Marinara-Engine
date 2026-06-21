@@ -9,8 +9,24 @@ import { DATA_DIR } from "./data-dir.js";
 import { getEncryptionKeyOverride } from "../config/runtime-config.js";
 
 const ALGORITHM = "aes-256-gcm";
+const REQUIRED_KEY_BYTES = 32; // AES-256 requires a 32-byte key.
 
 let cachedKey: Buffer | null = null;
+
+/**
+ * Decode a hex-encoded encryption key, returning it only if it is exactly 32 bytes.
+ *
+ * `Buffer.from(value, "hex")` is dangerously lenient — it silently stops at the first
+ * non-hex character and drops a trailing nibble on odd-length input, yielding a
+ * wrong-length buffer instead of throwing. Feeding that to AES-256-GCM then throws a
+ * cryptic `Invalid key length` deep inside cipher creation. Validate up front instead.
+ */
+function decodeEncryptionKey(value: string): Buffer | null {
+  const hex = value.trim().toLowerCase();
+  if (hex.length !== REQUIRED_KEY_BYTES * 2 || !/^[0-9a-f]+$/.test(hex)) return null;
+  const buf = Buffer.from(hex, "hex");
+  return buf.length === REQUIRED_KEY_BYTES ? buf : null;
+}
 
 /**
  * Resolve the encryption key with the following priority:
@@ -26,7 +42,13 @@ function getEncryptionKey(): Buffer {
   // 1. Env var takes priority
   const envKey = getEncryptionKeyOverride();
   if (envKey) {
-    cachedKey = Buffer.from(envKey, "hex");
+    const decoded = decodeEncryptionKey(envKey);
+    if (!decoded) {
+      throw new Error(
+        "ENCRYPTION_KEY is invalid — it must be exactly 64 hexadecimal characters (32 bytes). Generate one with `openssl rand -hex 32`.",
+      );
+    }
+    cachedKey = decoded;
     return cachedKey;
   }
 
@@ -35,7 +57,14 @@ function getEncryptionKey(): Buffer {
   if (existsSync(keyPath)) {
     const stored = readFileSync(keyPath, "utf-8").trim();
     if (stored) {
-      cachedKey = Buffer.from(stored, "hex");
+      const decoded = decodeEncryptionKey(stored);
+      if (!decoded) {
+        throw new Error(
+          `Encryption key file at ${keyPath} is corrupt (expected 64 hexadecimal characters). ` +
+            `Restore it from a backup, or delete it to generate a new key — existing saved API keys will then need to be re-entered.`,
+        );
+      }
+      cachedKey = decoded;
       return cachedKey;
     }
   }

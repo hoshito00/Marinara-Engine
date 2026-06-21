@@ -78,8 +78,132 @@ const PDF_ATTACHMENT_MIME_TYPE = "application/pdf";
 
 const CONVERSATION_HIDDEN_SLASH_COMMANDS = new Set(["impersonate", "impersonate_prompt"]);
 
+type ConversationSlashCompletion = {
+  key: string;
+  label: string;
+  description?: string;
+  insertValue: string;
+  cursor: number;
+  kind: "command" | "status" | "character";
+};
+
+const CONVERSATION_STATUS_COMPLETIONS = [
+  { value: "online", description: "Set a character to online" },
+  { value: "idle", description: "Set a character to away" },
+  { value: "dnd", description: "Set a character to busy" },
+  { value: "offline", description: "Set a character to offline" },
+  { value: "clear", description: "Clear a manual status override" },
+] as const;
+
 function isConversationHiddenSlashCommand(command: SlashCommand): boolean {
   return CONVERSATION_HIDDEN_SLASH_COMMANDS.has(command.name);
+}
+
+function quoteSlashArgument(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (!/[\s"\\]/u.test(trimmed)) return trimmed;
+  return `"${trimmed.replace(/["\\]/g, "\\$&")}"`;
+}
+
+function buildSlashCommandPrefill(
+  command: SlashCommand,
+  characters?: Array<{ id: string; name: string }>,
+): { value: string; cursor: number } {
+  if (command.name === "status") {
+    const firstCharacter = characters?.[0]?.name;
+    const value = firstCharacter ? `/status online ${quoteSlashArgument(firstCharacter)}` : "/status online ";
+    const cursor = value.length;
+    return { value, cursor };
+  }
+
+  const value = `/${command.name} `;
+  return { value, cursor: value.length };
+}
+
+function stripLeadingQuote(value: string): string {
+  if (value.startsWith('"') || value.startsWith("'") || value.startsWith("\u201c") || value.startsWith("\u2018")) {
+    return value.slice(1);
+  }
+  return value;
+}
+
+function buildConversationSlashCompletions(
+  input: string,
+  characters: Array<{ id: string; name: string }> | undefined,
+): ConversationSlashCompletion[] {
+  if (!input.startsWith("/")) return [];
+
+  const lowerInput = input.toLowerCase();
+  if (lowerInput.startsWith("/status")) {
+    const rest = input.slice("/status".length);
+    if (rest.length === 0 || /^\s+$/.test(rest)) {
+      return CONVERSATION_STATUS_COMPLETIONS.map((status) => ({
+        key: `status:${status.value}`,
+        label: status.value,
+        description: status.description,
+        insertValue: `/status ${status.value} `,
+        cursor: `/status ${status.value} `.length,
+        kind: "status",
+      }));
+    }
+
+    if (!/^\s/.test(rest)) return [];
+
+    const trimmedRest = rest.trimStart();
+    const firstSpace = trimmedRest.indexOf(" ");
+    const action = (firstSpace === -1 ? trimmedRest : trimmedRest.slice(0, firstSpace)).toLowerCase();
+
+    if (firstSpace === -1) {
+      return CONVERSATION_STATUS_COMPLETIONS.filter((status) => status.value.startsWith(action)).map((status) => ({
+        key: `status:${status.value}`,
+        label: status.value,
+        description: status.description,
+        insertValue: `/status ${status.value} `,
+        cursor: `/status ${status.value} `.length,
+        kind: "status",
+      }));
+    }
+
+    if (!CONVERSATION_STATUS_COMPLETIONS.some((status) => status.value === action)) return [];
+
+    const rawNameQuery = trimmedRest.slice(firstSpace + 1);
+    const nameQuery = stripLeadingQuote(rawNameQuery).trim().toLowerCase();
+    return (characters ?? [])
+      .filter((character) => {
+        if (!nameQuery) return true;
+        const normalizedName = character.name.toLowerCase();
+        return normalizedName.startsWith(nameQuery) || normalizedName.includes(nameQuery);
+      })
+      .map((character) => {
+        const insertValue = `/status ${action} ${quoteSlashArgument(character.name)}`;
+        return {
+          key: `character:${action}:${character.id}`,
+          label: character.name,
+          description: `Set ${character.name} to ${action}`,
+          insertValue,
+          cursor: insertValue.length,
+          kind: "character" as const,
+        };
+      });
+  }
+
+  return getSlashCompletions(input)
+    .filter((command) => !isConversationHiddenSlashCommand(command))
+    .map((command) => {
+      const { value, cursor } = buildSlashCommandPrefill(command, characters);
+      return {
+        key: `command:${command.name}`,
+        label: `/${command.name}`,
+        description:
+          command.name === "status"
+            ? `${command.description}. Use online, idle, dnd, offline, or clear, then a character name.`
+            : command.description,
+        insertValue: value,
+        cursor,
+        kind: "command" as const,
+      };
+    });
 }
 
 function getFileExtension(fileName: string): string {
@@ -146,7 +270,7 @@ export function ConversationInput({
   onPeekPrompt,
 }: ConversationInputProps) {
   const [hasInput, setHasInput] = useState(false);
-  const [completions, setCompletions] = useState<SlashCommand[]>([]);
+  const [completions, setCompletions] = useState<ConversationSlashCompletion[]>([]);
   const [selectedCompletion, setSelectedCompletion] = useState(0);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -651,6 +775,7 @@ export function ConversationInput({
         createMessage: (data) => createMessage.mutate(data),
         invalidate: () => qc.invalidateQueries({ queryKey: chatKeys.all }),
         characterNames: activeCharacterNames,
+        characters: activeChatCharacters?.map((character) => ({ id: character.id, name: character.name })),
       };
       const submittedDraft = textareaRef.current?.value ?? "";
       const submittedHeight = textareaRef.current?.style.height ?? "auto";
@@ -763,6 +888,7 @@ export function ConversationInput({
     });
   }, [
     activeChatId,
+    activeChatCharacters,
     attachments,
     canRetry,
     isReadingAttachments,
@@ -808,6 +934,7 @@ export function ConversationInput({
         createMessage: (data) => createMessage.mutate(data),
         invalidate: () => qc.invalidateQueries({ queryKey: chatKeys.all }),
         characterNames: activeCharacterNames,
+        characters: activeChatCharacters?.map((character) => ({ id: character.id, name: character.name })),
       };
 
       const previousDraft = textareaRef.current?.value ?? "";
@@ -861,6 +988,7 @@ export function ConversationInput({
     },
     [
       activeChatId,
+      activeChatCharacters,
       activeCharacterNames,
       clearInputDraft,
       completions,
@@ -1137,11 +1265,12 @@ export function ConversationInput({
         }
         if (e.key === "Tab" || e.key === "Enter") {
           e.preventDefault();
-          const cmd = completions[selectedCompletion];
-          if (cmd && textareaRef.current) {
-            textareaRef.current.value = `/${cmd.name} `;
-            syncInputState(textareaRef.current.value);
-            if (activeChatId) setInputDraft(activeChatId, textareaRef.current.value);
+          const completion = completions[selectedCompletion];
+          if (completion && textareaRef.current) {
+            textareaRef.current.value = completion.insertValue;
+            textareaRef.current.setSelectionRange(completion.cursor, completion.cursor);
+            syncInputState(completion.insertValue);
+            if (activeChatId) setInputDraft(activeChatId, completion.insertValue);
             setCompletions([]);
           }
           return;
@@ -1203,7 +1332,7 @@ export function ConversationInput({
 
     // Slash completions
     if (formatted.startsWith("/")) {
-      const results = getSlashCompletions(formatted).filter((command) => !isConversationHiddenSlashCommand(command));
+      const results = buildConversationSlashCompletions(formatted, activeChatCharacters);
       setCompletions(results);
       setSelectedCompletion(0);
     } else {
@@ -1251,7 +1380,16 @@ export function ConversationInput({
     } else {
       setEmojiCompletions([]);
     }
-  }, [activeChatId, activeCharacterNames, customEmojiList, clearInputDraft, quoteFormat, setInputDraft, syncInputState]);
+  }, [
+    activeChatId,
+    activeCharacterNames,
+    activeChatCharacters,
+    customEmojiList,
+    clearInputDraft,
+    quoteFormat,
+    setInputDraft,
+    syncInputState,
+  ]);
 
   useEffect(() => {
     if (hasInput && feedback) setFeedback(null);
@@ -1503,13 +1641,14 @@ export function ConversationInput({
         <div className="absolute bottom-full left-3 right-3 z-40 mb-1 max-h-[min(18rem,45dvh)] overflow-y-auto rounded-lg border border-foreground/10 bg-[var(--card)] shadow-lg [-webkit-overflow-scrolling:touch]">
           {completions.map((cmd, i) => (
             <button
-              key={cmd.name}
+              key={cmd.key}
               onMouseDown={(e) => {
                 e.preventDefault();
                 if (textareaRef.current) {
-                  textareaRef.current.value = `/${cmd.name} `;
-                  syncInputState(textareaRef.current.value);
-                  if (activeChatId) setInputDraft(activeChatId, textareaRef.current.value);
+                  textareaRef.current.value = cmd.insertValue;
+                  textareaRef.current.setSelectionRange(cmd.cursor, cmd.cursor);
+                  syncInputState(cmd.insertValue);
+                  if (activeChatId) setInputDraft(activeChatId, cmd.insertValue);
                   setCompletions([]);
                   textareaRef.current.focus();
                 }
@@ -1519,7 +1658,14 @@ export function ConversationInput({
                 i === selectedCompletion ? "bg-foreground/10 text-foreground" : "hover:bg-foreground/10",
               )}
             >
-              <span className="shrink-0 whitespace-nowrap font-mono text-xs">/{cmd.name}</span>
+              <span
+                className={cn(
+                  "shrink-0 whitespace-nowrap text-xs",
+                  cmd.kind === "character" ? "font-medium" : "font-mono",
+                )}
+              >
+                {cmd.label}
+              </span>
               {cmd.description && (
                 <span className="min-w-0 flex-1 text-[0.6875rem] leading-snug text-foreground/45 [overflow-wrap:anywhere]">
                   {cmd.description}

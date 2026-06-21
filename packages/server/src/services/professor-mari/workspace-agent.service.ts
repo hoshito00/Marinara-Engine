@@ -31,6 +31,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type {
   BaseLLMProvider,
+  ChatCompletionResult,
   ChatMessage,
   ChatOptions,
   LLMToolCall,
@@ -81,6 +82,7 @@ type WorkspaceConnection = Pick<
   | "defaultParameters"
   | "openrouterProvider"
   | "claudeFastMode"
+  | "treatAsLocalEndpoint"
   | "enableCaching"
   | "cachingAtDepth"
 > & { provider: string; isLocalSidecar?: boolean };
@@ -407,6 +409,103 @@ function parseToolArgumentsValue(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function shouldUseJsonToolProtocol(connection: WorkspaceConnection): boolean {
+  return isLocalSidecarConnection(connection) || bool(connection.treatAsLocalEndpoint);
+}
+
+function jsonToolProtocolInstruction(tools: LLMToolDefinition[]): string {
+  const toolList = tools
+    .map((tool) => {
+      const parameters = JSON.stringify(tool.function.parameters ?? {}, null, 2);
+      return `- ${tool.function.name}: ${tool.function.description || "Workspace tool"}\n  parameters: ${parameters}`;
+    })
+    .join("\n");
+
+  return `Professor Mari workspace tool protocol:
+If you need a workspace tool, respond with only JSON in this shape:
+{"tool_calls":[{"name":"tool_name","arguments":{}}]}
+You may include multiple tool_calls when they are independent. Do not wrap the JSON in markdown. Do not add prose around tool_calls.
+If no tool is needed, answer normally in plain text.
+
+Available tools:
+${toolList}`;
+}
+
+function extractJsonToolPayload(content: string): Record<string, unknown> | null {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  const objectStart = trimmed.indexOf("{");
+  const objectEnd = trimmed.lastIndexOf("}");
+  const candidates = [
+    trimmed,
+    fenced,
+    objectStart >= 0 && objectEnd > objectStart ? trimmed.slice(objectStart, objectEnd + 1) : null,
+  ].filter((candidate): candidate is string => !!candidate);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (isRecord(parsed)) return parsed;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return null;
+}
+
+function rawJsonToolCalls(payload: Record<string, unknown>): unknown[] {
+  const plural = payload.tool_calls ?? payload.toolCalls ?? payload.calls;
+  if (Array.isArray(plural)) return plural;
+  const single = payload.tool_call ?? payload.toolCall;
+  if (single !== undefined) return [single];
+  if (typeof payload.name === "string") return [payload];
+  return [];
+}
+
+function parseJsonToolProtocolCalls(content: string, tools: LLMToolDefinition[]): LLMToolCall[] {
+  const payload = extractJsonToolPayload(content);
+  if (!payload) return [];
+  const knownTools = new Set(tools.map((tool) => tool.function.name));
+  const calls: LLMToolCall[] = [];
+  rawJsonToolCalls(payload).forEach((raw, index) => {
+    if (!isRecord(raw) || typeof raw.name !== "string" || !knownTools.has(raw.name)) return;
+    const args = parseToolArgumentsValue(raw.arguments ?? raw.args ?? raw.input ?? {});
+    const id =
+      typeof raw.id === "string" && raw.id.trim()
+        ? raw.id.trim()
+        : `mari_json_tool_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`;
+    calls.push({
+      id,
+      type: "function",
+      function: { name: raw.name, arguments: JSON.stringify(args) },
+    });
+  });
+  return calls;
+}
+
+async function runJsonToolProtocol(
+  provider: BaseLLMProvider,
+  messages: ChatMessage[],
+  baseOptions: ChatOptions,
+  tools: LLMToolDefinition[],
+): Promise<ChatCompletionResult> {
+  const protocolMessage: ChatMessage = {
+    role: "system",
+    content: jsonToolProtocolInstruction(tools),
+    contextKind: "prompt",
+  };
+  const firstNonSystemIndex = messages.findIndex((message) => message.role !== "system");
+  const fallbackMessages =
+    firstNonSystemIndex === -1
+      ? [protocolMessage, ...messages]
+      : [...messages.slice(0, firstNonSystemIndex), protocolMessage, ...messages.slice(firstNonSystemIndex)];
+  const result = await provider.chatComplete(fallbackMessages, { ...baseOptions, stream: false });
+  const toolCalls = parseJsonToolProtocolCalls(result.content ?? "", tools);
+  if (toolCalls.length === 0) return result;
+  return { ...result, content: null, toolCalls, finishReason: "tool_calls" };
+}
+
 function emptyUsage(): AssistantMessage["usage"] {
   return {
     input: 0,
@@ -523,10 +622,12 @@ export class ProfessorMariWorkspaceService {
       this.lastError = err instanceof Error ? err.message : String(err);
       return null;
     });
-    const skillsResponse = await getProfessorMariWorkspaceSkillsService().list().catch((err) => {
-      this.lastError = err instanceof Error ? err.message : String(err);
-      return { skills: [], diagnostics: [this.lastError ?? "Professor Mari skills unavailable"] };
-    });
+    const skillsResponse = await getProfessorMariWorkspaceSkillsService()
+      .list()
+      .catch((err) => {
+        this.lastError = err instanceof Error ? err.message : String(err);
+        return { skills: [], diagnostics: [this.lastError ?? "Professor Mari skills unavailable"] };
+      });
     return {
       enabled: this.enabled,
       piAvailable: true,
@@ -908,16 +1009,17 @@ export class ProfessorMariWorkspaceService {
           signal: options?.signal,
           onThinking: pushThinkingDelta,
         };
-        // Use provider-native tool calling only. OpenAI-compatible custom/local endpoints receive the
-        // standard OpenAI `tools` payload; no private JSON tool protocol fallback.
-        const result = tools?.length
-          ? await provider.chatComplete(messages, {
-              ...baseOptions,
-              stream: true,
-              tools,
-              onToken: pushTextDelta,
-            })
-          : await provider.chatComplete(messages, { ...baseOptions, stream: true, onToken: pushTextDelta });
+        const result =
+          tools?.length && shouldUseJsonToolProtocol(connection)
+            ? await runJsonToolProtocol(provider, messages, baseOptions, tools)
+            : tools?.length
+              ? await provider.chatComplete(messages, {
+                  ...baseOptions,
+                  stream: true,
+                  tools,
+                  onToken: pushTextDelta,
+                })
+              : await provider.chatComplete(messages, { ...baseOptions, stream: true, onToken: pushTextDelta });
 
         if (result.content && !sawTextDelta) pushTextDelta(result.content);
         if (isLengthFinishReason(result.finishReason)) output.stopReason = "length";
@@ -982,6 +1084,7 @@ export class ProfessorMariWorkspaceService {
       defaultParameters: null,
       openrouterProvider: null,
       claudeFastMode: "false",
+      treatAsLocalEndpoint: "true",
       enableCaching: "false",
       cachingAtDepth: 5,
       isLocalSidecar: true,

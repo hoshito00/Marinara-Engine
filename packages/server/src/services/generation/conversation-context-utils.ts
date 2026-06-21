@@ -1,5 +1,24 @@
+import type { ConversationStatusOverride } from "@marinara-engine/shared";
+
 export function hasConversationSchedules(value: unknown): value is Record<string, any> {
   return !!value && typeof value === "object" && Object.keys(value as Record<string, unknown>).length > 0;
+}
+
+export function parseConversationStatusOverrides(value: unknown): Record<string, ConversationStatusOverride> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(([, override]) => {
+      if (!override || typeof override !== "object" || Array.isArray(override)) return false;
+      const typedOverride = override as Record<string, unknown>;
+      const status = typedOverride.status;
+      const createdAt = typedOverride.createdAt;
+      return (
+        (status === "online" || status === "idle" || status === "dnd" || status === "offline") &&
+        typeof createdAt === "string" &&
+        createdAt.length > 0
+      );
+    }),
+  ) as Record<string, ConversationStatusOverride>;
 }
 
 export function parsePromptPresetChoices(value: unknown): Record<string, string | string[]> | null {

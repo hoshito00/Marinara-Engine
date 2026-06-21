@@ -25,6 +25,7 @@ interface AutonomousCheckResult {
   reason: string;
   inactivityMs: number;
   generationStartedAt?: number;
+  autonomousIntentKey?: string;
 }
 
 interface BusyDelayResult {
@@ -167,6 +168,10 @@ export function useBackgroundAutonomousPolling() {
                 for await (const _event of api.streamEvents("/generate", {
                   chatId: chat.id,
                   connectionId: null,
+                  forCharacterId: characterId,
+                  autonomous: true,
+                  autonomousIntentKey: result.autonomousIntentKey,
+                  skipPresenceDelay: true,
                   streaming: useUIStore.getState().enableStreaming,
                 })) {
                   if ((_event as { type: string }).type === "token") receivedTokens = true;

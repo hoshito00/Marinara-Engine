@@ -968,24 +968,29 @@
   color: var(--marinara-chat-chrome-button-text-active);
 }
 
-.mari-chat-settings-popover select {
+.mari-chat-settings-popover select,
+.mari-chat-settings-drawer select {
   color-scheme: dark;
   border-color: var(--marinara-chat-chrome-input-border);
   background-color: var(--marinara-chat-chrome-panel-bg);
   color: var(--marinara-chat-chrome-panel-text);
 }
 
-[data-theme="light"] .mari-chat-settings-popover select {
+[data-theme="light"] .mari-chat-settings-popover select,
+[data-theme="light"] .mari-chat-settings-drawer select {
   color-scheme: light;
 }
 
 .mari-chat-settings-popover select option,
-.mari-chat-settings-popover select optgroup {
+.mari-chat-settings-popover select optgroup,
+.mari-chat-settings-drawer select option,
+.mari-chat-settings-drawer select optgroup {
   background-color: var(--marinara-chat-chrome-panel-bg);
   color: var(--marinara-chat-chrome-panel-text);
 }
 
-.mari-chat-settings-popover select:disabled {
+.mari-chat-settings-popover select:disabled,
+.mari-chat-settings-drawer select:disabled {
   color: var(--marinara-chat-chrome-panel-muted);
 }
 

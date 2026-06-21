@@ -540,7 +540,11 @@ export function appendGenerationTailMessages(
   const assistantPrefill = options.assistantPrefill.trim();
 
   if (assistantPrefill) {
-    messages.push({ role: "assistant", content: options.assistantPrefill });
+    // Strip the trailing edge: Anthropic's Messages API rejects a final assistant
+    // message ending in whitespace (HTTP 400), which surfaces to users as a refusal.
+    // A prefill ending in "\n" or a space is common. The user-facing prefill is
+    // rendered separately, so only what is sent to the API is trimmed.
+    messages.push({ role: "assistant", content: options.assistantPrefill.trimEnd() });
   }
 
   if (shouldAppendGoogleUserRegeneration) {
@@ -818,18 +822,37 @@ export function parseStoredGenerationParameters(raw: unknown): StoredGenerationP
   // dropping the whole advanced-parameter fallback.
   const source = parsed as Record<string, unknown>;
   const out: StoredGenerationParameters = {};
-  for (const key of [
-    "temperature",
-    "topP",
-    "topK",
-    "minP",
-    "maxTokens",
-    "maxContext",
-    "frequencyPenalty",
-    "presencePenalty",
-  ] as const) {
-    const value = source[key];
-    if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+  if (source.temperature !== undefined) {
+    const temperature = generationParametersSchema.shape.temperature.safeParse(source.temperature);
+    if (temperature.success) out.temperature = temperature.data;
+  }
+  if (source.topP !== undefined) {
+    const topP = generationParametersSchema.shape.topP.safeParse(source.topP);
+    if (topP.success) out.topP = topP.data;
+  }
+  if (source.topK !== undefined) {
+    const topK = generationParametersSchema.shape.topK.safeParse(source.topK);
+    if (topK.success) out.topK = topK.data;
+  }
+  if (source.minP !== undefined) {
+    const minP = generationParametersSchema.shape.minP.safeParse(source.minP);
+    if (minP.success) out.minP = minP.data;
+  }
+  if (source.maxTokens !== undefined) {
+    const maxTokens = generationParametersSchema.shape.maxTokens.safeParse(source.maxTokens);
+    if (maxTokens.success) out.maxTokens = maxTokens.data;
+  }
+  if (source.maxContext !== undefined) {
+    const maxContext = generationParametersSchema.shape.maxContext.safeParse(source.maxContext);
+    if (maxContext.success) out.maxContext = maxContext.data;
+  }
+  if (source.frequencyPenalty !== undefined) {
+    const frequencyPenalty = generationParametersSchema.shape.frequencyPenalty.safeParse(source.frequencyPenalty);
+    if (frequencyPenalty.success) out.frequencyPenalty = frequencyPenalty.data;
+  }
+  if (source.presencePenalty !== undefined) {
+    const presencePenalty = generationParametersSchema.shape.presencePenalty.safeParse(source.presencePenalty);
+    if (presencePenalty.success) out.presencePenalty = presencePenalty.data;
   }
   if (
     source.reasoningEffort === null ||

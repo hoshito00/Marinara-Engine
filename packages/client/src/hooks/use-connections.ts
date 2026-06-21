@@ -52,6 +52,7 @@ export type CreateConnectionPayload = {
   promptPresetId?: string | null;
   maxTokensOverride?: number | null;
   maxParallelJobs?: number;
+  treatAsLocalEndpoint?: boolean;
   claudeFastMode?: boolean;
 };
 

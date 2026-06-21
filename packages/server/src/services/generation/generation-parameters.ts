@@ -1,7 +1,4 @@
-import {
-  DEFAULT_AGENT_MAX_TOKENS,
-  MIN_AGENT_MAX_TOKENS,
-} from "@marinara-engine/shared";
+import { DEFAULT_AGENT_MAX_TOKENS, MIN_AGENT_MAX_TOKENS } from "@marinara-engine/shared";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
 
 export function normalizeMaxContext(value: unknown): number | undefined {
@@ -30,7 +27,7 @@ export function minContextLimit(...limits: Array<number | undefined>): number | 
 
 export function normalizeChatTopP(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  if (value <= 0) return 1;
+  if (value < 0) return undefined;
   return Math.min(value, 1);
 }
 

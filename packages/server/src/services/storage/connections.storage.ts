@@ -104,6 +104,7 @@ export function createConnectionsStorage(db: DB) {
         promptPresetId: input.promptPresetId ?? null,
         maxTokensOverride: input.maxTokensOverride ?? null,
         claudeFastMode: String(input.claudeFastMode ?? false),
+        treatAsLocalEndpoint: String(input.treatAsLocalEndpoint ?? false),
         createdAt: timestamp,
         updatedAt: timestamp,
       });
@@ -195,6 +196,9 @@ export function createConnectionsStorage(db: DB) {
       if (data.claudeFastMode !== undefined) {
         updateFields.claudeFastMode = String(data.claudeFastMode);
       }
+      if (data.treatAsLocalEndpoint !== undefined) {
+        updateFields.treatAsLocalEndpoint = String(data.treatAsLocalEndpoint);
+      }
       await db.update(apiConnections).set(updateFields).where(eq(apiConnections.id, id));
       return this.getById(id);
     },
@@ -232,6 +236,7 @@ export function createConnectionsStorage(db: DB) {
         maxTokensOverride: source.maxTokensOverride,
         maxParallelJobs: source.maxParallelJobs,
         claudeFastMode: source.claudeFastMode,
+        treatAsLocalEndpoint: source.treatAsLocalEndpoint,
         createdAt: timestamp,
         updatedAt: timestamp,
       });

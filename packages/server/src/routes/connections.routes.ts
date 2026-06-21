@@ -5,7 +5,12 @@ import type { FastifyInstance } from "fastify";
 import { existsSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { extname, join } from "path";
-import { MODEL_LISTS, createConnectionSchema, inferImageSource } from "@marinara-engine/shared";
+import {
+  MODEL_LISTS,
+  createConnectionSchema,
+  generationParametersSchema,
+  inferImageSource,
+} from "@marinara-engine/shared";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { fetchOpenAIChatGPTModels, getOpenAIChatGPTAuth } from "../services/llm/openai-chatgpt-auth.js";
@@ -285,7 +290,20 @@ export async function connectionsRoutes(app: FastifyInstance) {
     if (raw !== null && (typeof raw !== "object" || Array.isArray(raw))) {
       return reply.status(400).send({ error: "Body must be a JSON object or null" });
     }
-    const params = raw as Record<string, unknown> | null;
+    let params: Record<string, unknown> | null = null;
+    if (raw !== null) {
+      const parsed = generationParametersSchema.partial().safeParse(raw);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "Invalid generation parameters",
+          issues: parsed.error.issues.map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
+        });
+      }
+      params = parsed.data;
+    }
     await storage.updateDefaultParameters(req.params.id, params);
     return { success: true };
   });

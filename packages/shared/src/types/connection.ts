@@ -65,6 +65,8 @@ export interface APIConnection {
   maxTokensOverride: number | null;
   /** Maximum number of agent LLM jobs Marinara may run at once for this connection. */
   maxParallelJobs: number;
+  /** Treat this endpoint as local/custom for Professor Mari tool-protocol fallbacks. */
+  treatAsLocalEndpoint: boolean;
   /** Folder this connection belongs to (null = root/unfiled). */
   folderId: string | null;
   /** Manual sort order within a folder (lower = higher). 0 = use default sort. */

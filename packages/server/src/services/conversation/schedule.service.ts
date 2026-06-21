@@ -6,6 +6,7 @@
 
 import { createLLMProvider } from "../llm/provider-registry.js";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
+import type { ConversationPresenceStatus, ConversationStatusOverride } from "@marinara-engine/shared";
 
 // ── Types ──
 
@@ -16,7 +17,7 @@ export interface ScheduleBlock {
   /** What the character is doing */
   activity: string;
   /** Derived status for this block */
-  status: "online" | "idle" | "dnd" | "offline";
+  status: ConversationPresenceStatus;
 }
 
 /** One day of a character's schedule */
@@ -43,11 +44,17 @@ export interface CharacterSchedules {
   [characterId: string]: WeekSchedule;
 }
 
+export interface CurrentConversationStatus {
+  status: ConversationPresenceStatus;
+  activity: string;
+  override?: ConversationStatusOverride;
+}
+
 // ── Constants ──
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-const STATUS_KEYWORDS: Record<string, "online" | "idle" | "dnd" | "offline"> = {
+const STATUS_KEYWORDS: Record<string, ConversationPresenceStatus> = {
   sleep: "offline",
   sleeping: "offline",
   nap: "offline",
@@ -258,7 +265,7 @@ function parseScheduleResponse(content: string): Omit<WeekSchedule, "weekStart">
 /**
  * Infer a conversation status from an activity description.
  */
-function inferStatusFromActivity(activity: string): "online" | "idle" | "dnd" | "offline" {
+function inferStatusFromActivity(activity: string): ConversationPresenceStatus {
   const lower = activity.toLowerCase();
   for (const [keyword, status] of Object.entries(STATUS_KEYWORDS)) {
     if (lower.includes(keyword)) return status;
@@ -275,7 +282,7 @@ function inferStatusFromActivity(activity: string): "online" | "idle" | "dnd" | 
 export function getCurrentStatus(
   schedule: WeekSchedule,
   now: Date = new Date(),
-): { status: "online" | "idle" | "dnd" | "offline"; activity: string } {
+): { status: ConversationPresenceStatus; activity: string } {
   const dayName = DAYS[(now.getDay() + 6) % 7]!; // JS Sunday=0, we want Monday=0
   const daySchedule = schedule.days[dayName];
   if (!daySchedule || daySchedule.length === 0) {
@@ -304,6 +311,35 @@ export function getCurrentStatus(
   }
 
   return { status: "online", activity: "free time" };
+}
+
+function isManualPresenceStatus(value: unknown): value is ConversationStatusOverride["status"] {
+  return value === "online" || value === "idle" || value === "dnd" || value === "offline";
+}
+
+export function getActiveStatusOverride(
+  override: ConversationStatusOverride | null | undefined,
+  now: Date = new Date(),
+): ConversationStatusOverride | null {
+  if (!override || !isManualPresenceStatus(override.status)) return null;
+  if (typeof override.expiresAt === "string") {
+    const expiresAt = new Date(override.expiresAt).getTime();
+    if (!override.expiresAt.trim() || !Number.isFinite(expiresAt) || expiresAt <= now.getTime()) return null;
+  }
+  return override;
+}
+
+export function getEffectiveCurrentStatus(
+  schedule: WeekSchedule | null | undefined,
+  override: ConversationStatusOverride | null | undefined,
+  now: Date = new Date(),
+  fallbackActivity = "free time",
+): CurrentConversationStatus {
+  const scheduled = schedule ? getCurrentStatus(schedule, now) : { status: "online" as const, activity: fallbackActivity };
+  const activeOverride = getActiveStatusOverride(override, now);
+  if (!activeOverride) return scheduled;
+  const activity = typeof activeOverride.activity === "string" ? activeOverride.activity.trim() : scheduled.activity;
+  return { status: activeOverride.status, activity, override: activeOverride };
 }
 
 /**
@@ -342,7 +378,7 @@ export function getMonday(date: Date = new Date()): Date {
  * Returns 0 for online characters, 2-5 minutes for busy characters.
  */
 function getConfiguredResponseDelayMinutes(
-  status: "online" | "idle" | "dnd" | "offline",
+  status: ConversationPresenceStatus,
   schedule?: Pick<WeekSchedule, "idleResponseDelayMinutes" | "dndResponseDelayMinutes">,
 ): number | null {
   const rawValue =
@@ -358,7 +394,7 @@ function getConfiguredResponseDelayMinutes(
 }
 
 function getConfiguredResponseDelay(
-  status: "online" | "idle" | "dnd" | "offline",
+  status: ConversationPresenceStatus,
   schedule?: Pick<WeekSchedule, "idleResponseDelayMinutes" | "dndResponseDelayMinutes">,
 ): number {
   const overrideMinutes = getConfiguredResponseDelayMinutes(status, schedule);
@@ -379,7 +415,7 @@ function getConfiguredResponseDelay(
 }
 
 export function getBusyDelay(
-  status: "online" | "idle" | "dnd" | "offline",
+  status: ConversationPresenceStatus,
   schedule?: Pick<WeekSchedule, "idleResponseDelayMinutes" | "dndResponseDelayMinutes">,
 ): number {
   return getConfiguredResponseDelay(status, schedule);
@@ -390,7 +426,7 @@ export function getBusyDelay(
  * Returns 0 for online, shorter delays for idle/dnd than autonomous delays.
  */
 export function getDirectMessageDelay(
-  status: "online" | "idle" | "dnd" | "offline",
+  status: ConversationPresenceStatus,
   schedule?: Pick<WeekSchedule, "idleResponseDelayMinutes" | "dndResponseDelayMinutes">,
 ): number {
   return getConfiguredResponseDelay(status, schedule);
@@ -402,7 +438,7 @@ export function getDirectMessageDelay(
  * DND characters respond faster (but not instantly — they're still busy).
  * Offline characters still won't respond (handled elsewhere).
  */
-export function getMentionDelay(status: "online" | "idle" | "dnd" | "offline"): number {
+export function getMentionDelay(status: ConversationPresenceStatus): number {
   switch (status) {
     case "online":
       return 0;
@@ -413,4 +449,71 @@ export function getMentionDelay(status: "online" | "idle" | "dnd" | "offline"): 
     case "offline":
       return 0;
   }
+}
+
+export function getAdjacentBlocks(
+  schedule: WeekSchedule,
+  now: Date = new Date(),
+): { previous: ScheduleBlock | null; current: ScheduleBlock | null; next: ScheduleBlock | null } {
+  const todayName = DAYS[(now.getDay() + 6) % 7]!;
+  const yesterdayName = DAYS[(now.getDay() + 5) % 7]!;
+  const tomorrowName = DAYS[now.getDay() % 7]!;
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  function parseBlockMinutes(block: ScheduleBlock): { start: number; end: number } | null {
+    const [startStr, endStr] = block.time.split("-");
+    if (!startStr || !endStr) return null;
+    const [sh, sm] = startStr.split(":").map(Number);
+    const [eh, em] = endStr.split(":").map(Number);
+    const start = (sh ?? 0) * 60 + (sm ?? 0);
+    const end = (eh ?? 0) * 60 + (em ?? 0);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    return { start, end };
+  }
+
+  const candidates: Array<{ block: ScheduleBlock; start: number; end: number }> = [];
+  const addBlocks = (blocks: ScheduleBlock[] | undefined, dayOffset: number) => {
+    for (const block of blocks ?? []) {
+      const range = parseBlockMinutes(block);
+      if (!range) continue;
+      const start = dayOffset * 1440 + range.start;
+      let end = dayOffset * 1440 + range.end;
+      if (range.end <= range.start) end += 1440;
+      candidates.push({ block, start, end });
+    }
+  };
+
+  addBlocks(schedule.days[yesterdayName], -1);
+  addBlocks(schedule.days[todayName], 0);
+  addBlocks(schedule.days[tomorrowName], 1);
+  candidates.sort((a, b) => a.start - b.start);
+
+  let previous: ScheduleBlock | null = null;
+  let current: ScheduleBlock | null = null;
+  let next: ScheduleBlock | null = null;
+  for (const candidate of candidates) {
+    if (candidate.start <= currentMinutes && currentMinutes < candidate.end) {
+      current = candidate.block;
+      continue;
+    }
+    if (candidate.end <= currentMinutes) {
+      previous = candidate.block;
+      continue;
+    }
+    if (!next && candidate.start > currentMinutes) {
+      next = candidate.block;
+    }
+  }
+
+  return { previous, current, next };
+}
+
+export function blockDurationMinutes(block: ScheduleBlock): number {
+  const [startStr, endStr] = block.time.split("-");
+  if (!startStr || !endStr) return 0;
+  const [sh, sm] = startStr.split(":").map(Number);
+  const [eh, em] = endStr.split(":").map(Number);
+  const start = (sh ?? 0) * 60 + (sm ?? 0);
+  const end = (eh ?? 0) * 60 + (em ?? 0);
+  return end > start ? end - start : 1440 - start + end;
 }
