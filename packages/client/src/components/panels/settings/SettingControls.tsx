@@ -172,12 +172,14 @@ export function ToggleSetting({
   onChange,
   help,
   disabled = false,
+  switchClassName,
 }: {
-  label: string;
+  label: ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
   help?: string;
   disabled?: boolean;
+  switchClassName?: string;
 }) {
   return (
     <SettingsSwitch
@@ -189,6 +191,7 @@ export function ToggleSetting({
       labelPosition="start"
       className="justify-between gap-3 p-1.5"
       labelClassName="text-xs"
+      switchClassName={switchClassName}
     />
   );
 }
@@ -283,6 +286,8 @@ type SettingsSwitchProps = SettingsSwitchAccessibleLabel & {
   labelPosition?: "start" | "end";
   className?: string;
   labelClassName?: string;
+  /** Appended last so callers can intentionally override checked-track visuals. */
+  switchClassName?: string;
 };
 
 export function SettingsSwitch({
@@ -297,6 +302,7 @@ export function SettingsSwitch({
   labelPosition = "end",
   className,
   labelClassName,
+  switchClassName,
 }: SettingsSwitchProps) {
   const inputId = useId();
   const switchControl = (
@@ -318,6 +324,7 @@ export function SettingsSwitch({
           checked ? "bg-[var(--primary)]/70" : "bg-[var(--border)]",
           checked && "mari-accent-animated",
           disabled ? "cursor-not-allowed" : "cursor-pointer",
+          switchClassName,
         )}
       >
         <span

@@ -27,6 +27,8 @@ interface ColorPickerProps {
   clearValue?: string;
   /** Optional compact control shown beside the label. */
   headerAction?: ReactNode;
+  /** Prevent editing while still showing the current preview. */
+  disabled?: boolean;
 }
 
 /** Preset palette colors */
@@ -97,6 +99,7 @@ export function ColorPicker({
   clearLabel = "Clear",
   clearValue = "",
   headerAction,
+  disabled = false,
 }: ColorPickerProps) {
   const isGradient = isCssGradient(value);
   const [mode, setMode] = useState<"solid" | "gradient">(isGradient ? "gradient" : "solid");
@@ -119,6 +122,12 @@ export function ColorPicker({
       setMode("solid");
     }
   }, [value]);
+
+  useEffect(() => {
+    if (disabled) {
+      setExpanded(false);
+    }
+  }, [disabled]);
 
   const handleSolidChange = useCallback(
     (color: string) => {
@@ -193,6 +202,7 @@ export function ColorPicker({
             <button
               type="button"
               onClick={clearColor}
+              disabled={disabled}
               className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)] transition-all hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
             >
               <X size="0.625rem" />
@@ -206,11 +216,15 @@ export function ColorPicker({
       {/* Preview + trigger */}
       <button
         type="button"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          if (!disabled) setExpanded(!expanded);
+        }}
+        disabled={disabled}
         className={cn(
           "flex w-full items-center rounded-xl border border-[var(--border)] bg-[var(--secondary)] transition-all hover:border-[var(--primary)]/30",
           compact ? "gap-2 rounded-lg p-1.5" : "gap-3 p-2.5",
           expanded && "border-[var(--primary)]/40 ring-1 ring-[var(--primary)]/20",
+          disabled && "cursor-not-allowed opacity-60 hover:border-[var(--border)]",
         )}
       >
         <div

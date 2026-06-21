@@ -2335,6 +2335,20 @@ summary[class*="cursor-pointer"],
   animation: mari-logo-title-shift 5.2s ease-in-out infinite;
 }
 
+.mari-rgb-toggle-track {
+  background: linear-gradient(
+    90deg,
+    var(--mari-logo-title-cyan) 0%,
+    var(--mari-logo-title-orange) 28%,
+    var(--mari-logo-title-pink) 55%,
+    var(--mari-logo-title-orange) 78%,
+    var(--mari-logo-title-cyan) 100%
+  );
+  background-position: 0% 50%;
+  background-size: 220% 100%;
+  animation: mari-logo-title-shift 5.2s ease-in-out infinite;
+}
+
 @keyframes mari-logo-title-shift {
   0%,
   100% {
@@ -2349,6 +2363,10 @@ summary[class*="cursor-pointer"],
 
 @media (prefers-reduced-motion: reduce) {
   .mari-logo-gradient-text--active {
+    animation: none;
+  }
+
+  .mari-rgb-toggle-track {
     animation: none;
   }
 }

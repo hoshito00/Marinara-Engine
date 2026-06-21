@@ -186,6 +186,7 @@ export function App() {
   const fontFamily = useUIStore((s) => s.fontFamily);
   const appBackgroundColor = useUIStore((s) => s.appBackgroundColor);
   const appAccentColor = useUIStore((s) => s.appAccentColor);
+  const appAccentPulseMode = useUIStore((s) => s.appAccentPulseMode);
   const appAccentRgbMode = useUIStore((s) => s.appAccentRgbMode);
   const chatChromeTextColor = useUIStore((s) => s.chatChromeTextColor);
   const hasModalOpen = useUIStore((s) => s.modal !== null);
@@ -268,6 +269,7 @@ export function App() {
     const accentSource = accent || defaultAccent;
     const solidAccent = getCssColorFallback(accentSource, defaultAccent);
     const accentIsGradient = isCssGradient(accentSource);
+    const accentAnimationEnabled = (appAccentRgbMode && accentIsGradient) || (appAccentPulseMode && !accentIsGradient);
     const gradientStops = accentIsGradient ? getCssGradientColorStops(accentSource, solidAccent) : [solidAccent];
 
     let accentAnimationTimer: ReturnType<typeof window.setInterval> | null = null;
@@ -329,7 +331,7 @@ export function App() {
     };
 
     const syncAccentAnimationState = () => {
-      if (appAccentRgbMode && canRunAccentAnimation()) {
+      if (accentAnimationEnabled && canRunAccentAnimation()) {
         startAccentAnimation();
       } else {
         stopAccentAnimation();
@@ -340,7 +342,7 @@ export function App() {
       syncAccentAnimationState();
     };
 
-    if (!appAccentRgbMode) {
+    if (!accentAnimationEnabled) {
       applyStaticAccent();
     }
     syncAccentAnimationState();
@@ -364,7 +366,7 @@ export function App() {
       }
       delete root.dataset.marinaraAccentAnimation;
     };
-  }, [appAccentColor, appAccentRgbMode, theme]);
+  }, [appAccentColor, appAccentPulseMode, appAccentRgbMode, theme]);
 
   useEffect(() => {
     const root = document.documentElement;

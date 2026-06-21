@@ -10,6 +10,7 @@ import {
   type ImageStyleProfileSettings,
   type QuoteFormat,
 } from "@marinara-engine/shared";
+import { isCssGradient } from "../lib/css-colors";
 
 type Panel =
   | "chat"
@@ -356,6 +357,8 @@ interface UIState {
   theme: "dark" | "light";
   appBackgroundColor: string;
   appAccentColor: string;
+  appAccentColorBeforeRgbMode: string | null;
+  appAccentPulseMode: boolean;
   appAccentRgbMode: boolean;
   chatBackground: string | null;
   /** Default background applied when a Roleplay chat has no saved background yet. */
@@ -641,6 +644,8 @@ interface UIState {
   setTheme: (theme: "dark" | "light") => void;
   setAppBackgroundColor: (color: string) => void;
   setAppAccentColor: (color: string) => void;
+  setAppAccentColorBeforeRgbMode: (color: string | null) => void;
+  setAppAccentPulseMode: (enabled: boolean) => void;
   setAppAccentRgbMode: (enabled: boolean) => void;
   setChatBackground: (url: string | null) => void;
   setDefaultRoleplayBackground: (url: string) => void;
@@ -996,6 +1001,8 @@ export const useUIStore = create<UIState>()(
       theme: "dark" as const,
       appBackgroundColor: "",
       appAccentColor: "",
+      appAccentColorBeforeRgbMode: null,
+      appAccentPulseMode: false,
       appAccentRgbMode: false,
       chatBackground: null,
       defaultRoleplayBackground: DEFAULT_ROLEPLAY_BACKGROUND_URL,
@@ -1202,6 +1209,9 @@ export const useUIStore = create<UIState>()(
       setTheme: (theme) => set({ theme }),
       setAppBackgroundColor: (color) => set({ appBackgroundColor: normalizeAppBackgroundColor(color) }),
       setAppAccentColor: (color) => set({ appAccentColor: normalizeAppAccentColor(color) }),
+      setAppAccentColorBeforeRgbMode: (color) =>
+        set({ appAccentColorBeforeRgbMode: color === null ? null : normalizeAppAccentColor(color) }),
+      setAppAccentPulseMode: (enabled) => set({ appAccentPulseMode: enabled }),
       setAppAccentRgbMode: (enabled) => set({ appAccentRgbMode: enabled }),
       setChatBackground: (url) => set({ chatBackground: url }),
       setDefaultRoleplayBackground: (url) => set({ defaultRoleplayBackground: normalizeDefaultRoleplayBackground(url) }),
@@ -1713,7 +1723,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 60,
+      version: 61,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2117,6 +2127,12 @@ export const useUIStore = create<UIState>()(
         if (version <= 59 && persisted.appAccentRgbMode === undefined) {
           persisted.appAccentRgbMode = false;
         }
+        if (version <= 60 && persisted.appAccentColorBeforeRgbMode === undefined) {
+          persisted.appAccentColorBeforeRgbMode = null;
+        }
+        if (version <= 60 && persisted.appAccentPulseMode === undefined) {
+          persisted.appAccentPulseMode = false;
+        }
         persisted.characterLibrarySort = normalizeCharacterLibrarySort(persisted.characterLibrarySort);
         persisted.characterPanelScrollTop = normalizeScrollTop(persisted.characterPanelScrollTop);
         persisted.characterLibraryScrollTop = normalizeScrollTop(persisted.characterLibraryScrollTop);
@@ -2131,7 +2147,20 @@ export const useUIStore = create<UIState>()(
           persisted.recentUserActivities = [];
         }
         persisted.appAccentColor = normalizeAppAccentColor(persisted.appAccentColor);
+        persisted.appAccentColorBeforeRgbMode =
+          persisted.appAccentColorBeforeRgbMode === null
+            ? null
+            : normalizeAppAccentColor(persisted.appAccentColorBeforeRgbMode);
         persisted.appBackgroundColor = normalizeAppBackgroundColor(persisted.appBackgroundColor);
+        persisted.appAccentPulseMode = persisted.appAccentPulseMode === true;
+        if (version <= 60 && persisted.appAccentRgbMode === true) {
+          const persistedTheme = persisted.theme === "light" ? "light" : "dark";
+          const persistedAccentSource = persisted.appAccentColor || getDefaultAppAccentColor(persistedTheme);
+          if (!isCssGradient(persistedAccentSource)) {
+            persisted.appAccentPulseMode = true;
+            persisted.appAccentRgbMode = false;
+          }
+        }
         persisted.appAccentRgbMode = persisted.appAccentRgbMode === true;
         persisted.chatChromeTextColor = normalizeChatChromeTextColor(persisted.chatChromeTextColor);
         persisted.defaultRoleplayBackground = normalizeDefaultRoleplayBackground(persisted.defaultRoleplayBackground);
@@ -2175,6 +2204,8 @@ export const useUIStore = create<UIState>()(
         theme: state.theme,
         appBackgroundColor: state.appBackgroundColor,
         appAccentColor: state.appAccentColor,
+        appAccentColorBeforeRgbMode: state.appAccentColorBeforeRgbMode,
+        appAccentPulseMode: state.appAccentPulseMode,
         appAccentRgbMode: state.appAccentRgbMode,
         chatBackground: state.chatBackground,
         defaultRoleplayBackground: state.defaultRoleplayBackground,
