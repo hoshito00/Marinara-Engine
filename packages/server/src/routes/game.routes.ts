@@ -97,9 +97,10 @@ import {
   scoreMusic,
   scoreAmbient,
   serializeResolvedSkillCheckTag,
+  applyTrackerFieldLocksToGameStatePatch,
   parseTrackerFieldLocks,
 } from "@marinara-engine/shared";
-import { mergeCustomParameters } from "./generate/generate-route-utils.js";
+import { mergeCustomParameters, parseGameStateRow } from "./generate/generate-route-utils.js";
 import {
   fitMessagesToModelAccessContext,
   mergeModelContextLimit,
@@ -1408,6 +1409,20 @@ function parseJsonField<T>(raw: unknown, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+async function updateLatestGameStateWithTrackerLocks(
+  gameStateStore: ReturnType<typeof createGameStateStorage>,
+  chatId: string,
+  patch: Record<string, unknown>,
+) {
+  const latest = await gameStateStore.getLatest(chatId);
+  if (!latest) return null;
+  const lockedPatch = applyTrackerFieldLocksToGameStatePatch(
+    patch,
+    parseGameStateRow(latest as Record<string, unknown>),
+  );
+  return gameStateStore.updateLatest(chatId, lockedPatch as any);
 }
 
 function normalizeGameInventoryItems(raw: unknown): ChatInventoryItem[] {
@@ -6237,7 +6252,7 @@ export async function gameRoutes(app: FastifyInstance) {
 
     // Also update the game state snapshot so WeatherEffects picks it up
     const gameStateStore = createGameStateStorage(app.db);
-    await gameStateStore.updateLatest(chatId, {
+    await updateLatestGameStateWithTrackerLocks(gameStateStore, chatId, {
       time: formatGameTime(newTime),
     });
 
@@ -6270,7 +6285,7 @@ export async function gameRoutes(app: FastifyInstance) {
 
       await chats.updateMetadata(chatId, { ...meta, gameWeather: weather });
       const gameStateStore = createGameStateStorage(app.db);
-      await gameStateStore.updateLatest(chatId, {
+      await updateLatestGameStateWithTrackerLocks(gameStateStore, chatId, {
         weather: weather.type,
         temperature: `${weather.temperature}°C`,
       });
@@ -6288,7 +6303,7 @@ export async function gameRoutes(app: FastifyInstance) {
 
     // Also update the game state snapshot so WeatherEffects picks it up
     const gameStateStore = createGameStateStorage(app.db);
-    await gameStateStore.updateLatest(chatId, {
+    await updateLatestGameStateWithTrackerLocks(gameStateStore, chatId, {
       weather: weather.type,
       temperature: `${weather.temperature}°C`,
     });

@@ -519,10 +519,9 @@ async function buildRetryAgentContext(args: {
       characterId: typeof message.characterId === "string" && message.characterId ? message.characterId : null,
     })),
   );
-  const retryAssistantMsgIds = agentSlice
-    .filter((message: any) => message.role === "assistant")
-    .map((message: any) => message.id as string);
-  const retryCommittedSnapshots = await gameStateStore.getCommittedForMessages(retryAssistantMsgIds);
+  const retryCommittedSnapshots = await gameStateStore.getCommittedForMessages(
+    agentSlice.filter((message: any) => message.role === "assistant"),
+  );
   const retryVisibleAnchor =
     historicalGameStateAnchor ??
     (useLatestGameStateFallback && lastAssistant ? resolveVisibleGameStateAnchor([lastAssistant]) : null);
@@ -2178,8 +2177,8 @@ async function applyRetryResultEffects(args: {
             },
           });
         }
-      } catch {
-        // Non-critical patching failure.
+      } catch (err) {
+        logger.warn(err, "[retry-agents] Failed to apply text rewrite");
       }
     }
 
@@ -2225,8 +2224,8 @@ async function applyRetryResultEffects(args: {
         }
 
         sendSseEvent(reply, { type: "game_state_patch", data: lockedWorldStatePatch });
-      } catch {
-        // Non-critical patching failure.
+      } catch (err) {
+        logger.error(err, "[retry-agents] Failed to apply world-state tracker update");
       }
     }
 
@@ -2313,8 +2312,8 @@ async function applyRetryResultEffects(args: {
           { baseSnapshot: await loadRetryBaseGameStateSnapshot() },
         );
         sendSseEvent(reply, { type: "game_state_patch", data: { presentCharacters } });
-      } catch {
-        // Non-critical patching failure.
+      } catch (err) {
+        logger.error(err, "[retry-agents] Failed to apply character-tracker update");
       }
     }
 
@@ -2349,8 +2348,8 @@ async function applyRetryResultEffects(args: {
         if (personaPatch.changed) {
           sendSseEvent(reply, { type: "game_state_patch", data: personaPatch.patch });
         }
-      } catch {
-        // Non-critical patching failure.
+      } catch (err) {
+        logger.error(err, "[retry-agents] Failed to apply persona-stats tracker update");
       }
     }
 
@@ -2363,8 +2362,8 @@ async function applyRetryResultEffects(args: {
             await agentsStore.setMemory(agentConfigId, chatId, "overarchingArc", plotData.overarchingArc ?? null);
           }
         }
-      } catch {
-        // Non-critical patching failure.
+      } catch (err) {
+        logger.warn(err, "[retry-agents] Failed to persist secret plot memory");
       }
     }
 
@@ -2386,8 +2385,8 @@ async function applyRetryResultEffects(args: {
             updates: retryUpdates,
           });
         }
-      } catch {
-        // Non-critical patching failure.
+      } catch (err) {
+        logger.error(err, "[retry-agents] Failed to apply custom tracker update");
       }
     }
 

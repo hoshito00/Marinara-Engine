@@ -253,15 +253,26 @@ export function createGameStateStorage(db: DB) {
     },
 
     /** Batch-fetch committed snapshots for multiple messages. Returns a Map of messageId → row. */
-    async getCommittedForMessages(messageIds: string[]) {
+    async getCommittedForMessages(messagesOrIds: Array<string | { id: string; activeSwipeIndex?: number | null }>) {
+      const activeSwipeByMessageId = new Map<string, number>();
+      const messageIds = messagesOrIds.map((messageOrId) => {
+        if (typeof messageOrId === "string") return messageOrId;
+        if (typeof messageOrId.activeSwipeIndex === "number") {
+          activeSwipeByMessageId.set(messageOrId.id, messageOrId.activeSwipeIndex);
+        }
+        return messageOrId.id;
+      });
       if (messageIds.length === 0) return new Map<string, typeof gameStateSnapshots.$inferSelect>();
       const rows = await db
         .select()
         .from(gameStateSnapshots)
-        .where(and(inArray(gameStateSnapshots.messageId, messageIds), eq(gameStateSnapshots.committed, 1)));
+        .where(and(inArray(gameStateSnapshots.messageId, messageIds), eq(gameStateSnapshots.committed, 1)))
+        .orderBy(desc(gameStateSnapshots.createdAt));
       const map = new Map<string, typeof gameStateSnapshots.$inferSelect>();
       for (const row of rows) {
-        map.set(row.messageId, row);
+        const activeSwipeIndex = activeSwipeByMessageId.get(row.messageId);
+        if (activeSwipeIndex !== undefined && row.swipeIndex !== activeSwipeIndex) continue;
+        if (!map.has(row.messageId)) map.set(row.messageId, row);
       }
       return map;
     },

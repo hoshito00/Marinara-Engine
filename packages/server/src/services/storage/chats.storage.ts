@@ -8,6 +8,7 @@ import {
   messages,
   messageSwipes,
   gameStateSnapshots,
+  gameCheckpoints,
   gameEngineState,
   chatImages,
   oocInfluences,
@@ -190,6 +191,28 @@ async function invalidateMemoryChunksFrom(db: DB, chatId: string, createdAt: str
 
 /** Create the chat storage facade used by routes and importers. */
 export function createChatsStorage(db: DB) {
+  async function deleteGameStateForMessages(messageIds: string[]) {
+    const ids = Array.from(new Set(messageIds.filter(Boolean)));
+    if (ids.length === 0) return;
+
+    const CHUNK = 500;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const snapshots = await db
+        .select({ id: gameStateSnapshots.id })
+        .from(gameStateSnapshots)
+        .where(inArray(gameStateSnapshots.messageId, chunk));
+      const snapshotIds = snapshots.map((row) => row.id).filter(Boolean);
+
+      for (let j = 0; j < snapshotIds.length; j += CHUNK) {
+        const snapshotChunk = snapshotIds.slice(j, j + CHUNK);
+        await db.delete(gameCheckpoints).where(inArray(gameCheckpoints.snapshotId, snapshotChunk));
+      }
+      await db.delete(gameCheckpoints).where(inArray(gameCheckpoints.messageId, chunk));
+      await db.delete(gameStateSnapshots).where(inArray(gameStateSnapshots.messageId, chunk));
+    }
+  }
+
   async function collectFreshConversationSchedules(
     characterIds: string[],
     excludeChatId?: string,
@@ -484,6 +507,8 @@ export function createChatsStorage(db: DB) {
       // Clean up agent data referencing this chat
       await db.delete(agentRuns).where(eq(agentRuns.chatId, id));
       await db.delete(agentMemory).where(eq(agentMemory.chatId, id));
+      await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, id));
+      await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, id));
 
       // Clean up gallery images (DB records + files on disk)
       await db.delete(chatImages).where(eq(chatImages.chatId, id));
@@ -500,6 +525,8 @@ export function createChatsStorage(db: DB) {
       for (const chat of groupChats) {
         await db.delete(agentRuns).where(eq(agentRuns.chatId, chat.id));
         await db.delete(agentMemory).where(eq(agentMemory.chatId, chat.id));
+        await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, chat.id));
+        await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, chat.id));
         await db.delete(chatImages).where(eq(chatImages.chatId, chat.id));
         const galleryDir = join(GALLERY_DIR, chat.id);
         if (existsSync(galleryDir)) rmSync(galleryDir, { recursive: true, force: true });
@@ -804,6 +831,7 @@ export function createChatsStorage(db: DB) {
 
     async removeMessage(id: string) {
       const existing = await this.getMessage(id);
+      if (existing) await deleteGameStateForMessages([id]);
       await db.delete(messages).where(eq(messages.id, id));
       if (existing) {
         await invalidateMemoryChunksFrom(db, existing.chatId, existing.createdAt);
@@ -820,13 +848,14 @@ export function createChatsStorage(db: DB) {
           ? and(inArray(messages.id, chunk), eq(messages.chatId, chatId))
           : inArray(messages.id, chunk);
         const existingRows = await db
-          .select({ chatId: messages.chatId, createdAt: messages.createdAt })
+          .select({ id: messages.id, chatId: messages.chatId, createdAt: messages.createdAt })
           .from(messages)
           .where(condition);
         for (const row of existingRows) {
           const current = earliestByChat.get(row.chatId);
           if (!current || row.createdAt < current) earliestByChat.set(row.chatId, row.createdAt);
         }
+        await deleteGameStateForMessages(existingRows.map((row) => row.id));
         await db.delete(messages).where(condition);
       }
       for (const [affectedChatId, createdAt] of earliestByChat) {

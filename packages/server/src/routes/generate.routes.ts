@@ -4241,8 +4241,9 @@ export async function generateRoutes(app: FastifyInstance) {
         );
 
         // Batch-fetch committed game state snapshots for assistant messages in the agent context
-        const assistantMsgIds = agentSlice.filter((m: any) => m.role === "assistant").map((m: any) => m.id as string);
-        const committedSnapshots = await gameStateStore.getCommittedForMessages(assistantMsgIds);
+        const committedSnapshots = await gameStateStore.getCommittedForMessages(
+          agentSlice.filter((m: any) => m.role === "assistant"),
+        );
         const visibleHistorySnapshot =
           latestGameState &&
           visibleGameStateAnchor &&
@@ -7929,8 +7930,8 @@ export async function generateRoutes(app: FastifyInstance) {
                     ),
                   );
                 }
-              } catch {
-                // Non-critical
+              } catch (err) {
+                logger.error(err, "[generate] Failed to apply world-state tracker update");
               }
             }
 
@@ -8274,8 +8275,8 @@ export async function generateRoutes(app: FastifyInstance) {
                     }
                   }
                 }
-              } catch {
-                // Non-critical
+              } catch (err) {
+                logger.error(err, "[generate] Failed to apply persona-stats tracker update");
               }
             }
 
@@ -8323,8 +8324,8 @@ export async function generateRoutes(app: FastifyInstance) {
                     );
                   }
                 }
-              } catch {
-                // Non-critical
+              } catch (err) {
+                logger.error(err, "[generate] Failed to apply custom tracker update");
               }
             }
 

@@ -85,6 +85,16 @@ const MEMORY_RECALL_IMPORT_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
 const MEMORY_RECALL_IMPORT_BATCH_SIZE = 500;
 const PROFESSOR_MARI_INTERNAL_CHAT_MARKER = "professor-mari";
 
+function parseSnapshotJson<T>(value: unknown, fallback: T): T {
+  if (value == null) return fallback;
+  if (typeof value !== "string") return value as T;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function toSafeExportName(name: string, fallback: string) {
   const safe = name
     .trim()
@@ -2454,10 +2464,7 @@ export async function chatsRoutes(app: FastifyInstance) {
         targetSwipeIndex: number,
       ) => {
         try {
-          const overrides =
-            snapshot.manualOverrides && typeof snapshot.manualOverrides === "string"
-              ? (JSON.parse(snapshot.manualOverrides) as Record<string, string>)
-              : null;
+          const overrides = parseSnapshotJson<Record<string, string> | null>(snapshot.manualOverrides, null);
           await gameStateStore.create(
             {
               chatId: newChat.id,
@@ -2468,32 +2475,17 @@ export async function chatsRoutes(app: FastifyInstance) {
               location: (snapshot.location as string) ?? null,
               weather: (snapshot.weather as string) ?? null,
               temperature: (snapshot.temperature as string) ?? null,
-              presentCharacters:
-                typeof snapshot.presentCharacters === "string"
-                  ? JSON.parse(snapshot.presentCharacters)
-                  : (snapshot.presentCharacters ?? []),
-              recentEvents:
-                typeof snapshot.recentEvents === "string"
-                  ? JSON.parse(snapshot.recentEvents)
-                  : (snapshot.recentEvents ?? []),
-              playerStats:
-                snapshot.playerStats == null
-                  ? null
-                  : typeof snapshot.playerStats === "string"
-                    ? JSON.parse(snapshot.playerStats)
-                    : snapshot.playerStats,
-              personaStats:
-                snapshot.personaStats == null
-                  ? null
-                  : typeof snapshot.personaStats === "string"
-                    ? JSON.parse(snapshot.personaStats)
-                    : snapshot.personaStats,
+              presentCharacters: parseSnapshotJson(snapshot.presentCharacters, []),
+              recentEvents: parseSnapshotJson(snapshot.recentEvents, []),
+              playerStats: parseSnapshotJson(snapshot.playerStats, null),
+              personaStats: parseSnapshotJson(snapshot.personaStats, null),
               fieldLocks: parseTrackerFieldLocks(snapshot.fieldLocks),
               committed: (snapshot.committed as any) === 1,
             } as any,
             overrides,
           );
-        } catch {
+        } catch (err) {
+          logger.warn(err, "Failed to copy game-state snapshot while branching chat");
           // Ignore individual snapshot copy failures; branching should still succeed.
         }
       };
