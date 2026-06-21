@@ -29,16 +29,17 @@ export function resolveModelAccessPolicy(args: {
     suppressModelParameters,
     connectionMaxContext,
     knownModelContext,
-    effectiveMaxContext: suppressModelParameters ? undefined : minContextLimit(connectionMaxContext, knownModelContext),
+    effectiveMaxContext: suppressModelParameters
+      ? connectionMaxContext
+      : minContextLimit(connectionMaxContext, knownModelContext),
   };
 }
 
 export function mergeModelContextLimit(
-  policy: ModelAccessPolicy,
+  _policy: ModelAccessPolicy,
   current: number | undefined,
   requested: number | undefined,
 ): number | undefined {
-  if (policy.suppressModelParameters) return undefined;
   return minContextLimit(current, requested);
 }
 
@@ -46,8 +47,9 @@ export function resolveStoredModelContextLimit(
   policy: ModelAccessPolicy,
   params: { useMaxContext?: boolean; maxContext?: unknown } | null | undefined,
 ): number | undefined {
-  if (!params || policy.suppressModelParameters) return undefined;
-  return params.useMaxContext ? policy.knownModelContext : normalizeMaxContext(params.maxContext);
+  if (!params) return undefined;
+  if (params.useMaxContext) return policy.knownModelContext ?? policy.connectionMaxContext;
+  return normalizeMaxContext(params.maxContext);
 }
 
 export function modelAccessOptions<T extends ChatOptions>(options: T, policy: ModelAccessPolicy): T {
@@ -64,11 +66,11 @@ export function fitMessagesToModelAccessContext(args: {
     args.messages,
     {
       maxContext: args.policy.effectiveMaxContext,
-      maxTokens: args.policy.suppressModelParameters ? undefined : args.maxTokens,
+      maxTokens: args.maxTokens,
       tools: args.tools,
-      suppressModelParameters: args.policy.suppressModelParameters,
+      suppressModelParameters: false,
     },
-    args.policy.suppressModelParameters ? undefined : args.policy.connectionMaxContext,
+    args.policy.connectionMaxContext,
   );
 }
 
@@ -81,6 +83,6 @@ export function fitMessagesForModelAccess(args: {
   const fit = fitMessagesToModelAccessContext(args);
   return {
     messages: fit.messages,
-    maxTokensForSend: args.policy.suppressModelParameters ? undefined : (fit.maxTokens ?? args.maxTokens),
+    maxTokensForSend: fit.maxTokens ?? args.maxTokens,
   };
 }

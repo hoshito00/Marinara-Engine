@@ -179,7 +179,7 @@ const CHARS_PER_TOKEN = 4;
 const MESSAGE_OVERHEAD_TOKENS = 6;
 const IMAGE_TOKEN_ESTIMATE = 256;
 const MIN_FILE_TOKEN_ESTIMATE = 1_500;
-const CONTEXT_SAFETY_MARGIN_TOKENS = 64;
+const CONTEXT_SAFETY_MARGIN_TOKENS = 500;
 const CONTEXT_SAFETY_MARGIN_RATIO = 0.02;
 const MIN_INPUT_BUDGET_TOKENS = 128;
 const MIN_OUTPUT_BUDGET_TOKENS = 128;
@@ -343,13 +343,13 @@ export function fitMessagesToContext(
   options: ContextFitOptions,
   defaultMaxContext?: number,
 ): ContextFitResult {
-  const suppressModelParameters = options.suppressModelParameters === true;
-  const requestedMaxTokens = suppressModelParameters ? undefined : normalizePositiveInteger(options.maxTokens);
-  const maxContext = suppressModelParameters
-    ? undefined
-    : minDefined(normalizePositiveInteger(options.maxContext), normalizePositiveInteger(defaultMaxContext));
+  const requestedMaxTokens = normalizePositiveInteger(options.maxTokens);
+  const maxContext = minDefined(
+    normalizePositiveInteger(options.maxContext),
+    normalizePositiveInteger(defaultMaxContext),
+  );
   const estimatedTokensBefore = estimateMessagesTokens(messages);
-  const toolTokens = suppressModelParameters ? 0 : estimateToolDefinitionTokens(options.tools);
+  const toolTokens = estimateToolDefinitionTokens(options.tools);
 
   if (!maxContext) {
     return {

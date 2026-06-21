@@ -41,6 +41,71 @@ function decodeEntities(str: string): string {
   return str.replace(/&amp;|&quot;|&#39;|&lt;|&gt;/g, (m) => HTML_ENTITIES[m] ?? m);
 }
 
+type YoutubeSearchItem = {
+  id?: { videoId?: string };
+  snippet?: { title?: string; channelTitle?: string; thumbnails?: { medium?: { url?: string } } };
+};
+
+type YoutubeSearchResponse = {
+  items?: YoutubeSearchItem[];
+};
+
+type YoutubeSearchResult = {
+  videoId: string;
+  title: string;
+  channel: string;
+  thumbnail: string | null;
+};
+
+const YOUTUBE_MUSIC_QUERY_EXCLUSIONS = `-shorts -short -tiktok -meme -"be like"`;
+const YOUTUBE_LOW_VALUE_MUSIC_RESULT_RE =
+  /(^|[\s#|:()[\]-])(shorts?|tiktok|tik\s*tok|memes?|be like|pov|reaction|reacts|compilation|funny moments)(?=$|[\s#|:()[\]-])/i;
+const YOUTUBE_LONG_FORM_MUSIC_QUERY_RE =
+  /\b(extended|one\s*hour|1\s*hour|hour(?:long)?|loop(?:able|ed)?|mix|ambient|soundtrack|ost|playlist)\b/i;
+
+function isLikelyShortsOrMemeResult(result: YoutubeSearchResult): boolean {
+  return YOUTUBE_LOW_VALUE_MUSIC_RESULT_RE.test(`${result.title} ${result.channel}`);
+}
+
+function toYoutubeSearchResults(items: YoutubeSearchItem[] | undefined, allowLikelyShortsOrMemes = false) {
+  const results: YoutubeSearchResult[] = [];
+  for (const item of items ?? []) {
+    const videoId = item.id?.videoId;
+    if (!videoId) continue;
+    const result = {
+      videoId,
+      title: decodeEntities(item.snippet?.title ?? ""),
+      channel: decodeEntities(item.snippet?.channelTitle ?? ""),
+      thumbnail: item.snippet?.thumbnails?.medium?.url ?? null,
+    };
+    if (!allowLikelyShortsOrMemes && isLikelyShortsOrMemeResult(result)) continue;
+    results.push(result);
+  }
+  return results;
+}
+
+function buildYoutubeSearchUrl(
+  query: string,
+  apiKey: string,
+  maxResults: number,
+  videoDuration?: "medium" | "long",
+): string {
+  const params = new URLSearchParams({
+    part: "snippet",
+    type: "video",
+    videoEmbeddable: "true",
+    maxResults: String(maxResults),
+    q: `${query} ${YOUTUBE_MUSIC_QUERY_EXCLUSIONS}`,
+    key: apiKey,
+  });
+  if (videoDuration) params.set("videoDuration", videoDuration);
+  return `https://www.googleapis.com/youtube/v3/search?${params}`;
+}
+
+function preferredYoutubeMusicDuration(query: string): "medium" | "long" {
+  return YOUTUBE_LONG_FORM_MUSIC_QUERY_RE.test(query) ? "long" : "medium";
+}
+
 /** Translate a YouTube Data API error body into a clear, actionable message. */
 function friendlyYoutubeError(status: number, body: string): string {
   let reason = "";
@@ -149,35 +214,36 @@ export async function youtubeRoutes(app: FastifyInstance) {
     }
 
     const limit = Math.max(1, Math.min(10, Number(req.query.limit ?? 5) || 5));
+    const searchLimit = Math.max(limit, Math.min(25, limit * 4));
 
     try {
-      const url = `https://www.googleapis.com/youtube/v3/search?${new URLSearchParams({
-        part: "snippet",
-        type: "video",
-        videoEmbeddable: "true",
-        maxResults: String(limit),
-        q,
-        key: apiKey,
-      })}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      const preferredUrl = buildYoutubeSearchUrl(q, apiKey, searchLimit, preferredYoutubeMusicDuration(q));
+      const res = await fetch(preferredUrl, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) {
         const body = await res.text();
         return reply.status(res.status).send({ error: friendlyYoutubeError(res.status, body) });
       }
-      const data = (await res.json()) as {
-        items?: Array<{
-          id?: { videoId?: string };
-          snippet?: { title?: string; channelTitle?: string; thumbnails?: { medium?: { url?: string } } };
-        }>;
-      };
-      const results = (data.items ?? [])
-        .filter((item) => item.id?.videoId)
-        .map((item) => ({
-          videoId: item.id!.videoId!,
-          title: decodeEntities(item.snippet?.title ?? ""),
-          channel: decodeEntities(item.snippet?.channelTitle ?? ""),
-          thumbnail: item.snippet?.thumbnails?.medium?.url ?? null,
-        }));
+      const preferredData = (await res.json()) as YoutubeSearchResponse;
+      const byId = new Map<string, YoutubeSearchResult>();
+      for (const result of toYoutubeSearchResults(preferredData.items)) {
+        byId.set(result.videoId, result);
+      }
+
+      if (byId.size === 0) {
+        const fallbackUrl = buildYoutubeSearchUrl(q, apiKey, searchLimit);
+        const fallbackRes = await fetch(fallbackUrl, { signal: AbortSignal.timeout(10_000) });
+        if (!fallbackRes.ok) {
+          const body = await fallbackRes.text();
+          return reply.status(fallbackRes.status).send({ error: friendlyYoutubeError(fallbackRes.status, body) });
+        }
+        const fallbackData = (await fallbackRes.json()) as YoutubeSearchResponse;
+        for (const result of toYoutubeSearchResults(fallbackData.items)) {
+          if (!byId.has(result.videoId)) byId.set(result.videoId, result);
+          if (byId.size >= limit) break;
+        }
+      }
+
+      const results = [...byId.values()].slice(0, limit);
       return { query: q, results, count: results.length };
     } catch (err) {
       logger.error(err, "YouTube search failed");

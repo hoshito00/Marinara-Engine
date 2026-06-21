@@ -1727,13 +1727,19 @@ export function useGenerate() {
                 leadingSpeakerPrefixFilter.discard();
                 if (holdingTextRewrite && heldTextRewriteMessage) {
                   thinkingStreamFilter.reset();
-                  if (streamingEnabled && shouldDisplayRawStream) {
+                  const textRewriteUsesLiveStream =
+                    streamingEnabled &&
+                    shouldDisplayRawStream &&
+                    !useChatStore.getState().committedStreamChatIds.has(params.chatId);
+                  if (textRewriteUsesLiveStream) {
                     replaceGeneratedContentWithTypewriter(rewrittenText, { retype: true });
                     await waitForTypewriterDrain();
                   } else {
                     fullBuffer = rewrittenText;
                     pendingText = "";
-                    setStreamBuffer(fullBuffer, params.chatId);
+                    if (!useChatStore.getState().committedStreamChatIds.has(params.chatId)) {
+                      setStreamBuffer(fullBuffer, params.chatId);
+                    }
                   }
                   const heldExtra = parseMessageExtraRecordForMerge(heldTextRewriteMessage.extra);
                   delete heldExtra.postProcessingPending;
@@ -1838,9 +1844,11 @@ export function useGenerate() {
                 cancelAnimationFrame(rafId);
                 pendingText = "";
                 typingActive = false;
-                fullBuffer = normalizeLineBreakSpacing(savedMessage.content || "Rewrite agents are working!");
-                setStreamCommitted(params.chatId, false);
-                setStreamBuffer(fullBuffer, params.chatId);
+                fullBuffer = "";
+                upsertPersistedMessages(qc, params.chatId, [savedMessage]);
+                clearStreamBuffer(params.chatId);
+                clearThinkingBuffer(params.chatId);
+                setStreamCommitted(params.chatId, true);
                 break;
               }
               // Once an ordinary roleplay stream is saved, the durable message

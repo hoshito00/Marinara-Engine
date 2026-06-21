@@ -846,12 +846,25 @@
   box-shadow: 0 1px 2px color-mix(in srgb, var(--primary) 16%, transparent);
 }
 
-.mari-topbar-chat-cycle {
-  color: var(--mari-logo-cyan);
-  animation: mari-topbar-logo-color-cycle 8.4s ease-in-out infinite;
+.mari-topbar-panel-icon {
+  color: var(--muted-foreground);
 }
 
-.mari-topbar-chat-cycle-underline {
+.mari-topbar-panel-icon:hover,
+.mari-topbar-panel-icon:focus-visible,
+.mari-topbar-panel-icon--hovered,
+.mari-topbar-panel-icon--active {
+  color: var(--mari-panel-gradient-start);
+}
+
+.mari-topbar-chat-gradient-icon svg,
+.mari-topbar-chat-gradient-hover:hover svg,
+.mari-topbar-chat-gradient-hover:focus-visible svg {
+  color: var(--mari-logo-cyan);
+  stroke: url(#mari-topbar-chats-gradient);
+}
+
+.mari-topbar-chat-gradient-underline {
   background: linear-gradient(
     90deg,
     var(--mari-logo-cyan) 0%,
@@ -859,38 +872,6 @@
     var(--mari-logo-pink) 68%,
     var(--mari-logo-cyan) 100%
   );
-  background-size: 220% 100%;
-  animation: mari-topbar-logo-underline-cycle 8.4s ease-in-out infinite;
-}
-
-@keyframes mari-topbar-logo-color-cycle {
-  0%,
-  100% {
-    color: var(--mari-logo-cyan);
-  }
-  34% {
-    color: var(--mari-logo-orange);
-  }
-  68% {
-    color: var(--mari-logo-pink);
-  }
-}
-
-@keyframes mari-topbar-logo-underline-cycle {
-  0%,
-  100% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .mari-topbar-chat-cycle,
-  .mari-topbar-chat-cycle-underline {
-    animation: none;
-  }
 }
 
 .mari-chrome-segmented {
@@ -987,18 +968,30 @@
   color: var(--marinara-chat-chrome-button-text-active);
 }
 
+.mari-chat-settings-popover select,
 .mari-chat-settings-drawer select {
-  color: CanvasText;
-  color-scheme: light dark;
+  color-scheme: dark;
+  border-color: var(--marinara-chat-chrome-input-border);
+  background-color: var(--marinara-chat-chrome-panel-bg);
+  color: var(--marinara-chat-chrome-panel-text);
 }
 
-.mari-chat-settings-drawer select option {
-  background-color: Canvas;
-  color: CanvasText;
+[data-theme="light"] .mari-chat-settings-popover select,
+[data-theme="light"] .mari-chat-settings-drawer select {
+  color-scheme: light;
 }
 
+.mari-chat-settings-popover select option,
+.mari-chat-settings-popover select optgroup,
+.mari-chat-settings-drawer select option,
 .mari-chat-settings-drawer select optgroup {
-  color: CanvasText;
+  background-color: var(--marinara-chat-chrome-panel-bg);
+  color: var(--marinara-chat-chrome-panel-text);
+}
+
+.mari-chat-settings-popover select:disabled,
+.mari-chat-settings-drawer select:disabled {
+  color: var(--marinara-chat-chrome-panel-muted);
 }
 
 .mari-chrome-sort-icon {
@@ -1738,6 +1731,7 @@ body {
 .mari-home-starfield {
   --mari-home-star-core: color-mix(in srgb, var(--foreground) 70%, var(--marinara-app-accent-solid) 30%);
   --mari-home-star-glow: color-mix(in srgb, var(--marinara-app-accent-solid) 48%, transparent);
+  --mari-home-star-halo: color-mix(in srgb, var(--foreground) 28%, transparent);
   pointer-events: none;
   position: absolute;
   inset: 0;
@@ -1758,6 +1752,7 @@ body {
   height: var(--mari-home-star-size);
   opacity: 0;
   color: var(--mari-home-star-core);
+  border-radius: 999px;
   transform: translate(-50%, -50%) scale(0.42);
   animation: mari-home-star-glisten var(--mari-home-star-duration) ease-in-out forwards;
 }
@@ -1766,21 +1761,19 @@ body {
 .mari-home-starfield__star::after {
   content: "";
   position: absolute;
-  left: 50%;
-  top: 50%;
   border-radius: 999px;
-  background: currentColor;
-  transform: translate(-50%, -50%);
 }
 
 .mari-home-starfield__star::before {
-  width: 100%;
-  height: 1px;
+  inset: 0;
+  background:
+    radial-gradient(circle, var(--foreground) 0 12%, currentcolor 28%, transparent 72%),
+    radial-gradient(circle, var(--mari-home-star-halo) 0 42%, transparent 74%);
 }
 
 .mari-home-starfield__star::after {
-  width: 1px;
-  height: 100%;
+  inset: -55%;
+  background: radial-gradient(circle, var(--mari-home-star-glow) 0 18%, transparent 68%);
 }
 
 @keyframes mari-home-star-glisten {

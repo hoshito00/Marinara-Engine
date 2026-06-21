@@ -996,7 +996,7 @@ export const useUIStore = create<UIState>()(
       theme: "dark" as const,
       appBackgroundColor: "",
       appAccentColor: "",
-      appAccentRgbMode: true,
+      appAccentRgbMode: false,
       chatBackground: null,
       defaultRoleplayBackground: DEFAULT_ROLEPLAY_BACKGROUND_URL,
       chatBackgroundBlur: 0,
@@ -2109,13 +2109,13 @@ export const useUIStore = create<UIState>()(
           persisted.convertLatexSymbols = true;
         }
         if (version <= 57 && persisted.appAccentRgbMode === undefined) {
-          persisted.appAccentRgbMode = true;
+          persisted.appAccentRgbMode = false;
         }
         if (version <= 58 && persisted.appBackgroundColor === undefined) {
           persisted.appBackgroundColor = "";
         }
-        if (version <= 59) {
-          persisted.appAccentRgbMode = true;
+        if (version <= 59 && persisted.appAccentRgbMode === undefined) {
+          persisted.appAccentRgbMode = false;
         }
         persisted.characterLibrarySort = normalizeCharacterLibrarySort(persisted.characterLibrarySort);
         persisted.characterPanelScrollTop = normalizeScrollTop(persisted.characterPanelScrollTop);

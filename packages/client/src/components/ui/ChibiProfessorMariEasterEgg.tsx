@@ -29,7 +29,7 @@ function showChibiProfessorMariToast() {
   rememberChibiProfessorMari();
   toast.custom(
     (toastId) => (
-      <div className="relative flex max-w-[360px] gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 pr-9 text-[var(--foreground)] shadow-lg ring-1 ring-[var(--border)]/70">
+      <div className="relative flex max-w-[360px] gap-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 pr-9 text-[var(--foreground)] shadow-lg ring-1 ring-[var(--border)]/70">
         <button
           type="button"
           aria-label="Dismiss Professor Mari toast"
@@ -39,14 +39,16 @@ function showChibiProfessorMariToast() {
         >
           <X size="0.8125rem" />
         </button>
-        <img
-          src={CHIBI_PROFESSOR_MARI_IMAGE}
-          alt="Chibi Professor Mari"
-          className="h-24 w-20 shrink-0 object-contain"
-          onError={(event) => {
-            event.currentTarget.hidden = true;
-          }}
-        />
+        <div className="flex h-24 w-20 shrink-0 items-end justify-center overflow-hidden rounded-lg bg-[var(--accent)]/45">
+          <img
+            src={CHIBI_PROFESSOR_MARI_IMAGE}
+            alt="Chibi Professor Mari"
+            className="h-full w-full object-contain p-1"
+            onError={(event) => {
+              event.currentTarget.hidden = true;
+            }}
+          />
+        </div>
         <div className="space-y-2 text-sm leading-relaxed">
           <p>
             If you see this image while scrolling through Marinara Engine, you've been visited by the rare Chibi
@@ -60,9 +62,11 @@ function showChibiProfessorMariToast() {
     {
       duration: CHIBI_PROFESSOR_MARI_TOAST_DURATION_MS,
       style: {
-        background: "var(--card)",
-        border: "1px solid var(--border)",
+        background: "transparent",
+        border: "0",
+        boxShadow: "none",
         color: "var(--foreground)",
+        padding: 0,
       },
     },
   );

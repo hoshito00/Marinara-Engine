@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { MessageSquareText, Home, Settings, Link, BookOpen, Users, Sparkles, FileText, User, Bot } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useAgentStore } from "../../stores/agent.store";
@@ -17,9 +17,7 @@ type RightPanelButtonConfig = {
   panel: RightPanelButtonPanel;
   icon: LucideIcon;
   label: string;
-  color: string;
-  iconColor: string;
-  hoverColor: string;
+  gradientClass: string;
   underlineClass?: string;
 };
 
@@ -28,42 +26,32 @@ const RIGHT_PANEL_BUTTONS: readonly RightPanelButtonConfig[] = [
     panel: "lorebooks" as const,
     icon: BookOpen,
     label: "Lorebooks",
-    color: "from-amber-400 to-orange-500",
-    iconColor: "text-amber-300",
-    hoverColor: "hover:text-amber-300",
+    gradientClass: "mari-panel-gradient--lorebooks",
   },
   {
     panel: "presets" as const,
     icon: FileText,
     label: "Presets",
-    color: "",
-    iconColor: "mari-panel-gradient--presets text-[var(--mari-panel-gradient-start)]",
-    hoverColor: "mari-panel-gradient--presets hover:text-[var(--mari-panel-gradient-start)]",
+    gradientClass: "mari-panel-gradient--presets",
     underlineClass: "mari-panel-gradient-surface mari-panel-gradient--presets",
   },
   {
     panel: "connections" as const,
     icon: Link,
     label: "Connections",
-    color: "from-sky-400 to-blue-500",
-    iconColor: "text-sky-300",
-    hoverColor: "hover:text-sky-300",
+    gradientClass: "mari-panel-gradient--connections",
   },
   {
     panel: "agents" as const,
     icon: Sparkles,
     label: "Agents",
-    color: "from-violet-400 to-purple-500",
-    iconColor: "text-violet-300",
-    hoverColor: "hover:text-violet-300",
+    gradientClass: "mari-panel-gradient--agents",
   },
   {
     panel: "personas" as const,
     icon: User,
     label: "Personas",
-    color: "from-emerald-400 to-teal-500",
-    iconColor: "text-emerald-300",
-    hoverColor: "hover:text-emerald-300",
+    gradientClass: "mari-panel-gradient--personas",
   },
 ] as const;
 
@@ -73,6 +61,8 @@ const SPOTIFY_TOPBAR_LAYOUT_BUFFER = 32;
 const TOPBAR_BUTTON_CLASS = "relative rounded-lg p-2 transition-all hover:bg-[var(--accent)] active:scale-95";
 const TOPBAR_PANEL_BUTTON_CLASS = "relative rounded-lg p-2 transition-all duration-200 max-sm:p-1.5";
 const TOPBAR_ACTIVE_BUTTON_CLASS = "bg-[var(--accent)] shadow-sm";
+const TOPBAR_FORCE_HOVER_CLASS = "bg-[var(--accent)]";
+const CHAT_TOPBAR_GRADIENT_ID = "mari-topbar-chats-gradient";
 
 export function TopBar() {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
@@ -100,6 +90,7 @@ export function TopBar() {
   const rightNavRef = useRef<HTMLElement | null>(null);
   const [spotifyDesktopViewport, setSpotifyDesktopViewport] = useState(false);
   const [spotifyUseFloatingFallback, setSpotifyUseFloatingFallback] = useState(false);
+  const [hoveredTopbarKey, setHoveredTopbarKey] = useState<string | null>(null);
 
   const isBotBrowserActive = (rightPanelOpen && rightPanel === "bot-browser") || botBrowserOpen;
   const isCharactersPanelActive =
@@ -128,6 +119,21 @@ export function TopBar() {
     !botBrowserOpen &&
     !gameAssetsBrowserOpen &&
     !characterLibraryOpen;
+
+  const isTopbarHovered = (key: string) => hoveredTopbarKey === key;
+
+  const handleTopbarPointerOver = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.pointerType !== "mouse") return;
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest("[data-topbar-hover-key]");
+    if (!(button instanceof HTMLElement) || !event.currentTarget.contains(button)) return;
+
+    const nextKey = button.dataset.topbarHoverKey;
+    if (!nextKey) return;
+    setHoveredTopbarKey((current) => (current === nextKey ? current : nextKey));
+  };
+
+  const clearTopbarHover = useCallback(() => setHoveredTopbarKey(null), []);
 
   useEffect(() => {
     const header = headerRef.current;
@@ -175,10 +181,26 @@ export function TopBar() {
     };
   }, []);
 
+  useEffect(() => {
+    const clearWhenHidden = () => {
+      if (document.visibilityState !== "visible") clearTopbarHover();
+    };
+
+    window.addEventListener("blur", clearTopbarHover);
+    document.addEventListener("visibilitychange", clearWhenHidden);
+
+    return () => {
+      window.removeEventListener("blur", clearTopbarHover);
+      document.removeEventListener("visibilitychange", clearWhenHidden);
+    };
+  }, [clearTopbarHover]);
+
   return (
     <header
       ref={headerRef}
       data-component="TopBar"
+      onPointerLeave={clearTopbarHover}
+      onPointerOver={handleTopbarPointerOver}
       className="mari-topbar relative z-10 flex h-12 flex-shrink-0 items-center justify-between bg-[var(--marinara-topbar-surface)] px-3 backdrop-blur-sm"
     >
       {/* Subtle bottom border only */}
@@ -190,17 +212,36 @@ export function TopBar() {
           <button
             onClick={toggleSidebar}
             data-tour="sidebar-toggle"
+            data-topbar-hover-key="chats"
             className={cn(
               TOPBAR_BUTTON_CLASS,
               sidebarOpen
-                ? cn(TOPBAR_ACTIVE_BUTTON_CLASS, "mari-topbar-chat-cycle")
-                : "text-[var(--muted-foreground)] hover:text-cyan-300",
+                ? cn(TOPBAR_ACTIVE_BUTTON_CLASS, "mari-topbar-chat-gradient-icon")
+                : cn(
+                    "mari-topbar-chat-gradient-hover text-[var(--muted-foreground)]",
+                    isTopbarHovered("chats") && cn(TOPBAR_FORCE_HOVER_CLASS, "mari-topbar-chat-gradient-icon"),
+                  ),
             )}
             title="Chats"
           >
-            <MessageSquareText size="0.9375rem" />
+            <MessageSquareText size="0.9375rem">
+              <defs>
+                <linearGradient
+                  id={CHAT_TOPBAR_GRADIENT_ID}
+                  x1="2"
+                  x2="18"
+                  y1="3"
+                  y2="18"
+                  gradientUnits="userSpaceOnUse"
+                >
+                  <stop offset="0%" stopColor="var(--mari-logo-cyan)" />
+                  <stop offset="48%" stopColor="var(--mari-logo-orange)" />
+                  <stop offset="100%" stopColor="var(--mari-logo-pink)" />
+                </linearGradient>
+              </defs>
+            </MessageSquareText>
             {sidebarOpen && (
-              <span className="mari-topbar-chat-cycle-underline absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full" />
+              <span className="mari-topbar-chat-gradient-underline absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full" />
             )}
           </button>
 
@@ -210,11 +251,16 @@ export function TopBar() {
               setActiveChatId(null);
               closeAllDetails();
             }}
+            data-topbar-hover-key="home"
             className={cn(
               TOPBAR_BUTTON_CLASS,
               isHomeActive
                 ? cn(TOPBAR_ACTIVE_BUTTON_CLASS, "mari-chrome-accent-icon mari-accent-animated")
-                : "text-[var(--muted-foreground)] hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
+                : cn(
+                    "text-[var(--muted-foreground)] hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
+                    isTopbarHovered("home") &&
+                      cn(TOPBAR_FORCE_HOVER_CLASS, "text-[var(--marinara-chat-chrome-button-text-hover)]"),
+                  ),
             )}
             title="Home"
           >
@@ -239,11 +285,15 @@ export function TopBar() {
         <button
           onClick={() => toggleRightPanel("bot-browser")}
           data-tour="panel-bot-browser"
+          data-topbar-hover-key="browser"
           className={cn(
             TOPBAR_PANEL_BUTTON_CLASS,
             isBotBrowserActive
               ? cn(TOPBAR_ACTIVE_BUTTON_CLASS, "text-lime-300")
-              : "text-[var(--muted-foreground)] hover:text-lime-300",
+              : cn(
+                  "text-[var(--muted-foreground)] hover:text-lime-300",
+                  isTopbarHovered("browser") && cn(TOPBAR_FORCE_HOVER_CLASS, "text-lime-300"),
+                ),
           )}
           title="Browser"
         >
@@ -256,11 +306,15 @@ export function TopBar() {
         <button
           onClick={() => toggleRightPanel("characters")}
           data-tour="panel-characters"
+          data-topbar-hover-key="characters"
           className={cn(
             TOPBAR_PANEL_BUTTON_CLASS,
             isCharactersPanelActive
               ? cn(TOPBAR_ACTIVE_BUTTON_CLASS, "text-rose-300")
-              : "text-[var(--muted-foreground)] hover:text-rose-300",
+              : cn(
+                  "text-[var(--muted-foreground)] hover:text-rose-300",
+                  isTopbarHovered("characters") && cn(TOPBAR_FORCE_HOVER_CLASS, "text-rose-300"),
+                ),
           )}
           title="Characters"
         >
@@ -270,16 +324,21 @@ export function TopBar() {
           )}
         </button>
 
-        {RIGHT_PANEL_BUTTONS.map(({ panel, icon: Icon, label, color, iconColor, hoverColor, underlineClass }) => {
+        {RIGHT_PANEL_BUTTONS.map(({ panel, icon: Icon, label, gradientClass, underlineClass }) => {
           const isActive = panelContextActive[panel];
+          const isHovered = isTopbarHovered(panel);
           return (
             <button
               key={panel}
               onClick={() => toggleRightPanel(panel)}
               data-tour={`panel-${panel}`}
+              data-topbar-hover-key={panel}
               className={cn(
                 TOPBAR_PANEL_BUTTON_CLASS,
-                isActive ? cn(TOPBAR_ACTIVE_BUTTON_CLASS, iconColor) : cn("text-[var(--muted-foreground)]", hoverColor),
+                "mari-topbar-panel-icon",
+                gradientClass,
+                isHovered && cn(TOPBAR_FORCE_HOVER_CLASS, "mari-topbar-panel-icon--hovered"),
+                isActive && cn(TOPBAR_ACTIVE_BUTTON_CLASS, "mari-topbar-panel-icon--active"),
               )}
               title={label}
             >
@@ -288,7 +347,7 @@ export function TopBar() {
                 <span
                   className={cn(
                     "absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full",
-                    underlineClass ?? cn("bg-gradient-to-r", color),
+                    underlineClass ?? cn("mari-panel-gradient-surface", gradientClass),
                   )}
                 />
               )}
@@ -303,11 +362,15 @@ export function TopBar() {
         <button
           onClick={() => toggleRightPanel("settings")}
           data-tour="panel-settings"
+          data-topbar-hover-key="settings"
           className={cn(
             TOPBAR_PANEL_BUTTON_CLASS,
             rightPanelOpen && rightPanel === "settings"
               ? cn(TOPBAR_ACTIVE_BUTTON_CLASS, "text-gray-300")
-              : "text-[var(--muted-foreground)] hover:text-gray-300",
+              : cn(
+                  "text-[var(--muted-foreground)] hover:text-gray-300",
+                  isTopbarHovered("settings") && cn(TOPBAR_FORCE_HOVER_CLASS, "text-gray-300"),
+                ),
           )}
           title="Settings"
         >

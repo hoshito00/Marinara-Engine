@@ -241,7 +241,7 @@ function HomeStarfield() {
         id: nextStarIdRef.current,
         x: 5 + Math.random() * 90,
         y: 6 + Math.random() * 86,
-        size: 3 + Math.random() * 3.5,
+        size: 2 + Math.random() * 5.5,
         duration,
       };
       nextStarIdRef.current += 1;

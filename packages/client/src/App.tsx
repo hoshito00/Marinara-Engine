@@ -161,7 +161,6 @@ function clearCustomAppAccentVariables(root: HTMLElement) {
 function canRunAccentAnimation() {
   return (
     document.visibilityState === "visible" &&
-    document.hasFocus() &&
     !window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
 }
@@ -337,12 +336,16 @@ export function App() {
       }
     };
 
+    const handleVisibilityChange = () => {
+      syncAccentAnimationState();
+    };
+
     if (!appAccentRgbMode) {
       applyStaticAccent();
     }
     syncAccentAnimationState();
     const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    document.addEventListener("visibilitychange", syncAccentAnimationState);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("focus", syncAccentAnimationState);
     window.addEventListener("blur", syncAccentAnimationState);
     window.addEventListener("pageshow", syncAccentAnimationState);
@@ -350,7 +353,7 @@ export function App() {
     reducedMotionQuery.addEventListener("change", syncAccentAnimationState);
 
     return () => {
-      document.removeEventListener("visibilitychange", syncAccentAnimationState);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", syncAccentAnimationState);
       window.removeEventListener("blur", syncAccentAnimationState);
       window.removeEventListener("pageshow", syncAccentAnimationState);

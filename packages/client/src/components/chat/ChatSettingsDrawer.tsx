@@ -1056,7 +1056,7 @@ export function ChatSettingsDrawer({
   });
   const musicDjAgentMeta = getAgentDisplayMeta("spotify", {
     name: "Music DJ",
-    description: "Analyzes the narrative mood and plays matching music.",
+    description: "Analyzes the narrative mood and plays matching music through Spotify or YouTube.",
   });
   const knowledgeRetrievalAgentMeta = getAgentDisplayMeta("knowledge-retrieval", {
     name: "Knowledge Retrieval",
@@ -2607,6 +2607,7 @@ export function ChatSettingsDrawer({
       <div
         className={cn(
           ROLEPLAY_POPOVER_SHELL,
+          "mari-chat-settings-popover",
           "mari-chat-settings-drawer",
           "fixed bottom-3 z-[70] flex min-h-0 w-[min(34rem,calc(100vw-1.5rem))] flex-col overflow-hidden max-md:inset-x-2 max-md:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] max-md:top-[calc(3.5rem+env(safe-area-inset-top))] max-md:w-auto",
           anchor ? "" : "right-3 top-14",
@@ -6869,11 +6870,14 @@ export function ChatSettingsDrawer({
       {/* First message confirmation dialog */}
       {firstMesConfirm && (
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 max-md:pt-[env(safe-area-inset-top)]"
-          onClick={() => setFirstMesConfirm(null)}
+          className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 max-md:pt-[env(safe-area-inset-top)]"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setFirstMesConfirm(null);
+          }}
         >
           <div
             className="relative mx-4 flex w-full max-w-sm flex-col rounded-xl bg-[var(--card)] shadow-2xl ring-1 ring-[var(--border)]"
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-3">
