@@ -4,11 +4,7 @@
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
 import { logger } from "../../lib/logger.js";
-import {
-  formatCustomTrackerFieldForPrompt,
-  resolveCharacterScopedMacros,
-  stripMacroComments,
-} from "@marinara-engine/shared";
+import { resolveCharacterScopedMacros, stripMacroComments } from "@marinara-engine/shared";
 import type {
   CharacterMacroProfile,
   MarkerConfig,
@@ -23,7 +19,6 @@ import { createAgentsStorage } from "../storage/agents.storage.js";
 import { processLorebooks, type LorebookFinalContentResolver, type LorebookScanResult } from "../lorebook/index.js";
 import { wrapContent } from "./format-engine.js";
 import { agentRuns } from "../../db/schema/index.js";
-import { gameStateSnapshots } from "../../db/schema/index.js";
 import { eq, and, desc } from "drizzle-orm";
 
 /** Context required for expanding markers. */
@@ -461,14 +456,6 @@ async function expandAgentData(config: MarkerConfig, ctx: MarkerContext): Promis
     return { content: "" };
   }
 
-  // Special case: world-state uses game_state_snapshots for richer structured data
-  if (agentType === "world-state") {
-    const wsStorage = createAgentsStorage(ctx.db);
-    const wsConfig = await wsStorage.getByType("world-state");
-    if (wsConfig && wsConfig.enabled !== "true") return { content: "" };
-    return expandWorldStateAgent(ctx);
-  }
-
   // Generic: find latest successful agent run for this chat
   const agentsStorage = createAgentsStorage(ctx.db);
   const agentConfig = await agentsStorage.getByType(agentType);
@@ -502,113 +489,6 @@ async function expandAgentData(config: MarkerConfig, ctx: MarkerContext): Promis
 
   // Format result data as readable text
   return { content: formatAgentResult(resultData) };
-}
-
-async function expandWorldStateAgent(ctx: MarkerContext): Promise<ExpandedMarker> {
-  // Prefer committed game state — uncommitted snapshots from swipes/regens
-  // are normally skipped so the prompt stays clean between swipes.
-  const committedRows = await ctx.db
-    .select()
-    .from(gameStateSnapshots)
-    .where(and(eq(gameStateSnapshots.chatId, ctx.chatId), eq(gameStateSnapshots.committed, 1)))
-    .orderBy(desc(gameStateSnapshots.createdAt))
-    .limit(1);
-
-  let snap = committedRows[0];
-
-  // Fallback: if no committed snapshot exists yet (e.g. first agent run),
-  // use the latest snapshot regardless of committed status so world state
-  // data isn't silently dropped until the next user message.
-  if (!snap) {
-    const anyRows = await ctx.db
-      .select()
-      .from(gameStateSnapshots)
-      .where(eq(gameStateSnapshots.chatId, ctx.chatId))
-      .orderBy(desc(gameStateSnapshots.createdAt))
-      .limit(1);
-    snap = anyRows[0];
-  }
-
-  if (!snap) return { content: "" };
-
-  // Only include fields from agents that are currently active.
-  // World-state's own fields (date/time/location/weather/temperature) are always included
-  // since this function is only called when world-state is enabled.
-  const active = new Set(ctx.activeAgentIds);
-  const hasCharTracker = active.size === 0 || active.has("character-tracker");
-  const hasPersonaStats = active.size === 0 || active.has("persona-stats");
-  const hasQuest = active.size === 0 || active.has("quest");
-  const hasCustomTracker = active.size === 0 || active.has("custom-tracker");
-
-  const parts: string[] = [];
-  if (snap.date) parts.push(`Date: ${snap.date}`);
-  if (snap.time) parts.push(`Time: ${snap.time}`);
-  if (snap.location) parts.push(`Location: ${snap.location}`);
-  if (snap.weather) parts.push(`Weather: ${snap.weather}`);
-  if (snap.temperature) parts.push(`Temperature: ${snap.temperature}`);
-
-  if (hasCharTracker) {
-    const presentChars = JSON.parse(snap.presentCharacters);
-    if (Array.isArray(presentChars) && presentChars.length > 0) {
-      const charLines = presentChars.map((c: any) => {
-        if (typeof c === "string") return `- ${c}`;
-        const details: string[] = [];
-        if (c.mood) details.push(`mood: ${c.mood}`);
-        if (c.appearance) details.push(`appearance: ${c.appearance}`);
-        if (c.outfit) details.push(`outfit: ${c.outfit}`);
-        if (c.thoughts) details.push(`thoughts: ${c.thoughts}`);
-        if (Array.isArray(c.stats) && c.stats.length > 0) {
-          const statStr = c.stats.map((s: any) => `${s.name}: ${s.value}${s.max ? `/${s.max}` : ""}`).join(", ");
-          details.push(`stats: ${statStr}`);
-        }
-        const detailStr = details.length > 0 ? ` (${details.join("; ")})` : "";
-        return `- ${c.emoji ?? ""} ${c.name ?? c}${detailStr}`;
-      });
-      parts.push(`Present Characters:\n${charLines.join("\n")}`);
-    }
-  }
-
-  // Persona stats (needs/condition bars)
-  if (hasPersonaStats && snap.personaStats) {
-    const psBars = typeof snap.personaStats === "string" ? JSON.parse(snap.personaStats) : snap.personaStats;
-    if (Array.isArray(psBars) && psBars.length > 0) {
-      const barLines = psBars.map((b: any) => `- ${b.name}: ${b.value}/${b.max}`);
-      parts.push(`Persona Stats:\n${barLines.join("\n")}`);
-    }
-  }
-
-  if (snap.playerStats) {
-    const stats = typeof snap.playerStats === "string" ? JSON.parse(snap.playerStats) : snap.playerStats;
-    const statParts: string[] = [];
-    if (hasPersonaStats && stats.status) statParts.push(`Status: ${stats.status}`);
-    if (hasQuest && Array.isArray(stats.activeQuests) && stats.activeQuests.length > 0) {
-      const questLines = stats.activeQuests.map((q: any) => {
-        const objectives = Array.isArray(q.objectives)
-          ? q.objectives.map((o: any) => `  ${o.completed ? "[x]" : "[ ]"} ${o.text}`).join("\n")
-          : "";
-        return `- ${q.name}${q.completed ? " (completed)" : ""}${objectives ? "\n" + objectives : ""}`;
-      });
-      statParts.push(`Active Quests:\n${questLines.join("\n")}`);
-    }
-    if (hasPersonaStats && Array.isArray(stats.inventory) && stats.inventory.length > 0) {
-      const invLines = stats.inventory.map(
-        (item: any) =>
-          `- ${item.name}${item.quantity > 1 ? ` x${item.quantity}` : ""}${item.description ? ` — ${item.description}` : ""}`,
-      );
-      statParts.push(`Inventory:\n${invLines.join("\n")}`);
-    }
-    if (hasPersonaStats && Array.isArray(stats.stats) && stats.stats.length > 0) {
-      const statLines = stats.stats.map((s: any) => `- ${s.name}: ${s.value}${s.max ? `/${s.max}` : ""}`);
-      statParts.push(`Stats:\n${statLines.join("\n")}`);
-    }
-    if (hasCustomTracker && Array.isArray(stats.customTrackerFields) && stats.customTrackerFields.length > 0) {
-      const customLines = stats.customTrackerFields.map(formatCustomTrackerFieldForPrompt);
-      statParts.push(`Custom:\n${customLines.join("\n")}`);
-    }
-    if (statParts.length > 0) parts.push(statParts.join("\n"));
-  }
-
-  return { content: parts.join("\n") };
 }
 
 function formatAgentResult(data: unknown): string {

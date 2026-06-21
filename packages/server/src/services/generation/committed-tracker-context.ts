@@ -29,17 +29,89 @@ function parseMaybeJson(value: unknown): unknown {
   }
 }
 
-export function injectCommittedTrackerContext(args: {
-  messages: PromptMessage[];
+function asText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function finiteNumberText(value: unknown): string | null {
+  const numberValue =
+    typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : Number.NaN;
+  return Number.isFinite(numberValue) ? String(numberValue) : null;
+}
+
+function formatStatValue(value: unknown, max: unknown): string {
+  const valueText = finiteNumberText(value);
+  const maxText = finiteNumberText(max);
+  if (!valueText) return "unknown";
+  return maxText ? `${valueText}/${maxText}` : valueText;
+}
+
+function formatStatLine(stat: any): string | null {
+  const name = asText(stat?.name);
+  if (!name) return null;
+  return `- ${name}: ${formatStatValue(stat?.value, stat?.max)}`;
+}
+
+function formatStatSummary(stat: any): string | null {
+  const name = asText(stat?.name);
+  if (!name) return null;
+  return `${name}: ${formatStatValue(stat?.value, stat?.max)}`;
+}
+
+function formatCharacterLine(character: any): string | null {
+  if (typeof character === "string") {
+    const name = asText(character);
+    return name ? `- ${name}` : null;
+  }
+  const name = asText(character?.name);
+  if (!name) return null;
+
+  const details: string[] = [];
+  if (character.mood) details.push(`mood: ${character.mood}`);
+  if (character.appearance) details.push(`appearance: ${character.appearance}`);
+  if (character.outfit) details.push(`outfit: ${character.outfit}`);
+  if (character.thoughts) details.push(`thoughts: ${character.thoughts}`);
+  if (Array.isArray(character.stats) && character.stats.length > 0) {
+    const statStr = character.stats.map(formatStatSummary).filter((line): line is string => !!line).join(", ");
+    if (statStr) details.push(`stats: ${statStr}`);
+  }
+
+  const label = [asText(character.emoji), name].filter(Boolean).join(" ");
+  const detailStr = details.length > 0 ? ` (${details.join("; ")})` : "";
+  return `- ${label}${detailStr}`;
+}
+
+function formatQuestLine(quest: any): string | null {
+  const name = asText(quest?.name);
+  if (!name) return null;
+  const objectives = Array.isArray(quest.objectives)
+    ? quest.objectives
+        .map((objective: any) => {
+          const text = asText(objective?.text);
+          return text ? `  ${objective.completed ? "[x]" : "[ ]"} ${text}` : null;
+        })
+        .filter((line): line is string => !!line)
+        .join("\n")
+    : "";
+  return `- ${name}${objectives ? "\n" + objectives : ""}`;
+}
+
+function formatInventoryLine(item: any): string | null {
+  const name = asText(item?.name);
+  if (!name) return null;
+  const quantity = finiteNumberText(item?.quantity);
+  const description = asText(item?.description);
+  return `- ${name}${quantity && Number(quantity) > 1 ? ` x${quantity}` : ""}${description ? ` — ${description}` : ""}`;
+}
+
+export function buildCommittedTrackerContextBlock(args: {
   chatEnableAgents: boolean;
   activeAgentIds: string[];
   latestGameState: GameStateSnapshotLike | null | undefined;
   chatMetadata: Record<string, unknown>;
   wrapFormat: WrapFormat;
-  dedupeLastMessageWrappers(messages: PromptMessage[]): void;
-  findTrackerContextInsertIndex(messages: PromptMessage[]): number;
-}): void {
-  if (!args.chatEnableAgents || args.activeAgentIds.length === 0) return;
+}): string | null {
+  if (!args.chatEnableAgents || args.activeAgentIds.length === 0) return null;
 
   const active = new Set(args.activeAgentIds);
   const hasWorldState = active.has("world-state");
@@ -47,10 +119,10 @@ export function injectCommittedTrackerContext(args: {
   const hasPersonaStats = active.has("persona-stats");
   const hasQuest = active.has("quest");
   const hasCustomTracker = active.has("custom-tracker");
-  if (!hasWorldState && !hasCharTracker && !hasPersonaStats && !hasQuest && !hasCustomTracker) return;
+  if (!hasWorldState && !hasCharTracker && !hasPersonaStats && !hasQuest && !hasCustomTracker) return null;
 
   const snap = args.latestGameState ?? undefined;
-  if (!snap) return;
+  if (!snap) return null;
 
   const trackerParts: string[] = [];
 
@@ -67,31 +139,16 @@ export function injectCommittedTrackerContext(args: {
   if (hasCharTracker) {
     const presentChars = parseMaybeJson(snap.presentCharacters);
     if (Array.isArray(presentChars) && presentChars.length > 0) {
-      const charLines = presentChars.map((character: any) => {
-        if (typeof character === "string") return `- ${character}`;
-        const details: string[] = [];
-        if (character.mood) details.push(`mood: ${character.mood}`);
-        if (character.appearance) details.push(`appearance: ${character.appearance}`);
-        if (character.outfit) details.push(`outfit: ${character.outfit}`);
-        if (character.thoughts) details.push(`thoughts: ${character.thoughts}`);
-        if (Array.isArray(character.stats) && character.stats.length > 0) {
-          const statStr = character.stats
-            .map((stat: any) => `${stat.name}: ${stat.value}${stat.max ? `/${stat.max}` : ""}`)
-            .join(", ");
-          details.push(`stats: ${statStr}`);
-        }
-        const detailStr = details.length > 0 ? ` (${details.join("; ")})` : "";
-        return `- ${character.emoji ?? ""} ${character.name ?? character}${detailStr}`;
-      });
-      trackerParts.push(wrapContent(charLines.join("\n"), "Present Characters", args.wrapFormat));
+      const charLines = presentChars.map(formatCharacterLine).filter((line): line is string => !!line);
+      if (charLines.length > 0) trackerParts.push(wrapContent(charLines.join("\n"), "Present Characters", args.wrapFormat));
     }
   }
 
   if (hasPersonaStats && snap.personaStats) {
     const psBars = parseMaybeJson(snap.personaStats);
     if (Array.isArray(psBars) && psBars.length > 0) {
-      const barLines = psBars.map((bar: any) => `- ${bar.name}: ${bar.value}/${bar.max}`);
-      trackerParts.push(wrapContent(barLines.join("\n"), "Persona Stats", args.wrapFormat));
+      const barLines = psBars.map(formatStatLine).filter((line): line is string => !!line);
+      if (barLines.length > 0) trackerParts.push(wrapContent(barLines.join("\n"), "Persona Stats", args.wrapFormat));
     }
   }
 
@@ -104,28 +161,20 @@ export function injectCommittedTrackerContext(args: {
 
       if (hasQuest && Array.isArray(stats.activeQuests) && stats.activeQuests.length > 0) {
         const activeQuestsForContext = compactQuestProgressForContext(stats.activeQuests);
-        const questLines = activeQuestsForContext.map((quest) => {
-          const objectives = Array.isArray(quest.objectives)
-            ? quest.objectives.map((objective) => `  [ ] ${objective.text}`).join("\n")
-            : "";
-          return `- ${quest.name}${objectives ? "\n" + objectives : ""}`;
-        });
+        const questLines = activeQuestsForContext.map(formatQuestLine).filter((line): line is string => !!line);
         if (questLines.length > 0) {
           trackerParts.push(wrapContent(questLines.join("\n"), "Active Quests", args.wrapFormat));
         }
       }
 
       if (hasPersonaStats && Array.isArray(stats.inventory) && stats.inventory.length > 0) {
-        const invLines = stats.inventory.map(
-          (item: any) =>
-            `- ${item.name}${item.quantity > 1 ? ` x${item.quantity}` : ""}${item.description ? ` — ${item.description}` : ""}`,
-        );
-        trackerParts.push(wrapContent(invLines.join("\n"), "Inventory", args.wrapFormat));
+        const invLines = stats.inventory.map(formatInventoryLine).filter((line): line is string => !!line);
+        if (invLines.length > 0) trackerParts.push(wrapContent(invLines.join("\n"), "Inventory", args.wrapFormat));
       }
 
       if (hasPersonaStats && Array.isArray(stats.stats) && stats.stats.length > 0) {
-        const statLines = stats.stats.map((stat: any) => `- ${stat.name}: ${stat.value}${stat.max ? `/${stat.max}` : ""}`);
-        trackerParts.push(wrapContent(statLines.join("\n"), "Stats", args.wrapFormat));
+        const statLines = stats.stats.map(formatStatLine).filter((line): line is string => !!line);
+        if (statLines.length > 0) trackerParts.push(wrapContent(statLines.join("\n"), "Stats", args.wrapFormat));
       }
 
       if (hasCustomTracker && Array.isArray(stats.customTrackerFields) && stats.customTrackerFields.length > 0) {
@@ -146,16 +195,36 @@ export function injectCommittedTrackerContext(args: {
     );
   }
 
-  if (trackerParts.length === 0) return;
+  if (trackerParts.length === 0) return null;
+
+  return args.wrapFormat === "none"
+    ? trackerParts.join("\n\n")
+    : args.wrapFormat === "xml"
+      ? `<context>\n${trackerParts.map((part) => "    " + part.replace(/\n/g, "\n    ")).join("\n")}\n</context>`
+      : `# Context\n*(Established state as of the last message. Do not re-describe — advance from here.)*\n${trackerParts.join("\n")}`;
+}
+
+export function injectCommittedTrackerContext(args: {
+  messages: PromptMessage[];
+  chatEnableAgents: boolean;
+  activeAgentIds: string[];
+  latestGameState: GameStateSnapshotLike | null | undefined;
+  chatMetadata: Record<string, unknown>;
+  wrapFormat: WrapFormat;
+  dedupeLastMessageWrappers(messages: PromptMessage[]): void;
+  findTrackerContextInsertIndex(messages: PromptMessage[]): number;
+}): void {
+  const contextBlock = buildCommittedTrackerContextBlock({
+    chatEnableAgents: args.chatEnableAgents,
+    activeAgentIds: args.activeAgentIds,
+    latestGameState: args.latestGameState,
+    chatMetadata: args.chatMetadata,
+    wrapFormat: args.wrapFormat,
+  });
+
+  if (!contextBlock) return;
 
   args.dedupeLastMessageWrappers(args.messages);
-  const contextBlock =
-    args.wrapFormat === "none"
-      ? trackerParts.join("\n\n")
-      : args.wrapFormat === "xml"
-        ? `<context>\n${trackerParts.map((part) => "    " + part.replace(/\n/g, "\n    ")).join("\n")}\n</context>`
-        : `# Context\n*(Established state as of the last message. Do not re-describe — advance from here.)*\n${trackerParts.join("\n")}`;
-
   args.messages.splice(args.findTrackerContextInsertIndex(args.messages), 0, {
     role: "user",
     content: contextBlock,

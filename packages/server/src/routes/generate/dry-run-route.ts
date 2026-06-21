@@ -2,7 +2,6 @@ import type { FastifyInstance } from "fastify";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
   isClaudeAdaptiveOnlyNoSamplingModel,
-  formatCustomTrackerFieldForPrompt,
   supportsXhighReasoningEffort,
   resolveMacros,
   stripMacroComments,
@@ -62,10 +61,12 @@ import {
   normalizeServiceTier,
   resolveVisibleGameStateAnchor,
   resolveBaseUrl,
+  shouldEnableAgentsForGeneration,
   type PromptAttachment,
 } from "../generate/generate-route-utils.js";
 import { buildGenerationPromptPresetCandidates, type PromptPresetCandidateSource } from "./prompt-preset-selection.js";
 import { createGameStateStorage, type GameStateVisibleAnchor } from "../../services/storage/game-state.storage.js";
+import { buildCommittedTrackerContextBlock } from "../../services/generation/committed-tracker-context.js";
 import { logger } from "../../lib/logger.js";
 
 type WrapFormat = "xml" | "markdown" | "none";
@@ -131,105 +132,16 @@ function formatTrackersContextBlock(args: {
   wrapFormat: WrapFormat;
   snap: any;
   chatMeta: Record<string, unknown>;
+  chatEnableAgents: boolean;
+  activeAgentIds: string[];
 }): string | null {
-  const { wrapFormat, snap, chatMeta } = args;
-
-  const trackerParts: string[] = [];
-
-  const wsParts: string[] = [];
-  if (snap.date) wsParts.push(`Date: ${snap.date}`);
-  if (snap.time) wsParts.push(`Time: ${snap.time}`);
-  if (snap.location) wsParts.push(`Location: ${snap.location}`);
-  if (snap.weather) wsParts.push(`Weather: ${snap.weather}`);
-  if (snap.temperature) wsParts.push(`Temperature: ${snap.temperature}`);
-  if (wsParts.length > 0) trackerParts.push(wrapContent(wsParts.join("\n"), "World", wrapFormat));
-
-  try {
-    const presentChars = JSON.parse(snap.presentCharacters);
-    if (Array.isArray(presentChars) && presentChars.length > 0) {
-      const charLines = presentChars.map((c: any) => {
-        if (typeof c === "string") return `- ${c}`;
-        const details: string[] = [];
-        if (c.mood) details.push(`mood: ${c.mood}`);
-        if (c.appearance) details.push(`appearance: ${c.appearance}`);
-        if (c.outfit) details.push(`outfit: ${c.outfit}`);
-        if (c.thoughts) details.push(`thoughts: ${c.thoughts}`);
-        if (Array.isArray(c.stats) && c.stats.length > 0) {
-          const statStr = c.stats.map((s: any) => `${s.name}: ${s.value}${s.max ? `/${s.max}` : ""}`).join(", ");
-          details.push(`stats: ${statStr}`);
-        }
-        const detailStr = details.length > 0 ? ` (${details.join("; ")})` : "";
-        return `- ${c.emoji ?? ""} ${c.name ?? c}${detailStr}`;
-      });
-      trackerParts.push(wrapContent(charLines.join("\n"), "Present Characters", wrapFormat));
-    }
-  } catch {
-    /* ignore */
-  }
-
-  if (snap.personaStats) {
-    try {
-      const psBars = typeof snap.personaStats === "string" ? JSON.parse(snap.personaStats) : snap.personaStats;
-      if (Array.isArray(psBars) && psBars.length > 0) {
-        const barLines = psBars.map((b: any) => `- ${b.name}: ${b.value}/${b.max}`);
-        trackerParts.push(wrapContent(barLines.join("\n"), "Persona Stats", wrapFormat));
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  if (snap.playerStats) {
-    try {
-      const stats = typeof snap.playerStats === "string" ? JSON.parse(snap.playerStats) : snap.playerStats;
-      if (stats?.status) trackerParts.push(wrapContent(`Status: ${stats.status}`, "Status", wrapFormat));
-      if (Array.isArray(stats.activeQuests) && stats.activeQuests.length > 0) {
-        const questLines = stats.activeQuests.map((q: any) => {
-          const objectives = Array.isArray(q.objectives)
-            ? q.objectives.map((o: any) => `  ${o.completed ? "[x]" : "[ ]"} ${o.text}`).join("\n")
-            : "";
-          return `- ${q.name}${q.completed ? " (completed)" : ""}${objectives ? "\n" + objectives : ""}`;
-        });
-        trackerParts.push(wrapContent(questLines.join("\n"), "Active Quests", wrapFormat));
-      }
-      if (Array.isArray(stats.inventory) && stats.inventory.length > 0) {
-        const invLines = stats.inventory.map(
-          (item: any) =>
-            `- ${item.name}${item.quantity > 1 ? ` x${item.quantity}` : ""}${item.description ? ` — ${item.description}` : ""}`,
-        );
-        trackerParts.push(wrapContent(invLines.join("\n"), "Inventory", wrapFormat));
-      }
-      if (Array.isArray(stats.stats) && stats.stats.length > 0) {
-        const statLines = stats.stats.map((s: any) => `- ${s.name}: ${s.value}${s.max ? `/${s.max}` : ""}`);
-        trackerParts.push(wrapContent(statLines.join("\n"), "Stats", wrapFormat));
-      }
-      if (Array.isArray(stats.customTrackerFields) && stats.customTrackerFields.length > 0) {
-        const customLines = stats.customTrackerFields.map(formatCustomTrackerFieldForPrompt);
-        trackerParts.push(wrapContent(customLines.join("\n"), "Custom Tracker", wrapFormat));
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  const playerNotes = typeof chatMeta.gamePlayerNotes === "string" ? chatMeta.gamePlayerNotes.trim() : "";
-  if (playerNotes) {
-    trackerParts.push(
-      wrapContent(
-        `The player has written these personal notes. Consider them when responding — they reflect what the player is tracking, their theories, and plans:\n${playerNotes}`,
-        "Player Notes",
-        wrapFormat,
-      ),
-    );
-  }
-
-  if (trackerParts.length <= 0) return null;
-
-  if (wrapFormat === "none") return trackerParts.join("\n\n");
-  if (wrapFormat === "xml") {
-    return `<context>\n${trackerParts.map((p) => "    " + p.replace(/\n/g, "\n    ")).join("\n")}\n</context>`;
-  }
-  return `# Context\n*(Established state as of the last message. Do not re-describe — advance from here.)*\n${trackerParts.join("\n")}`;
+  return buildCommittedTrackerContextBlock({
+    chatEnableAgents: args.chatEnableAgents,
+    activeAgentIds: args.activeAgentIds,
+    latestGameState: args.snap,
+    chatMetadata: args.chatMeta,
+    wrapFormat: args.wrapFormat,
+  });
 }
 
 function injectTrackerContext(
@@ -643,6 +555,13 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     // Pull existing messages, apply the same conversation-start + context limit filtering
     const allChatMessages = await chats.listMessages(chatId);
     const chatMode = (chat.mode as string) ?? "roleplay";
+    const dryRunActiveAgentIds = Array.isArray(chatMeta.activeAgentIds) ? (chatMeta.activeAgentIds as string[]) : [];
+    const dryRunChatEnableAgents = shouldEnableAgentsForGeneration({
+      chatEnableAgents: chatMeta.enableAgents === true,
+      chatMode,
+      impersonate,
+      impersonateBlockAgents: false,
+    });
     const supportsHiddenFromAI = chatMode === "conversation" || chatMode === "roleplay" || chatMode === "visual_novel";
     let startIdx = 0;
     for (let i = allChatMessages.length - 1; i >= 0; i--) {
@@ -1115,7 +1034,13 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         ? await (async () => {
             const snap = await loadLatestGameSnapshot(app, chatId, visibleGameStateAnchor, regenerateMessageId);
             if (!snap) return null;
-            return formatTrackersContextBlock({ wrapFormat, snap, chatMeta });
+            return formatTrackersContextBlock({
+              wrapFormat,
+              snap,
+              chatMeta,
+              chatEnableAgents: dryRunChatEnableAgents,
+              activeAgentIds: dryRunActiveAgentIds,
+            });
           })()
         : null;
 
@@ -1419,7 +1344,15 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     const resolvedInjectTrackersForRun = usePromptParts ? false : resolvedInjectTrackers;
     if (resolvedInjectTrackersForRun) {
       const snap = await loadLatestGameSnapshot(app, chatId, visibleGameStateAnchor, regenerateMessageId);
-      const contextBlock = snap ? formatTrackersContextBlock({ wrapFormat, snap, chatMeta }) : null;
+      const contextBlock = snap
+        ? formatTrackersContextBlock({
+            wrapFormat,
+            snap,
+            chatMeta,
+            chatEnableAgents: dryRunChatEnableAgents,
+            activeAgentIds: dryRunActiveAgentIds,
+          })
+        : null;
       if (contextBlock) {
         finalMessages = injectTrackerContext(finalMessages, contextBlock, "beforeLastHistoryMessage");
       }
