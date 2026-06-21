@@ -209,14 +209,14 @@ function formatGeminiApiError(error: GeminiApiError | undefined): string | null 
 }
 
 function formatGeminiPromptBlock(feedback: GeminiPromptFeedback | undefined): string | null {
-  const reason = feedback?.blockReason?.trim();
+  const reason = typeof feedback?.blockReason === "string" ? feedback.blockReason.trim() : "";
   if (!reason) return null;
-  const message = feedback?.blockReasonMessage?.trim();
+  const message = typeof feedback?.blockReasonMessage === "string" ? feedback.blockReasonMessage.trim() : "";
   return message ? `${reason}: ${message}` : reason;
 }
 
 function geminiFinishReasonError(finishReason: string | undefined, hasOutput: boolean): string | null {
-  const normalized = finishReason?.trim().toUpperCase();
+  const normalized = typeof finishReason === "string" ? finishReason.trim().toUpperCase() : "";
   if (!normalized || normalized === "STOP") return null;
   if (hasOutput && normalized === "MAX_TOKENS") return null;
   if (hasOutput) return null;

@@ -109,6 +109,10 @@ const MAX_CACHING_AT_DEPTH = 100;
 const DEFAULT_MAX_PARALLEL_JOBS = 1;
 const MAX_PARALLEL_JOBS = 16;
 
+function canProviderTreatAsLocalEndpoint(provider: APIProvider): boolean {
+  return provider !== "image_generation" && provider !== "claude_subscription" && provider !== "openai_chatgpt";
+}
+
 function normalizeCachingAtDepth(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return DEFAULT_CACHING_AT_DEPTH;
   return Math.min(MAX_CACHING_AT_DEPTH, Math.floor(value));
@@ -375,6 +379,7 @@ export function ConnectionEditor() {
   const handleSave = useCallback(async () => {
     if (!connectionDetailId) return;
     setSaveError(null);
+    const canTreatAsLocalEndpoint = canProviderTreatAsLocalEndpoint(localProvider);
     const payload: Record<string, unknown> = {
       id: connectionDetailId,
       name: localName,
@@ -402,7 +407,7 @@ export function ConnectionEditor() {
           : null,
       maxTokensOverride: localMaxTokensOverride ?? null,
       claudeFastMode: localClaudeFastMode,
-      treatAsLocalEndpoint: localTreatAsLocalEndpoint,
+      treatAsLocalEndpoint: canTreatAsLocalEndpoint ? localTreatAsLocalEndpoint : false,
     };
     // Only send API key if user typed a new one
     if (localApiKey.trim()) {
@@ -507,6 +512,7 @@ export function ConnectionEditor() {
           : null;
     const imageService =
       localProvider === "image_generation" ? localImageGenerationSource || localImageService || null : null;
+    const canTreatAsLocalEndpoint = canProviderTreatAsLocalEndpoint(localProvider);
     const exportRow: ConnectionTransferRow = {
       ...currentConnection,
       name: localName,
@@ -516,7 +522,7 @@ export function ConnectionEditor() {
       maxContext: localMaxContext,
       maxTokensOverride: localMaxTokensOverride ?? null,
       maxParallelJobs: localMaxParallelJobs,
-      treatAsLocalEndpoint: localTreatAsLocalEndpoint,
+      treatAsLocalEndpoint: canTreatAsLocalEndpoint ? localTreatAsLocalEndpoint : false,
       promptPresetId: localProvider !== "image_generation" ? localPromptPresetId || null : null,
       defaultParameters,
       enableCaching: localEnableCaching,
@@ -724,6 +730,7 @@ export function ConnectionEditor() {
   const isClaudeSubscriptionProvider = localProvider === "claude_subscription";
   const isOpenAIChatGPTProvider = localProvider === "openai_chatgpt";
   const isLocalAuthProvider = isClaudeSubscriptionProvider || isOpenAIChatGPTProvider;
+  const canTreatAsLocalEndpoint = canProviderTreatAsLocalEndpoint(localProvider);
 
   if (!connectionDetailId) return null;
 
@@ -1625,7 +1632,7 @@ export function ConnectionEditor() {
             </FieldGroup>
           )}
 
-          {localProvider !== "image_generation" && !isLocalAuthProvider && (
+          {canTreatAsLocalEndpoint && (
             <FieldGroup
               label="Local / Custom Endpoint"
               icon={<Server size="0.875rem" className="text-emerald-400" />}
