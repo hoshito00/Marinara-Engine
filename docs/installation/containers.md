@@ -10,7 +10,7 @@ docker compose up -d
 
 Then open **<http://127.0.0.1:7860>**.
 
-The Compose file tracks `ghcr.io/pasta-devs/marinara-engine:latest`. Every tagged release also publishes immutable version tags, such as `ghcr.io/pasta-devs/marinara-engine:1.6.1`, plus the matching lite tag `ghcr.io/pasta-devs/marinara-engine:1.6.1-lite`.
+The Compose file tracks `ghcr.io/pasta-devs/marinara-engine:latest`. Every tagged release also publishes immutable version tags, such as `ghcr.io/pasta-devs/marinara-engine:2.0.0`, plus the matching lite tag `ghcr.io/pasta-devs/marinara-engine:2.0.0-lite`.
 
 Compose binds to `127.0.0.1` by default. To expose the container to your LAN, change the port mapping to `${PORT:-7860}:7860`, set `BASIC_AUTH_USER`, `BASIC_AUTH_PASS`, and `ADMIN_SECRET`, then restart. See [Access Control](../CONFIGURATION.md#access-control).
 
@@ -101,7 +101,7 @@ docker build -f Dockerfile.lite -t marinara-engine:lite .
 docker run -d -p 127.0.0.1:7860:7860 -v marinara-data:/app/data marinara-engine:lite
 ```
 
-> **Note:** The lite image is published alongside each versioned release (e.g. `ghcr.io/pasta-devs/marinara-engine:1.5.4-lite`). It is **not** published on every push to `main`.
+> **Note:** The lite image is published alongside each versioned release (e.g. `ghcr.io/pasta-devs/marinara-engine:2.0.0-lite`). It is **not** published on every push to `main`.
 
 ## Updating
 
