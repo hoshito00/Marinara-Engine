@@ -209,8 +209,11 @@ export function PresetEditor() {
   const [localWrapFormat, setLocalWrapFormat] = useState<WrapFormat>("xml");
   const [localAuthor, setLocalAuthor] = useState("");
   const [localParams, setLocalParams] = useState<Record<string, unknown>>({});
+  const [localParamsParseFailed, setLocalParamsParseFailed] = useState(false);
   const [localConversationPrompt, setLocalConversationPrompt] = useState("");
   const [localGamePrompt, setLocalGamePrompt] = useState("");
+  const hydratedPresetIdRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
   const formatQuotes = useQuoteFormatter();
 
   useEffect(() => {
@@ -248,36 +251,52 @@ export function PresetEditor() {
 
   const handleSave = useCallback(async () => {
     if (!presetDetailId) return;
-    updatePreset.mutate(
-      {
-        id: presetDetailId,
-        name: localName,
-        description: localDescription,
-        wrapFormat: localWrapFormat,
-        author: localAuthor,
-        parameters: localParams,
-        conversationPrompt: localConversationPrompt,
-        gamePrompt: localGamePrompt,
-      },
-      {
-        onSuccess: () => {
-          setDirty(false);
-          setShowSaved(true);
-          setTimeout(() => setShowSaved(false), 1500);
-        },
-      },
-    );
+    const payload: { id: string } & Record<string, unknown> = {
+      id: presetDetailId,
+      name: localName,
+      description: localDescription,
+      wrapFormat: localWrapFormat,
+      author: localAuthor,
+      conversationPrompt: localConversationPrompt,
+      gamePrompt: localGamePrompt,
+    };
+    if (!localParamsParseFailed) payload.parameters = localParams;
+    await updatePreset.mutateAsync(payload);
+    setDirty(false);
+    setShowSaved(true);
+    setTimeout(() => setShowSaved(false), 1500);
   }, [
     presetDetailId,
     localName,
     localDescription,
     localWrapFormat,
     localAuthor,
+    localParamsParseFailed,
     localParams,
     localConversationPrompt,
     localGamePrompt,
     updatePreset,
   ]);
+
+  const handleExportPreset = useCallback(async () => {
+    if (!presetDetailId) return;
+    if (dirty) {
+      const shouldSave = await showConfirmDialog({
+        title: "Save before exporting?",
+        message: "You have unsaved preset edits. Save them before exporting so the file includes the latest changes?",
+        confirmLabel: "Save and export",
+        cancelLabel: "Cancel",
+      });
+      if (!shouldSave) return;
+      try {
+        await handleSave();
+      } catch {
+        toast.error("Could not save preset before export.");
+        return;
+      }
+    }
+    api.download(`/prompts/${presetDetailId}/export`);
+  }, [dirty, handleSave, presetDetailId]);
 
   const handleDelete = useCallback(async () => {
     if (!presetDetailId) return;
@@ -1956,8 +1975,7 @@ function VariableCard({
                       </label>
                       <OptionFieldInput
                         value={separatorValue}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => update({ separator: e.target.value })}
+                        onCommit={(value) => update({ separator: value })}
                         className="mari-editor-field w-20 px-1.5 py-0.5 text-center font-mono text-xs"
                         placeholder=", "
                       />

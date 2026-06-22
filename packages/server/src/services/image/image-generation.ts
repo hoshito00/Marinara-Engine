@@ -631,7 +631,7 @@ function decodeReferenceImage(reference: string): { base64: string; mimeType: st
   }
 
   const base64 = normalizeBase64ImagePayload(reference);
-  const mimeType = detectImageMimeType(base64);
+  const mimeType = detectImageMimeType(base64) ?? "image/png";
   return { base64, mimeType, ext: imageExtensionFromMimeType(mimeType) };
 }
 

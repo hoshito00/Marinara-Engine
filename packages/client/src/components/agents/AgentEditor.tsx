@@ -416,8 +416,12 @@ export function AgentEditor() {
         | undefined) ?? [];
     connectionIndexRef.current = {
       loaded: Array.isArray(connections),
-      llmIds: new Set(rows.filter((connection) => connection.provider !== "image_generation").map((connection) => connection.id)),
-      imageIds: new Set(rows.filter((connection) => connection.provider === "image_generation").map((connection) => connection.id)),
+      llmIds: new Set(
+        rows.filter((connection) => connection.provider !== "image_generation").map((connection) => connection.id),
+      ),
+      imageIds: new Set(
+        rows.filter((connection) => connection.provider === "image_generation").map((connection) => connection.id),
+      ),
     };
   }, [connections]);
 
@@ -939,7 +943,7 @@ export function AgentEditor() {
       description: localDescription,
       phase: savedPhase,
       enabled: true,
-      connectionId: localConnectionId || null,
+      connectionId: savedConnectionId || null,
       promptTemplate: localPrompt,
       settings: {
         ...preservedSpotifyFields,
