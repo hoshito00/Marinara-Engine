@@ -24,7 +24,13 @@ import {
 import { cn } from "../../lib/utils";
 import { useExtensions, useCreateExtension, useDeleteExtension, useUpdateExtension } from "../../hooks/use-extensions";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ADMIN_SECRET_STORAGE_KEY, ApiError, api, getAdminSecretHeader } from "../../lib/api-client";
+import {
+  ADMIN_SECRET_STORAGE_KEY,
+  ApiError,
+  api,
+  getAdminSecretHeader,
+  getPrivilegedActionErrorMessage,
+} from "../../lib/api-client";
 import { chatBackgroundUrlToMetadata } from "../../lib/backgrounds";
 import { normalizeThemeCss } from "../../lib/theme-css";
 import { forceRefreshSpa } from "@/lib/browser-runtime";
@@ -3871,10 +3877,14 @@ function ExtensionsSettings() {
     fallbackName: string,
   ) => {
     let imported = 0;
-    let failed = 0;
+    let skipped = 0;
+    const failures: string[] = [];
     for (const entry of entries) {
       const normalized = normalizeExtensionImportEntry(entry, fallbackName);
-      if (!normalized) continue;
+      if (!normalized) {
+        skipped++;
+        continue;
+      }
       try {
         await createExtension.mutateAsync({
           ...normalized,
@@ -3882,19 +3892,26 @@ function ExtensionsSettings() {
         });
         imported++;
       } catch (err) {
-        failed++;
+        failures.push(`"${normalized.name}": ${getPrivilegedActionErrorMessage(err, "install failed")}`);
         console.warn("[ExtensionsSettings] Failed to import extension entry:", normalized.name, err);
       }
     }
-    if (imported === 0 && failed === 0) throw new Error("No valid extensions found in file");
-    if (failed > 0) {
-      toast.warning(
+
+    // Nothing installed and nothing errored → the file held no importable entries.
+    if (imported === 0 && failures.length === 0) throw new Error("No valid extensions found in file");
+
+    if (failures.length > 0) {
+      // Surface the real cause (privileged-gate 403s become an actionable hint),
+      // not just a count — that count-only toast is exactly what hid the failure.
+      const more = failures.length > 1 ? ` (+${failures.length - 1} more)` : "";
+      toast.error(
         imported > 0
-          ? `Installed ${imported} extension${imported === 1 ? "" : "s"} (${failed} failed).`
-          : `Failed to install ${failed} extension${failed === 1 ? "" : "s"}.`,
+          ? `Installed ${imported} extension${imported === 1 ? "" : "s"}; ${failures.length} failed — ${failures[0]}${more}`
+          : `Failed to install ${failures.length} extension${failures.length === 1 ? "" : "s"} — ${failures[0]}${more}`,
       );
     } else {
-      toast.success(`Installed ${imported} extension${imported === 1 ? "" : "s"}`);
+      const skipNote = skipped > 0 ? ` (${skipped} skipped — no importable entry)` : "";
+      toast.success(`Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}`);
     }
   };
 
@@ -3950,7 +3967,7 @@ function ExtensionsSettings() {
         toast.error("Only .zip, .json, .css, and .js extension files are supported.");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to import extension.");
+      toast.error(getPrivilegedActionErrorMessage(err, "Failed to import extension."));
     }
     e.target.value = "";
   };
@@ -3970,7 +3987,7 @@ function ExtensionsSettings() {
         folderName,
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to import extension folder.");
+      toast.error(getPrivilegedActionErrorMessage(err, "Failed to import extension folder."));
     }
     e.target.value = "";
   };

@@ -46,7 +46,7 @@ import { useTrackAchievement } from "../../hooks/use-achievements";
 import { chatKeys } from "../../hooks/use-chats";
 import { lorebookKeys } from "../../hooks/use-lorebooks";
 import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
-import { api } from "../../lib/api-client";
+import { api, getPrivilegedActionErrorMessage } from "../../lib/api-client";
 import { useChatStore } from "../../stores/chat.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { useUIStore } from "../../stores/ui.store";
@@ -1783,15 +1783,24 @@ export function HomeProfessorMariChat({
 
   const approveWorkspaceChange = useCallback(
     async (id: string) => {
-      const result = await api.post<WorkspaceApprovalResponse>(`/professor-mari/workspace/approvals/${id}/approve`);
-      await refreshWorkspaceStatus().catch(() => undefined);
-      if (result.history?.status === "approved") {
-        await invalidateWorkspaceData();
-        toast.success("Workspace change applied. App data refreshed.");
-      } else if (result.completed === false) {
-        window.setTimeout(() => {
-          void invalidateWorkspaceData();
-        }, 1500);
+      try {
+        const result = await api.post<WorkspaceApprovalResponse>(
+          `/professor-mari/workspace/approvals/${id}/approve`,
+        );
+        await refreshWorkspaceStatus().catch(() => undefined);
+        if (result.history?.status === "approved") {
+          await invalidateWorkspaceData();
+          toast.success("Workspace change applied. App data refreshed.");
+        } else if (result.completed === false) {
+          window.setTimeout(() => {
+            void invalidateWorkspaceData();
+          }, 1500);
+        }
+      } catch (error) {
+        // Without this the failure was swallowed by the `void` call site, so a
+        // privileged-gate 403 (the common cause) left no user-facing breadcrumb.
+        console.error("[Professor Mari] Failed to apply workspace change", error);
+        toast.error(getPrivilegedActionErrorMessage(error, "Could not apply that workspace change."));
       }
     },
     [invalidateWorkspaceData, refreshWorkspaceStatus],
@@ -1799,8 +1808,13 @@ export function HomeProfessorMariChat({
 
   const rejectWorkspaceChange = useCallback(
     async (id: string) => {
-      await api.post(`/professor-mari/workspace/approvals/${id}/reject`);
-      await refreshWorkspaceStatus().catch(() => undefined);
+      try {
+        await api.post(`/professor-mari/workspace/approvals/${id}/reject`);
+        await refreshWorkspaceStatus().catch(() => undefined);
+      } catch (error) {
+        console.error("[Professor Mari] Failed to reject workspace change", error);
+        toast.error(getPrivilegedActionErrorMessage(error, "Could not reject that workspace change."));
+      }
     },
     [refreshWorkspaceStatus],
   );
