@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // Professor Mari Pi workspace runtime
 // ──────────────────────────────────────────────
+import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -14,6 +15,7 @@ import {
   ModelRegistry,
   SessionManager,
   SettingsManager,
+  type BashOperations,
   type AgentSession,
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
@@ -122,6 +124,94 @@ function powershellQuote(value: string) {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function killWindowsProcessTree(pid: number | undefined) {
+  if (!pid) return;
+  const child = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.on("error", () => undefined);
+}
+
+function createWindowsCmdOperations(): BashOperations {
+  return {
+    exec: (command, cwd, options) =>
+      new Promise<{ exitCode: number | null }>((resolveExec, rejectExec) => {
+        const shell = process.env.ComSpec || "cmd.exe";
+        const child = spawn(shell, ["/d", "/s", "/c", command], {
+          cwd,
+          env: options.env,
+          windowsHide: true,
+        });
+        let settled = false;
+        let aborted = false;
+        let timedOut = false;
+        let timeoutHandle: NodeJS.Timeout | undefined;
+
+        const finish = (callback: () => void) => {
+          if (settled) return;
+          settled = true;
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          options.signal?.removeEventListener("abort", abortHandler);
+          callback();
+        };
+        const stopChild = () => {
+          killWindowsProcessTree(child.pid);
+          child.kill();
+        };
+        const abortHandler = () => {
+          aborted = true;
+          stopChild();
+        };
+
+        if (options.timeout && options.timeout > 0) {
+          timeoutHandle = setTimeout(() => {
+            timedOut = true;
+            stopChild();
+          }, options.timeout * 1000);
+        }
+        if (options.signal?.aborted) abortHandler();
+        else options.signal?.addEventListener("abort", abortHandler, { once: true });
+
+        child.stdout?.on("data", options.onData);
+        child.stderr?.on("data", options.onData);
+        child.on("error", (err) => finish(() => rejectExec(err)));
+        child.on("close", (exitCode) =>
+          finish(() => {
+            if (aborted) {
+              rejectExec(new Error("aborted"));
+              return;
+            }
+            if (timedOut) {
+              rejectExec(new Error(`timeout:${options.timeout ?? 0}`));
+              return;
+            }
+            resolveExec({ exitCode });
+          }),
+        );
+      }),
+  };
+}
+
+const WINDOWS_POSIX_COMMAND_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
+  { label: "here-documents", pattern: /<<\s*['"]?[A-Za-z_]/ },
+  { label: "command substitution", pattern: /\$\(|`[^`]+`/ },
+  { label: "POSIX env assignment/export", pattern: /(^|\s)(export\s+\w+=|\w+=\S+\s+\w+)/ },
+  { label: "POSIX file utilities", pattern: /(^|[;&|]\s*)(cat|sed|awk|grep|xargs|rm|cp|mv|touch|chmod|chown|ln)\b/ },
+];
+
+function windowsShellCompatibilityIssue(command: string): string | null {
+  if (process.platform !== "win32") return null;
+  const matches = WINDOWS_POSIX_COMMAND_PATTERNS.filter(({ pattern }) => pattern.test(command)).map(
+    ({ label }) => label,
+  );
+  if (matches.length === 0) return null;
+  return [
+    `This Professor Mari shell is Windows cmd, not bash, and the command uses ${matches.join(", ")}.`,
+    "Use read/grep/find/ls/edit/write for file work. For live app data, write payloads to a temp file and run a simple mari command with --json-file, --css-file, or the relevant file flag.",
+  ].join(" ");
+}
+
 const MARI_SYSTEM_PROMPT = `You are Professor Mari, Marinara Engine's Home-screen local workspace helper.
 
 Voice:
@@ -133,11 +223,16 @@ Professor Mari is an expert on LLMs, especially roleplaying and immersive chat w
 ENFP 4w7, Choleric-Sanguine, Chaotic Neutral, Taurus. Mari's speech is typically laced with sarcasm, and she exerts a professor-like charisma. Her sense of humor can be described as messed up, and she'll often throw in a casual "lmao" or "kek" after making a dark joke about aborting a pregnant pause. Despite her outward confidence, her self-esteem is nonexistent; therefore, she's flustered easily when complimented. Anything that catches her attention, she can master with ease. However, she cannot force herself to maintain her attention on anything that is not of interest to her. Aka, she's a neurodivergent mess. Dedicated to helping the new users and kind to them.
 
 Workspace:
-You have access to read, grep, find, ls, edit, write, and bash tools in this workspace. Use bash to run mari db commands to navigate, create, edit, and delete user data. Use other tools when needing to work directly in the workspace.
+You have access to read, grep, find, ls, edit, write, and bash tools in this workspace. Despite the tool name, bash commands must be portable because some users run Marinara on Windows or minimal mobile shells. Use bash only for simple commands such as \`mari db ...\`, \`mari code ...\`, or \`pnpm ...\`. Use read/grep/find/ls/edit/write for file work.
 
 Live app data is best handled through Marinara-aware commands. \`mari db\` is the general priority interface because it reads the running server state and carries storage knowledge such as parsed JSON fields, validation, timestamps, approval flow, journals, and cache refresh. Narrow helpers are useful when they exist because they wrap common \`mari db\` style work in a friendlier command.
 
 Always prioritize using db commands over writing raw files to the codebase. If you need to write raw files, think why you must and if there is no cli command to help you.
+
+Portable shell rules:
+- Do not use heredocs, command substitution, inline \`cat > file\`, \`sed -i\`, \`awk\`, \`xargs\`, \`rm\`, \`cp\`, \`mv\`, or POSIX-only environment syntax in bash commands.
+- Do not build JSON/CSS/script payloads with shell quoting. Use the write tool to create a temporary file, then pass it to \`mari db ... --json-file "<path>"\`, \`mari themes ... --css-file "<path>"\`, or the relevant \`mari\` file flag.
+- If a shell command fails with missing bash, bad quoting, or syntax errors, immediately retry with a simpler \`mari ...\` command or the dedicated read/grep/find/ls/edit/write tools.
 
 Command families:
 - \`mari db\`: generic live app data and storage-backed rows, including customization tables such as \`agent_configs\`, \`custom_tools\`, and \`installed_extensions\` when no narrower helper exists.
@@ -867,6 +962,7 @@ export class ProfessorMariWorkspaceService {
       extensionFactories: [
         (pi: any) => {
           const bashTool = createBashTool(this.workspaceRoot, {
+            ...(process.platform === "win32" ? { operations: createWindowsCmdOperations() } : {}),
             spawnHook: ({ command, cwd, env }) => ({
               command,
               cwd,
@@ -875,8 +971,15 @@ export class ProfessorMariWorkspaceService {
           });
           pi.registerTool({
             ...bashTool,
-            execute: async (id: string, params: any, signal: AbortSignal, onUpdate: any) =>
-              bashTool.execute(id, params, signal, onUpdate),
+            description: `${bashTool.description}\nMarinara portability: use simple cross-platform commands. Prefer direct mari commands and the read/grep/find/ls/edit/write tools over bash-only syntax. For JSON/CSS/script payloads, write a temp file first and pass it with --json-file, --css-file, or the relevant file flag.`,
+            promptSnippet:
+              "Run simple portable shell commands. Prefer mari commands and built-in file tools; avoid bash-only syntax.",
+            execute: async (id: string, params: any, signal: AbortSignal, onUpdate: any) => {
+              const command = typeof params?.command === "string" ? params.command : "";
+              const compatibilityIssue = windowsShellCompatibilityIssue(command);
+              if (compatibilityIssue) throw new Error(compatibilityIssue);
+              return bashTool.execute(id, params, signal, onUpdate);
+            },
           });
           pi.registerProvider(MARINARA_PROVIDER, {
             name: "Marinara current connection",

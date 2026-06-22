@@ -29,6 +29,12 @@ export const CHAT_TOOLBAR_OVERFLOW_MENU_CLASS = cn(
   "marinara-chat-toolbar-overflow-menu flex w-10 flex-col items-center p-1",
   CHAT_TOOLBAR_ICON_GAP_CLASS,
 );
+export const CHAT_TOOLBAR_ACTION_EVENT = "mari-chat-toolbar-action";
+
+export function announceChatToolbarAction() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(CHAT_TOOLBAR_ACTION_EVENT));
+}
 
 export function getChatToolbarButtonClass({
   active = false,
@@ -66,7 +72,10 @@ export function ChatToolbarButton({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={(event) => {
+        announceChatToolbarAction();
+        onClick(event);
+      }}
       className={getChatToolbarButtonClass({ className, compact: size === "sm" })}
       title={title}
       aria-label={title}
@@ -144,9 +153,12 @@ export function ChatToolbarMenu({
   useLayoutEffect(() => {
     if (!open || !btnRef.current) return;
     const rect = btnRef.current.getBoundingClientRect();
+    const center = btnRef.current.closest<HTMLElement>('[data-component="CenterContent"]');
+    const centerRect = center?.getBoundingClientRect();
+    const rightBoundary = centerRect?.right ?? window.innerWidth;
     setPos({
       top: rect.bottom + 4,
-      right: window.innerWidth - rect.right,
+      right: Math.max(8, rightBoundary - rect.right),
     });
   }, [open]);
 
@@ -163,7 +175,11 @@ export function ChatToolbarMenu({
   }, [open]);
 
   return (
-    <div ref={rootRef} className={cn("relative flex min-w-0 items-center justify-end", className)}>
+    <div
+      ref={rootRef}
+      className={cn("relative flex min-w-0 items-center justify-end", className)}
+      onPointerDownCapture={announceChatToolbarAction}
+    >
       {!overflowCollapsed && (
         <div ref={desktopRef} className={cn("flex items-center max-md:hidden", CHAT_TOOLBAR_ICON_GAP_CLASS)}>
           {resolvedDesktopChildren}
@@ -186,7 +202,8 @@ export function ChatToolbarMenu({
             <div
               ref={popRef}
               className={cn(CHAT_TOOLBAR_OVERFLOW_MENU_CLASS, "fixed z-[9999]")}
-              style={{ top: pos.top, right: pos.right }}
+              style={{ top: pos.top, right: `calc(var(--mari-chat-ui-inset-right, 0px) + ${pos.right}px)` }}
+              onPointerDownCapture={announceChatToolbarAction}
               onClick={() => setOpen(false)}
             >
               {resolvedMobileChildren}

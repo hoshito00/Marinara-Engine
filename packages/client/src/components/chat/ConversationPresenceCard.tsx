@@ -13,7 +13,11 @@ import { cn, getAvatarCropStyle } from "../../lib/utils";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import type { CharacterMap } from "./chat-area.types";
-import { CHAT_TOOLBAR_IDENTITY_PILL_SIZE_CLASS, getChatToolbarButtonClass } from "./ChatToolbarControls";
+import {
+  CHAT_TOOLBAR_IDENTITY_PILL_SIZE_CLASS,
+  announceChatToolbarAction,
+  getChatToolbarButtonClass,
+} from "./ChatToolbarControls";
 import {
   ROLEPLAY_POPOVER_HEADER,
   ROLEPLAY_POPOVER_SCROLL_AREA,
@@ -572,7 +576,10 @@ export function ConversationPresenceCard({
         type="button"
         className={identityPillClass}
         title={title}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          announceChatToolbarAction();
+          setOpen((value) => !value);
+        }}
       >
         {characters.length === 1 ? (
           <>

@@ -2798,13 +2798,19 @@ export function ChatSettingsDrawer({
   };
 
   if (!open) return null;
+  const backdropStyle: CSSProperties = {
+    left: "var(--mari-chat-ui-inset-left, 0px)",
+    right: "var(--mari-chat-ui-inset-right, 0px)",
+    top: anchor ? `${anchor.top}px` : "3.5rem",
+    bottom: 0,
+  };
   const panelStyle: CSSProperties | undefined = anchor
-    ? { right: `${anchor.right}px`, top: `${anchor.top}px` }
+    ? { right: `calc(var(--mari-chat-ui-inset-right, 0px) + ${anchor.right}px)`, top: `${anchor.top}px` }
     : undefined;
 
   return (
     <>
-      <div className="fixed inset-0 z-[65] bg-transparent" onClick={onClose} />
+      <div className="fixed z-[65] bg-transparent" style={backdropStyle} onClick={onClose} />
 
       {/* Floating panel */}
       <div
@@ -2812,8 +2818,8 @@ export function ChatSettingsDrawer({
           ROLEPLAY_POPOVER_SHELL,
           "mari-chat-settings-popover",
           "mari-chat-settings-drawer",
-          "fixed bottom-3 z-[70] flex min-h-0 w-[min(34rem,calc(100vw-1.5rem))] flex-col overflow-hidden max-md:inset-x-2 max-md:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] max-md:top-[calc(3.5rem+env(safe-area-inset-top))] max-md:w-auto",
-          anchor ? "" : "right-3 top-14",
+          "fixed bottom-3 z-[70] flex min-h-0 w-[min(34rem,calc(100vw-var(--mari-chat-ui-inset-left,0px)-var(--mari-chat-ui-inset-right,0px)-1.5rem))] flex-col overflow-hidden max-md:inset-x-2 max-md:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] max-md:top-[calc(3.5rem+env(safe-area-inset-top))] max-md:w-auto",
+          anchor ? "" : "right-[calc(var(--mari-chat-ui-inset-right,0px)+0.75rem)] top-14",
         )}
         style={panelStyle}
       >

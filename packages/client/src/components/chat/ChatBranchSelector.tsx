@@ -2,7 +2,6 @@ import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   Check,
-  ChevronDown,
   Download,
   FileText,
   GitBranch,
@@ -26,7 +25,7 @@ import { showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { getChatDisplayName } from "../../lib/chat-display";
 import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
-import { getChatToolbarButtonClass } from "./ChatToolbarControls";
+import { announceChatToolbarAction, getChatToolbarButtonClass } from "./ChatToolbarControls";
 import {
   ROLEPLAY_POPOVER_SCROLL_AREA,
   ROLEPLAY_POPOVER_SHELL,
@@ -53,7 +52,6 @@ export function ChatBranchSelector({
   activeChatId,
   activeChatName,
   groupId,
-  variant = "conversation",
   compact = false,
   className,
 }: ChatBranchSelectorProps) {
@@ -97,7 +95,6 @@ export function ChatBranchSelector({
     ];
   }, [activeChatId, activeChatName, branches]);
 
-  const currentBranch = branches.find((chat) => chat.id === activeChatId);
   const branchCount = isLoading ? branches.length : displayBranches.length;
 
   const handleImportChat = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -216,20 +213,8 @@ export function ChatBranchSelector({
   }, [open]);
 
   if (!activeChatId) return null;
-  if (variant !== "roleplay" && (!groupId || (!isLoading && branches.length <= 1))) return null;
 
-  const branchLabel = currentBranch?.name ?? activeChatName ?? "Current branch";
-  const roleplayMinimal = variant === "roleplay" && !compact;
-  const branchButtonSizeClassName = compact
-    ? "relative h-8 w-8"
-    : roleplayMinimal
-      ? "h-8 min-w-14"
-      : "max-w-[min(15rem,calc(100vw-9rem))]";
-  const branchButtonContentClassName = compact
-    ? undefined
-    : roleplayMinimal
-      ? "justify-start gap-1.5 px-2 py-1 text-left"
-      : "justify-start gap-2 px-2.5 py-1.5 text-left";
+  const branchButtonSizeClassName = "relative h-8 w-8";
   const badgeClassName = "bg-[var(--marinara-chat-chrome-highlight-bg)] text-[var(--marinara-chat-chrome-panel-muted)]";
 
   return (
@@ -238,49 +223,28 @@ export function ChatBranchSelector({
         ref={buttonRef}
         type="button"
         onClick={(event) => {
+          announceChatToolbarAction();
           if (compact) event.stopPropagation();
           setOpen((value) => !value);
         }}
         aria-label={isLoading ? "Switch branch" : `Switch branch (${branchCount} branches)`}
         className={getChatToolbarButtonClass({
-          className: cn(branchButtonContentClassName, className),
-          compact,
+          className,
+          compact: true,
           open,
           sizeClassName: branchButtonSizeClassName,
         })}
         title="Switch branch"
       >
         <GitBranch size="0.8125rem" className="shrink-0" />
-        {compact ? (
-          <span
-            className={cn(
-              "absolute -right-1 -top-1 flex min-w-4 justify-center rounded-full px-1 text-[0.5625rem] font-semibold leading-4",
-              badgeClassName,
-            )}
-          >
-            {isLoading ? <Loader2 size="0.5625rem" className="mt-0.5 animate-spin" /> : branchCount}
-          </span>
-        ) : roleplayMinimal ? (
-          <>
-            <span
-              className={cn(
-                "shrink-0 rounded-full px-1.5 py-0.5 text-[0.625rem] font-medium tabular-nums",
-                badgeClassName,
-              )}
-            >
-              {isLoading ? <Loader2 size="0.6875rem" className="animate-spin" /> : branchCount}
-            </span>
-            <ChevronDown size="0.75rem" className={cn("shrink-0 transition-transform", open && "rotate-180")} />
-          </>
-        ) : (
-          <>
-            <span className="min-w-0 flex-1 truncate text-[0.75rem] font-medium">{branchLabel}</span>
-            <span className={cn("shrink-0 rounded-full px-1.5 py-0.5 text-[0.625rem] font-medium", badgeClassName)}>
-              {isLoading ? <Loader2 size="0.6875rem" className="animate-spin" /> : branchCount}
-            </span>
-            <ChevronDown size="0.75rem" className={cn("shrink-0 transition-transform", open && "rotate-180")} />
-          </>
-        )}
+        <span
+          className={cn(
+            "absolute -right-1 -top-1 flex min-w-4 justify-center rounded-full px-1 text-[0.5625rem] font-semibold leading-4",
+            badgeClassName,
+          )}
+        >
+          {isLoading ? <Loader2 size="0.5625rem" className="mt-0.5 animate-spin" /> : branchCount}
+        </span>
       </button>
 
       {open &&

@@ -67,6 +67,7 @@ import { useTTSConfig } from "../../hooks/use-tts";
 import { achievementKeys, trackAchievementEvent } from "../../hooks/use-achievements";
 import { buildTTSVoiceRequests, normalizeTTSCharacterName, withTTSVoiceRequestCacheKeys } from "../../lib/tts-dialogue";
 import { CHAT_SCROLL_TO_BOTTOM_EVENT, type ChatScrollToBottomDetail } from "../../lib/chat-scroll-events";
+import { CHAT_TOOLBAR_ACTION_EVENT } from "./ChatToolbarControls";
 import { mirrorSpritePlacements, normalizeSpritePlacements } from "./sprite-placement";
 import {
   SPRITE_DISPLAY_OPACITY_MAX,
@@ -349,17 +350,26 @@ export function ChatArea() {
   );
   const readFloatingPanelAnchor = useCallback(
     (event?: ReactMouseEvent<HTMLElement>): FloatingPanelAnchor => {
-      if (!event || typeof window === "undefined" || window.innerWidth < 768 || centerCompact) return null;
+      if (!event || typeof window === "undefined" || window.innerWidth < 768) return null;
       const rect = event.currentTarget.getBoundingClientRect();
+      const center = event.currentTarget.closest<HTMLElement>('[data-component="CenterContent"]');
+      const centerRect = center?.getBoundingClientRect();
+      const chatUiInsetRight = Number.parseFloat(
+        window.getComputedStyle(document.documentElement).getPropertyValue("--mari-chat-ui-inset-right"),
+      );
+      const rightBoundary =
+        centerRect?.right ?? window.innerWidth - (Number.isFinite(chatUiInsetRight) ? chatUiInsetRight : 0);
       return {
-        right: Math.max(12, Math.round(window.innerWidth - rect.right)),
+        right: Math.max(12, Math.round(rightBoundary - rect.right)),
         top: Math.max(56, Math.round(rect.bottom + 8)),
       };
     },
-    [centerCompact],
+    [],
   );
   const handleOpenSettingsPanel = useCallback(
     (event?: ReactMouseEvent<HTMLElement>, options?: OpenSettingsOptions) => {
+      setGalleryOpen(false);
+      setGalleryAnchor(null);
       setSettingsAnchor(readFloatingPanelAnchor(event));
       setSettingsInitialSection(options?.initialSection ?? null);
       setSettingsOpen(true);
@@ -368,6 +378,9 @@ export function ChatArea() {
   );
   const handleOpenGalleryPanel = useCallback(
     (event?: ReactMouseEvent<HTMLElement>) => {
+      setSettingsOpen(false);
+      setSettingsAnchor(null);
+      setSettingsInitialSection(null);
       setGalleryAnchor(readFloatingPanelAnchor(event));
       setGalleryOpen(true);
     },
@@ -382,6 +395,17 @@ export function ChatArea() {
     setGalleryOpen(false);
     setGalleryAnchor(null);
   }, []);
+  const closeFloatingChatDrawers = useCallback(() => {
+    setSettingsOpen(false);
+    setSettingsAnchor(null);
+    setSettingsInitialSection(null);
+    setGalleryOpen(false);
+    setGalleryAnchor(null);
+  }, []);
+  useEffect(() => {
+    window.addEventListener(CHAT_TOOLBAR_ACTION_EVENT, closeFloatingChatDrawers);
+    return () => window.removeEventListener(CHAT_TOOLBAR_ACTION_EVENT, closeFloatingChatDrawers);
+  }, [closeFloatingChatDrawers]);
   const chat = chatDetail ?? null;
   // Game mode loads ALL messages (no pagination) so the in-game log
   // shows the full session history instead of only the latest page.
@@ -2150,6 +2174,7 @@ export function ChatArea() {
             personaInfo={personaInfo}
             chatBackground={chatBackground}
             onOpenSettings={handleOpenSettingsPanel}
+            onCloseSettings={handleCloseSettingsPanel}
             onDeleteMessage={handleDelete}
             multiSelectMode={multiSelectMode}
             selectedMessageIds={selectedMessageIds}

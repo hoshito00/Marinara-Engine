@@ -142,6 +142,7 @@ import { GameAssetsBrowserView } from "../game-assets/GameAssetsBrowserView";
 import {
   CHAT_TOOLBAR_ICON_GAP_CLASS,
   CHAT_TOOLBAR_OVERFLOW_MENU_CLASS,
+  announceChatToolbarAction,
   getChatToolbarButtonClass,
 } from "../chat/ChatToolbarControls";
 import {
@@ -1797,6 +1798,7 @@ interface GameSurfaceProps {
   personaInfo?: PersonaInfo;
   chatBackground?: string | null;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>) => void;
+  onCloseSettings: () => void;
   onDeleteMessage: (messageId: string) => void;
   multiSelectMode?: boolean;
   selectedMessageIds?: Set<string>;
@@ -1813,6 +1815,7 @@ export function GameSurface({
   personaInfo,
   chatBackground,
   onOpenSettings,
+  onCloseSettings,
   onDeleteMessage,
   multiSelectMode = false,
   selectedMessageIds,
@@ -2066,17 +2069,33 @@ export function GameSurface({
   const readFloatingPanelAnchor = useCallback((event?: ReactMouseEvent<HTMLElement>) => {
     if (!event || typeof window === "undefined" || window.innerWidth < 768) return null;
     const rect = event.currentTarget.getBoundingClientRect();
+    const center = event.currentTarget.closest<HTMLElement>('[data-component="CenterContent"]');
+    const centerRect = center?.getBoundingClientRect();
+    const chatUiInsetRight = Number.parseFloat(
+      window.getComputedStyle(document.documentElement).getPropertyValue("--mari-chat-ui-inset-right"),
+    );
+    const rightBoundary =
+      centerRect?.right ?? window.innerWidth - (Number.isFinite(chatUiInsetRight) ? chatUiInsetRight : 0);
     return {
-      right: Math.max(12, Math.round(window.innerWidth - rect.right)),
+      right: Math.max(12, Math.round(rightBoundary - rect.right)),
       top: Math.max(56, Math.round(rect.bottom + 8)),
     };
   }, []);
   const handleOpenGalleryPanel = useCallback(
     (event?: ReactMouseEvent<HTMLElement>) => {
+      onCloseSettings();
       setGalleryAnchor(readFloatingPanelAnchor(event));
       setGalleryOpen(true);
     },
-    [readFloatingPanelAnchor],
+    [onCloseSettings, readFloatingPanelAnchor],
+  );
+  const handleOpenSettingsPanel = useCallback(
+    (event?: ReactMouseEvent<HTMLElement>) => {
+      setGalleryOpen(false);
+      setGalleryAnchor(null);
+      onOpenSettings(event);
+    },
+    [onOpenSettings],
   );
   const handleCloseGalleryPanel = useCallback(() => {
     setGalleryOpen(false);
@@ -8385,7 +8404,10 @@ export function GameSurface({
                 className={cn("pointer-events-none absolute right-3 z-50", topOverlayOffsetClass)}
               >
                 {/* Desktop controls */}
-                <div className={cn("pointer-events-auto hidden items-center md:flex", CHAT_TOOLBAR_ICON_GAP_CLASS)}>
+                <div
+                  className={cn("pointer-events-auto hidden items-center md:flex", CHAT_TOOLBAR_ICON_GAP_CLASS)}
+                  onPointerDownCapture={announceChatToolbarAction}
+                >
                   <ChatBranchSelector
                     activeChatId={activeChatId}
                     activeChatName={chat.name}
@@ -8525,13 +8547,13 @@ export function GameSurface({
                   <button onClick={handleOpenGalleryPanel} className={GAME_TOP_ICON_BUTTON} title="Gallery">
                     <Image size={14} />
                   </button>
-                  <button onClick={onOpenSettings} className={GAME_TOP_ICON_BUTTON} title="Chat Settings">
+                  <button onClick={handleOpenSettingsPanel} className={GAME_TOP_ICON_BUTTON} title="Chat Settings">
                     <Settings2 size={14} />
                   </button>
                 </div>
 
                 {/* Mobile controls */}
-                <div className="pointer-events-auto md:hidden">
+                <div className="pointer-events-auto md:hidden" onPointerDownCapture={announceChatToolbarAction}>
                   <div className="relative">
                     <button
                       onClick={() => {
@@ -8729,7 +8751,7 @@ export function GameSurface({
                         </button>
                         <button
                           onClick={(event) => {
-                            onOpenSettings(event);
+                            handleOpenSettingsPanel(event);
                             setMobileActionsOpen(false);
                           }}
                           className={GAME_MOBILE_ICON_BUTTON}

@@ -246,6 +246,18 @@ export function AppShell() {
   const centerSqueezedByPanels =
     !isMobile && (sidebarOpen || rightPanelOpen) && viewportWidth > 0 && desktopCenterWidth < CENTER_COMPACT_WIDTH;
   const shellOverlayMode = isMobile || centerSqueezedByPanels;
+  const chatUiInsetLeft = !shellOverlayMode && sidebarOpen ? Math.round(liveSidebarWidth) : 0;
+  const chatUiInsetRight = !shellOverlayMode && rightPanelOpen ? Math.round(liveRightPanelWidth) : 0;
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--mari-chat-ui-inset-left", `${chatUiInsetLeft}px`);
+    root.style.setProperty("--mari-chat-ui-inset-right", `${chatUiInsetRight}px`);
+    return () => {
+      root.style.removeProperty("--mari-chat-ui-inset-left");
+      root.style.removeProperty("--mari-chat-ui-inset-right");
+    };
+  }, [chatUiInsetLeft, chatUiInsetRight]);
 
   // ── Center-area compact detection ──
   // Side panels can shrink the center pane below the chat chrome's usable desktop

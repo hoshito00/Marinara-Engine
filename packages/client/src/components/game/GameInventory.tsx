@@ -197,7 +197,13 @@ export function GameInventory({
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] pt-[max(env(safe-area-inset-top),0.75rem)] backdrop-blur-sm sm:p-4">
+    <div
+      className="fixed inset-y-0 z-[80] flex items-center justify-center bg-black/70 p-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] pt-[max(env(safe-area-inset-top),0.75rem)] backdrop-blur-sm sm:p-4"
+      style={{
+        left: "var(--mari-chat-ui-inset-left, 0px)",
+        right: "var(--mari-chat-ui-inset-right, 0px)",
+      }}
+    >
       <div className="relative flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-lg border border-white/10 bg-black shadow-[0_0_40px_rgba(0,0,0,0.8)] supports-[height:100dvh]:max-h-[85dvh]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/8 bg-white/[0.02] px-4 py-3">

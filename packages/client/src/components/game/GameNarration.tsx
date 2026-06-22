@@ -4616,7 +4616,7 @@ export function GameNarration({
                             onBranchMessage?.(sourceMessageId);
                             setLogsOpen(false);
                           }}
-                          className="rounded-lg border border-zinc-600/70 bg-zinc-950/85 p-1 text-zinc-100 shadow-sm transition-colors hover:bg-zinc-800 hover:text-white"
+                          className="rounded p-1 text-white/45 opacity-100 transition-all hover:bg-white/10 hover:text-white/60 md:text-white/20 md:opacity-0 md:group-hover/logseg:opacity-100"
                           title="Branch from here"
                           aria-label="Branch from here"
                         >
