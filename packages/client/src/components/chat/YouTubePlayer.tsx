@@ -423,7 +423,7 @@ export function YouTubePlayer({ mobile = false }: { mobile?: boolean } = {}) {
         step={1}
         value={playerVolume}
         onChange={(event) => setPlayerVolume(Number(event.target.value))}
-        className="h-1.5 w-full cursor-pointer accent-[#FF0000]"
+        className="mari-youtube-volume-slider w-full"
         title="Volume"
         aria-label="YouTube volume"
       />
