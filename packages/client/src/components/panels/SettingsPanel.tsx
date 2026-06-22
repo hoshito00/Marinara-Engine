@@ -3897,14 +3897,36 @@ function triggerFilePicker(options: {
   if (options.webkitdirectory) {
     el.setAttribute("webkitdirectory", "");
   }
+
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    if (el.parentNode === document.body) {
+      document.body.removeChild(el);
+    }
+    window.removeEventListener("focus", handleWindowFocus);
+  };
+
+  const handleWindowFocus = () => {
+    // Wait a tiny bit for the 'change' event to register and run first if a file was selected.
+    setTimeout(cleanup, 300);
+  };
+
   el.addEventListener("change", (e) => {
     const files = (e.target as HTMLInputElement).files;
     if (files && files.length > 0) {
-      void options.onSelect(files);
+      try {
+        options.onSelect(files);
+      } catch (err) {
+        console.error("[triggerFilePicker] Error in onSelect callback:", err);
+      }
     }
-    document.body.removeChild(el);
+    cleanup();
   });
+
   document.body.appendChild(el);
+  window.addEventListener("focus", handleWindowFocus);
   el.click();
 }
 
