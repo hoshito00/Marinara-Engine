@@ -9,15 +9,17 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 ### Release Highlights
 
 - Refactored major parts of the codebase, UI shell, prompt pipeline, storage/import paths, and agent orchestration so Marinara Engine is easier to extend after the 2.0 line.
-- Rebuilt the app UI around unified settings controls, square-y chat/sidebar/tab affordances, accent-aware chrome, customizable text/background colors, a reset-to-default appearance action, and optional RGB/pulse accent effects.
-- Refactored the built-in agent system across Conversation, Roleplay, and Game modes, including better failure visibility, safer prompt marker expansion, bounded runtimes, custom-agent import/export, and custom agents in Game Mode chat settings.
+- Professor Mari is now a separate assistant living on the home page, capable of not only helping and creating stuff but also changing the theme of your frontend, creating agents, and extensions for you. Aka, fully customize your experience.
+- Rebuilt the app UI around unified settings controls, square-y chat/sidebar/tab affordances, accent-aware chrome, customizable text/background colors, a reset-to-default appearance action, and optional RGB/pulse accent effects. All available to customize from the Settings. Freshened up mobile view.
+- Reworked all the available Agents and made it easy for anyone to create their own custom one. Agents can also now easily be exported and imported.
 - Treated this as a release-stabilization pass: every known release-blocking bug and maintainer-tracked issue from the 2.0.0 sweep was addressed before preparing the release notes.
+- Marinara's Universal Preset v12 (new version) was set as a new default. Now Presets also include prompts for Conversation and Game modes you can use.
 
 ### Added
 
 - Added a Local Model runtime toggle that starts llama.cpp with `--jinja` for OpenAI-compatible native tool calls.
 - Added tracker field locks for editable Roleplay HUD and Tracker Panel fields so manually pinned tracker values survive generated game-state updates.
-- Added a Termux bootstrap path to the Android APK. The APK now opens a running local server when available, and otherwise offers setup actions that can hand the install/start command to Termux after Android's required user permissions.
+- Added a Termux bootstrap path to the Android APK. The APK now opens a running local server when available and otherwise offers setup actions that can hand the install/start command to Termux after Android's required user permissions.
 - Added folder-based import/export support for custom agents and browser extensions so more complex agents/extensions can travel with code and related files instead of only single JSON payloads.
 - Added Game Mode custom-agent selection in Chat Settings and aligned the Game setup wizard shell with Conversation and Roleplay setup styling.
 - Added UNO/turn-game support for Conversation chats, including in-character setup flow, bot turns, board state, and safer live snapshot handling.
@@ -27,17 +29,17 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 ### Changed
 
 - Moved AI-assisted character, persona, lorebook, preset creation, and preset review workflows to Professor Mari.
-- Unified UI/UX styling across Settings, Characters, Presets, Agents, Browser, Connections, Chat Settings, topbar icons, sidebar tabs, buttons, sort controls, and repeated list rows.
+- Unified UI/UX styling across Settings, Characters, Presets, Agents, Browser, Connections, Chat Settings, top bar icons, sidebar tabs, buttons, sort controls, and repeated list rows.
 - Improved Game Mode setup, generation defaults, asset generation bounds, checkpoint restore paths, journal/conclusion serialization, HUD widget persistence, and tracker rendering/merging.
 - Improved prompt assembly around post-history preset sections, assistant prefill steering, context-window trimming, lorebook placement, visible tracker context, and prompt/debug parity.
 - Improved file-backed storage, backup/import/export fidelity, SillyTavern character/lorebook/preset mappings, avatar transcoding, browser card preservation, and JSONL chat import/export.
 - Improved local sidecar lifecycle, backend-aware requests, embedding paths, model provisioning checks, and local inference hardening.
-- Improved Conversation autonomous scheduling, character presence status scoping, chat settings controls, Music DJ descriptions/behavior, and topbar hover/focus behavior.
+- Improved Conversation autonomous scheduling, character presence status scoping, chat settings controls, Music DJ descriptions/behavior, and top bar hover/focus behavior.
 - Updated Android docs, FAQ, troubleshooting, configuration, release-note rendering, and APK artifact naming around the new bootstrap-shell behavior.
 
 ### Removed
 
-- Removed the deprecated standalone character, persona, and lorebook maker modals and their dedicated generation routes.
+- Removed the deprecated standalone character, persona, and lorebook maker modals (replaced by Professor Mari) and their dedicated generation routes.
 - Removed the Preset editor's standalone review tab and dedicated preset-review route.
 
 ### Fixed
@@ -50,7 +52,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fixed YouTube Music DJ first-track behavior to avoid Shorts-style picks where possible and clarified that Music DJ supports both Spotify and YouTube.
 - Fixed the Professor Mari surprise toast shape so it matches the rest of the toast UI.
 - Fixed max-context-window enforcement so non-history prompt material is prioritized first, recent chat history is windowed afterward, and response/free-token headroom is preserved.
-- Fixed RGB/accent styling drift across topbar icons, settings icons, hard-coded pink text, tab/list icons, New chat buttons, title gradients, and solid-color RGB pulse strength.
+- Fixed RGB/accent styling drift across top bar icons, settings icons, hard-coded pink text, tab/list icons, New chat buttons, title gradients, and solid-color RGB pulse strength.
 - Fixed pinned gallery images layering so they stay above chat messages but below Chat Settings, trackers, author notes, summaries, session menus, and other chat UI windows.
 - Fixed custom agents in Game Mode chat settings so the picker appears in the Agents section and sits at the bottom of the section.
 - Fixed Android, Windows, Docker, Termux, and release-note wording that still described outdated APK/install behavior.
@@ -59,6 +61,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fixed Game Mode tracker state races, retry result handling, field-lock persistence, widget persistence, malformed stats rendering, game-state snapshot integrity, and committed tracker context rendering.
 - Fixed prompt post-history system sections so they preserve metadata while being injected as user-side content at the configured depth instead of being glued to pre-history system prompts.
 - Fixed a broad sweep of import/export, storage, lorebook, agent, sidecar, game-generation, chat-sidebar, and provider edge cases found during the 2.0.0 stabilization pass.
+- And many, many more.
 
 ### Platform Notes
 
