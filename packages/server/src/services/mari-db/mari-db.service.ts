@@ -654,6 +654,133 @@ async function parseCssInput(flags: Map<string, string | boolean>, cwd?: string)
   return normalizeThemeCss(css);
 }
 
+async function resolveJsonInput(flags: Map<string, string | boolean>, cwd?: string): Promise<string | null> {
+  const inline = flagString(flags, "json");
+  if (inline) return inline;
+  const filePath = flagString(flags, "json-file") ?? flagString(flags, "file");
+  if (!filePath) return null;
+  return readFile(resolve(cwd ? resolve(cwd) : process.cwd(), filePath), "utf8");
+}
+
+function truncateStr(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function summarizeCharacterRow(row: Row): Row {
+  const data = (tryParseJsonColumn(row, "data") as Record<string, unknown>) ?? {};
+  return {
+    id: row.id,
+    name: typeof data.name === "string" ? data.name : "(unnamed)",
+    comment: row.comment ?? "",
+    tags: Array.isArray(data.tags) ? data.tags.slice(0, 8) : [],
+    avatarPath: row.avatarPath ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function summarizePersonaRow(row: Row): Row {
+  return {
+    id: row.id,
+    name: row.name,
+    isActive: row.isActive === "true",
+    comment: row.comment ?? "",
+    description: typeof row.description === "string" ? truncateStr(row.description, 120) : "",
+    avatarPath: row.avatarPath ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function summarizeLorebookRow(row: Row): Row {
+  return {
+    id: row.id,
+    name: row.name,
+    description: typeof row.description === "string" ? truncateStr(row.description, 120) : "",
+    category: row.category ?? "uncategorized",
+    isGlobal: row.isGlobal === "true",
+    enabled: row.enabled !== "false",
+    scanDepth: row.scanDepth,
+    tokenBudget: row.tokenBudget,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function summarizeChatRow(row: Row): Row {
+  const charIds = tryParseJsonColumn(row, "characterIds");
+  return {
+    id: row.id,
+    name: row.name,
+    mode: row.mode,
+    characterIds: Array.isArray(charIds) ? charIds.slice(0, 4) : [],
+    personaId: row.personaId ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function normalizeCharacterDataBase(base: Record<string, unknown>): Record<string, unknown> {
+  const source =
+    isRecord(base.data) && (typeof base.spec === "string" || typeof base.spec_version === "string")
+      ? (base.data as Record<string, unknown>)
+      : base;
+  const data = { ...source };
+  delete data.spec;
+  delete data.spec_version;
+  return data;
+}
+
+function buildMinimalCharacterData(
+  name: string,
+  base: Record<string, unknown>,
+  flags: Map<string, string | boolean>,
+): Record<string, unknown> {
+  const normalizedBase = normalizeCharacterDataBase(base);
+  const baseExtensions = isRecord(normalizedBase.extensions)
+    ? (normalizedBase.extensions as Record<string, unknown>)
+    : {};
+  const data: Record<string, unknown> = {
+    description: "",
+    personality: "",
+    scenario: "",
+    first_mes: "",
+    mes_example: "",
+    creator_notes: "",
+    character_version: "",
+    alternate_greetings: [],
+    post_history_instructions: "",
+    system_prompt: "",
+    tags: [],
+    ...normalizedBase,
+    name,
+    extensions: { ...baseExtensions },
+  };
+  const topLevelMap: Array<[string, string]> = [
+    ["description", "description"],
+    ["personality", "personality"],
+    ["scenario", "scenario"],
+    ["first-mes", "first_mes"],
+    ["greeting", "first_mes"],
+    ["creator-notes", "creator_notes"],
+  ];
+  for (const [flagName, fieldName] of topLevelMap) {
+    const val = flagString(flags, flagName);
+    if (val !== undefined) data[fieldName] = val;
+  }
+  // backstory and appearance are Marinara extensions stored under data.extensions.*
+  const extensions = data.extensions as Record<string, unknown>;
+  const extMap: Array<[string, string]> = [
+    ["backstory", "backstory"],
+    ["appearance", "appearance"],
+  ];
+  for (const [flagName, fieldName] of extMap) {
+    const val = flagString(flags, flagName);
+    if (val !== undefined) extensions[fieldName] = val;
+  }
+  return data;
+}
+
 function createWherePredicate(expr: string | undefined): (row: Row) => boolean {
   if (!expr) return () => true;
   const fn = new Function("row", `return Boolean(${expr});`) as (row: Row) => boolean;
@@ -710,6 +837,18 @@ export class MariDbService {
       }
       if (group === "wiki" || group === "fandom") {
         return await executeWikiCli(argv.slice(1), { command });
+      }
+      if (group === "character" || group === "characters") {
+        return await this.executeCharactersCommand(argv.slice(1), { command, sessionId, cwd: envelope.cwd });
+      }
+      if (group === "persona" || group === "personas") {
+        return await this.executePersonasCommand(argv.slice(1), { command, sessionId, cwd: envelope.cwd });
+      }
+      if (group === "lorebook" || group === "lorebooks") {
+        return await this.executeLorebooksCommand(argv.slice(1), { command, sessionId, cwd: envelope.cwd });
+      }
+      if (group === "chat" || group === "chats") {
+        return await this.executeChatsCommand(argv.slice(1), { command, sessionId, cwd: envelope.cwd });
       }
       if (group !== "db") {
         if (group === "storage") {
@@ -1173,6 +1312,609 @@ export class MariDbService {
       command: context.command,
       error: "Durable workspace run resume is planned but not implemented yet. Reopen Professor Mari and paste the run context or continue manually.",
     };
+  }
+
+  private async executeCharactersCommand(
+    args: string[],
+    context: { command: string; sessionId: string; cwd?: string },
+  ): Promise<MariDbCommandResult> {
+    const sub = args[0];
+    const rest = args.slice(1);
+    const parsed = parseArgs(rest);
+    const flags = parsed.flags;
+    if (!sub || sub === "help" || sub === "--help" || sub === "-h" || hasFlag(flags, "help")) {
+      return { ok: true, mode: "read", command: context.command, output: this.charactersHelpText() };
+    }
+    switch (sub) {
+      case "list": {
+        const limit = normalizeLimit(flagString(flags, "limit"), 50, 1000);
+        const search = flagString(flags, "search")?.toLowerCase();
+        const rows = (await this.rawRows("characters")).sort((a, b) =>
+          String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")),
+        );
+        const summaries = rows
+          .map(summarizeCharacterRow)
+          .filter((s) => !search || JSON.stringify(s).toLowerCase().includes(search));
+        return { ok: true, mode: "read", command: context.command, output: summaries.slice(0, limit) };
+      }
+      case "get": {
+        const id = parsed.positionals[0];
+        if (!id) throw new Error("Usage: mari characters get <id>");
+        const row = await this.getRawById(getMeta("characters"), id);
+        return { ok: Boolean(row), mode: "read", command: context.command, output: row ? parseRow("characters", row) : null };
+      }
+      case "search": {
+        const query = parsed.positionals[0];
+        if (!query) throw new Error("Usage: mari characters search <query>");
+        const needle = query.toLowerCase();
+        const limit = normalizeLimit(flagString(flags, "limit"), 50, 1000);
+        const rows = (await this.rawRows("characters"))
+          .filter((row) => JSON.stringify(row).toLowerCase().includes(needle))
+          .slice(0, limit)
+          .map(summarizeCharacterRow);
+        return { ok: true, mode: "read", command: context.command, output: rows };
+      }
+      case "create": {
+        const name = flagString(flags, "name")?.trim();
+        const rawJson = await resolveJsonInput(flags, context.cwd);
+        if (!name && !rawJson) {
+          throw new Error(
+            "Usage: mari characters create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--apply]\n" +
+              "       or: mari characters create --json '<data_json>' [--json-file <path>] [--apply]",
+          );
+        }
+        const baseData = rawJson ? ((JSON.parse(rawJson) as Record<string, unknown>) ?? {}) : {};
+        const charName = name ?? (typeof baseData.name === "string" ? baseData.name.trim() : "");
+        if (!charName) throw new Error("Character name is required (--name or name field in --json)");
+        const charData = buildMinimalCharacterData(charName, baseData, flags);
+        const id = flagString(flags, "id") ?? newId();
+        const timestamp = now();
+        const row: Row = {
+          id,
+          data: charData,
+          comment: flagString(flags, "comment") ?? "",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        const request: ParsedMutationRequest = {
+          kind: "insert",
+          table: "characters",
+          id,
+          row,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "update": {
+        const id = parsed.positionals[0];
+        if (!id) throw new Error("Usage: mari characters update <id> [--name <name>] [--description <text>] [--personality <text>] [--apply]");
+        const existing = await this.getRawById(getMeta("characters"), id);
+        if (!existing) throw new Error(`Character ${id} not found`);
+        const existingData = (tryParseJsonColumn(existing, "data") as Record<string, unknown>) ?? {};
+        const rawJson = await resolveJsonInput(flags, context.cwd);
+        const patchData = rawJson ? ((JSON.parse(rawJson) as Record<string, unknown>) ?? {}) : {};
+        const updatedData = buildMinimalCharacterData(
+          flagString(flags, "name")?.trim() ?? (typeof existingData.name === "string" ? existingData.name : ""),
+          { ...existingData, ...patchData },
+          flags,
+        );
+        const row: Row = {
+          id,
+          data: updatedData,
+          comment: flagString(flags, "comment") ?? (typeof existing.comment === "string" ? existing.comment : ""),
+          avatarPath: existing.avatarPath ?? null,
+          spriteFolderPath: existing.spriteFolderPath ?? null,
+          createdAt: existing.createdAt,
+          updatedAt: now(),
+        };
+        const request: ParsedMutationRequest = {
+          kind: "replace",
+          table: "characters",
+          id,
+          row,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "delete": {
+        const id = parsed.positionals[0];
+        if (!id) throw new Error("Usage: mari characters delete <id> [--apply]");
+        const request: ParsedMutationRequest = {
+          kind: "delete",
+          table: "characters",
+          id,
+          apply: hasFlag(flags, "apply"),
+          cascade: true,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      default:
+        return { ok: false, mode: "read", command: context.command, error: this.charactersHelpText() };
+    }
+  }
+
+  private async executePersonasCommand(
+    args: string[],
+    context: { command: string; sessionId: string; cwd?: string },
+  ): Promise<MariDbCommandResult> {
+    const sub = args[0];
+    const rest = args.slice(1);
+    const parsed = parseArgs(rest);
+    const flags = parsed.flags;
+    if (!sub || sub === "help" || sub === "--help" || sub === "-h" || hasFlag(flags, "help")) {
+      return { ok: true, mode: "read", command: context.command, output: this.personasHelpText() };
+    }
+    switch (sub) {
+      case "list": {
+        const limit = normalizeLimit(flagString(flags, "limit"), 50, 1000);
+        const rows = (await this.rawRows("personas")).sort((a, b) =>
+          String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")),
+        );
+        return { ok: true, mode: "read", command: context.command, output: rows.slice(0, limit).map(summarizePersonaRow) };
+      }
+      case "active": {
+        const row = (await this.rawRows("personas")).find((r) => r.isActive === "true") ?? null;
+        return { ok: true, mode: "read", command: context.command, output: row ? parseRow("personas", row) : null };
+      }
+      case "get": {
+        const id = parsed.positionals[0];
+        if (!id) throw new Error("Usage: mari personas get <id>");
+        const row = await this.getRawById(getMeta("personas"), id);
+        return { ok: Boolean(row), mode: "read", command: context.command, output: row ? parseRow("personas", row) : null };
+      }
+      case "search": {
+        const query = parsed.positionals[0];
+        if (!query) throw new Error("Usage: mari personas search <query>");
+        const needle = query.toLowerCase();
+        const limit = normalizeLimit(flagString(flags, "limit"), 50, 1000);
+        const rows = (await this.rawRows("personas"))
+          .filter((row) => JSON.stringify(row).toLowerCase().includes(needle))
+          .slice(0, limit)
+          .map(summarizePersonaRow);
+        return { ok: true, mode: "read", command: context.command, output: rows };
+      }
+      case "create": {
+        const name = flagString(flags, "name")?.trim();
+        if (!name) {
+          throw new Error(
+            "Usage: mari personas create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--apply]",
+          );
+        }
+        const timestamp = now();
+        const row: Row = {
+          id: flagString(flags, "id") ?? newId(),
+          name,
+          comment: flagString(flags, "comment") ?? "",
+          creator: flagString(flags, "creator") ?? "",
+          personaVersion: "1.0",
+          creatorNotes: flagString(flags, "creator-notes") ?? "",
+          description: flagString(flags, "description") ?? "",
+          personality: flagString(flags, "personality") ?? "",
+          scenario: flagString(flags, "scenario") ?? "",
+          backstory: flagString(flags, "backstory") ?? "",
+          appearance: flagString(flags, "appearance") ?? "",
+          isActive: "false",
+          nameColor: "",
+          dialogueColor: "",
+          boxColor: "",
+          trackerCardColors: { mode: "chat" },
+          personaStats: "",
+          tags: [],
+          savedStatusOptions: [],
+          avatarCrop: "",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        const request: ParsedMutationRequest = {
+          kind: "insert",
+          table: "personas",
+          id: String(row.id),
+          row,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "update": {
+        const id = parsed.positionals[0];
+        if (!id)
+          throw new Error(
+            "Usage: mari personas update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--apply]",
+          );
+        const patch: Row = { updatedAt: now() };
+        const fieldMap: Array<[string, string]> = [
+          ["name", "name"],
+          ["description", "description"],
+          ["personality", "personality"],
+          ["scenario", "scenario"],
+          ["backstory", "backstory"],
+          ["appearance", "appearance"],
+          ["comment", "comment"],
+          ["creator", "creator"],
+          ["creator-notes", "creatorNotes"],
+        ];
+        for (const [flagName, fieldName] of fieldMap) {
+          const val = flagString(flags, flagName);
+          if (val !== undefined) patch[fieldName] = val;
+        }
+        if (Object.keys(patch).length <= 1) {
+          throw new Error(
+            "Provide at least one field to update (--name, --description, --personality, --scenario, --backstory, --appearance)",
+          );
+        }
+        const request: ParsedMutationRequest = {
+          kind: "patch",
+          table: "personas",
+          id,
+          patch,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "delete": {
+        const id = parsed.positionals[0];
+        if (!id) throw new Error("Usage: mari personas delete <id> [--apply]");
+        const request: ParsedMutationRequest = {
+          kind: "delete",
+          table: "personas",
+          id,
+          apply: hasFlag(flags, "apply"),
+          cascade: true,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      default:
+        return { ok: false, mode: "read", command: context.command, error: this.personasHelpText() };
+    }
+  }
+
+  private async executeLorebooksCommand(
+    args: string[],
+    context: { command: string; sessionId: string; cwd?: string },
+  ): Promise<MariDbCommandResult> {
+    const sub = args[0];
+    const rest = args.slice(1);
+    const parsed = parseArgs(rest);
+    const flags = parsed.flags;
+    if (!sub || sub === "help" || sub === "--help" || sub === "-h" || hasFlag(flags, "help")) {
+      return { ok: true, mode: "read", command: context.command, output: this.lorebooksHelpText() };
+    }
+    switch (sub) {
+      case "list": {
+        const limit = normalizeLimit(flagString(flags, "limit"), 50, 1000);
+        const globalOnly = hasFlag(flags, "global");
+        const characterId = flagString(flags, "character");
+        const rows = (await this.rawRows("lorebooks"))
+          .filter((row) => !globalOnly || row.isGlobal === "true")
+          .filter((row) => !characterId || row.characterId === characterId)
+          .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
+        return { ok: true, mode: "read", command: context.command, output: rows.slice(0, limit).map(summarizeLorebookRow) };
+      }
+      case "get": {
+        const id = parsed.positionals[0];
+        if (!id) throw new Error("Usage: mari lorebooks get <id>");
+        const row = await this.getRawById(getMeta("lorebooks"), id);
+        if (!row) return { ok: false, mode: "read", command: context.command, output: null };
+        const entryCount = (await this.rawRows("lorebook_entries")).filter((e) => e.lorebookId === id).length;
+        return { ok: true, mode: "read", command: context.command, output: { ...parseRow("lorebooks", row), entryCount } };
+      }
+      case "entries": {
+        const lorebookId = parsed.positionals[0];
+        if (!lorebookId) throw new Error("Usage: mari lorebooks entries <lorebook-id> [--limit <n>]");
+        const limit = normalizeLimit(flagString(flags, "limit"), 100, 2000);
+        const entries = (await this.rawRows("lorebook_entries"))
+          .filter((e) => e.lorebookId === lorebookId)
+          .sort((a, b) => Number(a.order ?? 100) - Number(b.order ?? 100))
+          .slice(0, limit)
+          .map((row) => {
+            const p = parseRow("lorebook_entries", row);
+            return {
+              id: p.id,
+              name: p.name,
+              enabled: p.enabled,
+              constant: p.constant,
+              keys: p.keys,
+              content: typeof p.content === "string" ? truncateStr(p.content, 200) : "",
+              order: p.order,
+              createdAt: p.createdAt,
+            };
+          });
+        return { ok: true, mode: "read", command: context.command, output: entries };
+      }
+      case "search": {
+        const query = parsed.positionals[0];
+        if (!query) throw new Error("Usage: mari lorebooks search <query>");
+        const needle = query.toLowerCase();
+        const limit = normalizeLimit(flagString(flags, "limit"), 50, 1000);
+        const rows = (await this.rawRows("lorebooks"))
+          .filter((row) => JSON.stringify(row).toLowerCase().includes(needle))
+          .slice(0, limit)
+          .map(summarizeLorebookRow);
+        return { ok: true, mode: "read", command: context.command, output: rows };
+      }
+      case "create": {
+        const name = flagString(flags, "name")?.trim();
+        if (!name) throw new Error("Usage: mari lorebooks create --name <name> [--description <text>] [--global] [--apply]");
+        const timestamp = now();
+        const row: Row = {
+          id: flagString(flags, "id") ?? newId(),
+          name,
+          description: flagString(flags, "description") ?? "",
+          category: flagString(flags, "category") ?? "uncategorized",
+          isGlobal: hasFlag(flags, "global") ? "true" : "false",
+          enabled: "true",
+          scanDepth: 2,
+          tokenBudget: 2048,
+          entryLimit: 100,
+          recursiveScanning: "false",
+          maxRecursionDepth: 3,
+          excludeFromVectorization: "false",
+          scope: { mode: "all", chatIds: [] },
+          tags: [],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        const request: ParsedMutationRequest = {
+          kind: "insert",
+          table: "lorebooks",
+          id: String(row.id),
+          row,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "update": {
+        const id = parsed.positionals[0];
+        if (!id)
+          throw new Error(
+            "Usage: mari lorebooks update <id> [--name <name>] [--description <text>] [--category <text>] [--global] [--enable] [--disable] [--apply]",
+          );
+        const patch: Row = { updatedAt: now() };
+        const fieldMap: Array<[string, string]> = [
+          ["name", "name"],
+          ["description", "description"],
+          ["category", "category"],
+        ];
+        for (const [flagName, fieldName] of fieldMap) {
+          const val = flagString(flags, flagName);
+          if (val !== undefined) patch[fieldName] = val;
+        }
+        if (hasFlag(flags, "global")) patch.isGlobal = "true";
+        if (hasFlag(flags, "no-global")) patch.isGlobal = "false";
+        if (hasFlag(flags, "enable")) patch.enabled = "true";
+        if (hasFlag(flags, "disable")) patch.enabled = "false";
+        if (Object.keys(patch).length <= 1) {
+          throw new Error(
+            "Provide at least one field to update (--name, --description, --category, --global, --enable, --disable)",
+          );
+        }
+        const request: ParsedMutationRequest = {
+          kind: "patch",
+          table: "lorebooks",
+          id,
+          patch,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "add-entry": {
+        const lorebookId = parsed.positionals[0];
+        if (!lorebookId) {
+          throw new Error(
+            "Usage: mari lorebooks add-entry <lorebook-id> --name <name> [--content <text>] [--keys <k1,k2,...>] [--apply]",
+          );
+        }
+        const entryName = flagString(flags, "name")?.trim();
+        if (!entryName) throw new Error("--name is required for add-entry");
+        const lorebookExists = await this.getRawById(getMeta("lorebooks"), lorebookId);
+        if (!lorebookExists) throw new Error(`Lorebook ${lorebookId} not found`);
+        const keysRaw = flagString(flags, "keys") ?? "";
+        const keys = keysRaw
+          ? keysRaw
+              .split(",")
+              .map((k) => k.trim())
+              .filter(Boolean)
+          : [];
+        const timestamp = now();
+        const entryRow: Row = {
+          id: flagString(flags, "id") ?? newId(),
+          lorebookId,
+          name: entryName,
+          content: flagString(flags, "content") ?? "",
+          description: flagString(flags, "description") ?? "",
+          keys,
+          secondaryKeys: [],
+          enabled: "true",
+          constant: "false",
+          selective: "false",
+          selectiveLogic: "and",
+          matchWholeWords: "false",
+          caseSensitive: "false",
+          useRegex: "false",
+          characterFilterMode: "any",
+          characterFilterIds: [],
+          characterTagFilterMode: "any",
+          characterTagFilters: [],
+          generationTriggerFilterMode: "any",
+          generationTriggerFilters: [],
+          additionalMatchingSources: [],
+          position: 0,
+          depth: 4,
+          order: 100,
+          role: "system",
+          group: "",
+          relationships: {},
+          dynamicState: {},
+          activationConditions: [],
+          preventRecursion: "false",
+          excludeRecursion: "false",
+          delayUntilRecursion: "false",
+          excludeFromVectorization: "false",
+          locked: "false",
+          tag: "",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        const request: ParsedMutationRequest = {
+          kind: "insert",
+          table: "lorebook_entries",
+          id: String(entryRow.id),
+          row: entryRow,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "link-character": {
+        const lorebookId = parsed.positionals[0];
+        const characterId = flagString(flags, "character");
+        if (!lorebookId || !characterId)
+          throw new Error("Usage: mari lorebooks link-character <lorebook-id> --character <character-id> [--apply]");
+        const lorebookExists = await this.getRawById(getMeta("lorebooks"), lorebookId);
+        if (!lorebookExists) throw new Error(`Lorebook ${lorebookId} not found`);
+        const characterExists = await this.getRawById(getMeta("characters"), characterId);
+        if (!characterExists) throw new Error(`Character ${characterId} not found`);
+        const timestamp = now();
+        const linkRow: Row = { id: newId(), lorebookId, characterId, createdAt: timestamp };
+        const request: ParsedMutationRequest = {
+          kind: "insert",
+          table: "lorebook_character_links",
+          id: String(linkRow.id),
+          row: linkRow,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "unlink-character": {
+        const lorebookId = parsed.positionals[0];
+        const characterId = flagString(flags, "character");
+        if (!lorebookId || !characterId)
+          throw new Error("Usage: mari lorebooks unlink-character <lorebook-id> --character <character-id> [--apply]");
+        const links = (await this.rawRows("lorebook_character_links")).filter(
+          (row) => row.lorebookId === lorebookId && row.characterId === characterId,
+        );
+        if (links.length === 0) throw new Error(`No link found between lorebook ${lorebookId} and character ${characterId}`);
+        const request: ParsedMutationRequest = {
+          kind: "delete",
+          table: "lorebook_character_links",
+          id: String(links[0]!.id),
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "delete": {
+        const id = parsed.positionals[0];
+        if (!id) throw new Error("Usage: mari lorebooks delete <id> [--apply]");
+        const request: ParsedMutationRequest = {
+          kind: "delete",
+          table: "lorebooks",
+          id,
+          apply: hasFlag(flags, "apply"),
+          cascade: hasFlag(flags, "cascade"),
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      default:
+        return { ok: false, mode: "read", command: context.command, error: this.lorebooksHelpText() };
+    }
+  }
+
+  private async executeChatsCommand(
+    args: string[],
+    context: { command: string; sessionId: string; cwd?: string },
+  ): Promise<MariDbCommandResult> {
+    const sub = args[0];
+    const rest = args.slice(1);
+    const parsed = parseArgs(rest);
+    const flags = parsed.flags;
+    if (!sub || sub === "help" || sub === "--help" || sub === "-h" || hasFlag(flags, "help")) {
+      return { ok: true, mode: "read", command: context.command, output: this.chatsHelpText() };
+    }
+    switch (sub) {
+      case "list": {
+        const limit = normalizeLimit(flagString(flags, "limit"), 20, 500);
+        const characterId = flagString(flags, "character");
+        const rows = (await this.rawRows("chats"))
+          .filter((row) => {
+            if (!characterId) return true;
+            const ids = tryParseJsonColumn(row, "characterIds");
+            return Array.isArray(ids) && ids.includes(characterId);
+          })
+          .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")))
+          .slice(0, limit)
+          .map(summarizeChatRow);
+        return { ok: true, mode: "read", command: context.command, output: rows };
+      }
+      case "get": {
+        const id = parsed.positionals[0];
+        if (!id) throw new Error("Usage: mari chats get <id>");
+        const row = await this.getRawById(getMeta("chats"), id);
+        if (!row) return { ok: false, mode: "read", command: context.command, output: null };
+        const messageCount = (await this.rawRows("messages")).filter((m) => m.chatId === id).length;
+        return { ok: true, mode: "read", command: context.command, output: { ...parseRow("chats", row), messageCount } };
+      }
+      case "messages": {
+        const chatId = parsed.positionals[0];
+        if (!chatId) throw new Error("Usage: mari chats messages <chat-id> [--limit <n>] [--tail]");
+        const limit = normalizeLimit(flagString(flags, "limit"), 20, 200);
+        const tail = hasFlag(flags, "tail");
+        let messages = (await this.rawRows("messages")).filter((m) => m.chatId === chatId);
+        messages.sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")));
+        messages = tail ? messages.slice(-limit) : messages.slice(0, limit);
+        const result = messages.map((row) => ({
+          id: row.id,
+          role: row.role,
+          characterId: row.characterId ?? null,
+          content: typeof row.content === "string" ? truncateStr(row.content, 500) : "",
+          createdAt: row.createdAt,
+        }));
+        return { ok: true, mode: "read", command: context.command, output: result };
+      }
+      case "search": {
+        const query = parsed.positionals[0];
+        if (!query) throw new Error("Usage: mari chats search <query>");
+        const needle = query.toLowerCase();
+        const limit = normalizeLimit(flagString(flags, "limit"), 20, 200);
+        const rows = (await this.rawRows("chats"))
+          .filter((row) => JSON.stringify(row).toLowerCase().includes(needle))
+          .slice(0, limit)
+          .map(summarizeChatRow);
+        return { ok: true, mode: "read", command: context.command, output: rows };
+      }
+      default:
+        return { ok: false, mode: "read", command: context.command, error: this.chatsHelpText() };
+    }
   }
 
   private async executeThemeCommand(args: string[], context: { command: string; sessionId: string; cwd?: string }): Promise<MariDbCommandResult> {
@@ -2016,9 +2758,69 @@ export class MariDbService {
       "Live app data:       mari db status|tables|list|get|search|insert|patch|replace|delete|transform|validate",
       "Customization:       mari themes list|active|get|create|update|set-active",
       "Images/media:        mari images connections|preview|generate|edit|assign|delete|list",
+      "Creative data:       mari characters list|get|search|create|update|delete",
+      "Creative data:       mari personas list|active|get|search|create|update|delete",
+      "Creative data:       mari lorebooks list|get|entries|search|create|update|add-entry|link-character|unlink-character|delete",
+      "Chats (read-only):   mari chats list|get|messages|search",
       "Fandom/wiki reads:   mari wiki find-wikis|search-all|search|get-page|sections|category|site-info",
       "Discovery:           mari <group> --help or mari <group> <command> --help",
       "Writes dry-run by default where supported; --apply requests browser approval.",
+    ].join("\n");
+  }
+
+  private charactersHelpText() {
+    return [
+      "Usage: mari characters <command>",
+      "Read:  list [--limit <n>] [--search <text>]",
+      "Read:  get <id>",
+      "Read:  search <query> [--limit <n>]",
+      "Write: create (--name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--first-mes <text>] [--creator-notes <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] | --json '<data_json>' | --json-file <path>) [--apply] [--reason <text>]",
+      "       --backstory and --appearance write to data.extensions.backstory / data.extensions.appearance",
+      "Write: update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--first-mes <text>] [--creator-notes <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--json '<data_json>' | --json-file <path>] [--apply] [--reason <text>]",
+      "Write: delete <id> [--apply] [--reason <text>]",
+      "Writes dry-run by default; --apply requests browser approval.",
+    ].join("\n");
+  }
+
+  private personasHelpText() {
+    return [
+      "Usage: mari personas <command>",
+      "Read:  list [--limit <n>]",
+      "Read:  active",
+      "Read:  get <id>",
+      "Read:  search <query> [--limit <n>]",
+      "Write: create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--apply] [--reason <text>]",
+      "Write: update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--apply] [--reason <text>]",
+      "Write: delete <id> [--apply] [--reason <text>]",
+      "Writes dry-run by default; --apply requests browser approval.",
+    ].join("\n");
+  }
+
+  private lorebooksHelpText() {
+    return [
+      "Usage: mari lorebooks <command>",
+      "Read:  list [--limit <n>] [--global] [--character <id>]",
+      "Read:  get <id>",
+      "Read:  entries <lorebook-id> [--limit <n>]",
+      "Read:  search <query> [--limit <n>]",
+      "Write: create --name <name> [--description <text>] [--category <text>] [--global] [--apply] [--reason <text>]",
+      "Write: update <id> [--name <name>] [--description <text>] [--category <text>] [--global] [--enable] [--disable] [--apply] [--reason <text>]",
+      "Write: add-entry <lorebook-id> --name <name> [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--apply] [--reason <text>]",
+      "Write: link-character <lorebook-id> --character <character-id> [--apply] [--reason <text>]",
+      "Write: unlink-character <lorebook-id> --character <character-id> [--apply] [--reason <text>]",
+      "Write: delete <id> [--cascade] [--apply] [--reason <text>]",
+      "Writes dry-run by default; --apply requests browser approval.",
+    ].join("\n");
+  }
+
+  private chatsHelpText() {
+    return [
+      "Usage: mari chats <command>",
+      "Read:  list [--limit <n>] [--character <id>]",
+      "Read:  get <id>",
+      "Read:  messages <chat-id> [--limit <n>] [--tail]",
+      "Read:  search <query> [--limit <n>]",
+      "All chat commands are read-only.",
     ].join("\n");
   }
 

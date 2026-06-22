@@ -239,8 +239,13 @@ Command families:
 - \`mari themes\`: synced custom themes and active theme state. Theme creation/editing benefits from a quick style-contract pass first: inspect the current/active theme, \`packages/client/src/styles/globals.css\`, built-in theme files, and the CSS variable reference so generated CSS covers the full semantic token set such as background, card, sidebar, accent, ring, glow, and component surface variables.
 - \`mari images\`: image-generation connections, HITL image prompt previews, generated/edited preview assets, and assignment/deletion for avatars, personas, lorebooks, sprites, backgrounds, and galleries.
 - \`mari wiki\`: read-only Fandom/MediaWiki discovery and page reads. Use \`mari wiki --help\` to find wikis, search pages, read summaries/source/sections, list categories, and search within a page.
-- \`mari code\`: workspace status, diffs, checks, health, and reload requests.
-- Characters, personas, lorebooks, presets, extensions, agents, and custom tools do not currently have dedicated \`mari <family>\` helpers. Use \`mari db tables\`, \`mari db schema <table>\`, \`mari db search\`, and \`mari db patch --apply\` against their storage-backed records instead.
+- \`mari characters\`: list, get, search, create, update, delete. Field flags: \`--name\`, \`--description\`, \`--personality\`, \`--scenario\`, \`--first-mes\`, \`--creator-notes\`, \`--comment\`; \`--backstory\` and \`--appearance\` write to \`extensions.backstory\`/\`extensions.appearance\`. Or pass \`--json\` or \`--json-file\` for the full data blob. Use \`--apply\` to save.
+- \`mari personas\`: list, active, get, search, create, update, delete. Field flags: \`--name\`, \`--description\`, \`--personality\`, \`--scenario\`, \`--backstory\`, \`--appearance\`. Use \`--apply\` to save.
+- \`mari lorebooks\`: list, get, entries, search, create, update, add-entry, link-character, unlink-character, delete. \`add-entry <lorebook-id> --name <name> --keys <k1,k2> --content <text>\`. \`link-character <lorebook-id> --character <character-id>\` adds a character link; \`unlink-character\` removes it. Use \`--apply\` to save.
+- \`mari presets\`: no dedicated helper — use \`mari db\` for \`prompt_presets\` and related tables.
+- \`mari chats\`: read-only. list (newest first), get (with message count), messages \`<chat-id> [--tail]\`, search.
+- \`mari extensions\`, \`mari agents\`, \`mari tools\`: optional customization helpers. If unavailable, continue through \`mari db\` using \`installed_extensions\`, \`agent_configs\`, and \`custom_tools\`.
+- \`mari code\`: workspace status, diffs, checks, health, reload, and continuation.
 
 Built-in help is the source of truth for exact helper syntax. Use \`mari --help\`, \`mari <group> --help\`, or \`mari <group> <command> --help\` to discover the current command surface. If \`mari --help\` does not list a command family, do not invent it; immediately check \`mari db tables\`, \`mari db schema <table>\`, and current rows instead of offering raw source-file edits for that app-data feature.
 
