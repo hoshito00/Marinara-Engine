@@ -46,6 +46,7 @@ const DEFAULT_AUTO_SCROLL_EDGE_PX = 76;
 const DEFAULT_AUTO_SCROLL_MAX_SPEED_PX = 18;
 const WEBKIT_TOUCH_CALLOUT_PROPERTY = "-webkit-touch-callout";
 const WEBKIT_USER_DRAG_PROPERTY = "-webkit-user-drag";
+const TOUCH_DRAG_ACTIVE_TOUCH_ACTION = "none";
 const TOUCH_DRAG_PREVIEW_Z_INDEX = "100000";
 
 function restoreStyleProperty(style: CSSStyleDeclaration, property: string, value: string) {
@@ -261,7 +262,7 @@ export function useTouchFolderDrag({
       if (drag.active || dragRef.current !== drag) return;
       clearDragTimer(drag);
       drag.active = true;
-      drag.sourceElement.style.touchAction = "none";
+      drag.sourceElement.style.touchAction = TOUCH_DRAG_ACTIVE_TOUCH_ACTION;
       createPreviewElement(drag);
       optionsRef.current.onActivate(drag.id);
       scheduleAutoScroll(drag);
@@ -313,6 +314,8 @@ export function useTouchFolderDrag({
       const touch = event.touches[0] ?? event.changedTouches[0];
       if (!touch) return;
 
+      if (event.cancelable) event.preventDefault();
+
       drag.lastX = touch.clientX;
       drag.lastY = touch.clientY;
 
@@ -325,7 +328,6 @@ export function useTouchFolderDrag({
       }
 
       if (drag.active) {
-        if (event.cancelable) event.preventDefault();
         updatePreviewPosition(drag);
         scheduleAutoScroll(drag);
       }
@@ -378,6 +380,7 @@ export function useTouchFolderDrag({
       sourceElement.setAttribute("draggable", "false");
       sourceElement.style.setProperty(WEBKIT_TOUCH_CALLOUT_PROPERTY, "none");
       sourceElement.style.setProperty(WEBKIT_USER_DRAG_PROPERTY, "none");
+      sourceElement.style.touchAction = TOUCH_DRAG_ACTIVE_TOUCH_ACTION;
       sourceElement.style.userSelect = "none";
 
       const drag: TouchFolderDragState = {
