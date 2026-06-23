@@ -115,7 +115,7 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
     }
     const nextActiveChatId = chatId === activeChatId ? chatFiles.find((c) => c.id !== chatId)?.id : null;
     try {
-      await deleteChat.mutateAsync({ id: chatId, groupId });
+      await deleteChat.mutateAsync({ id: chatId, groupId, force: true });
       if (nextActiveChatId) setActiveChatId(nextActiveChatId);
     } catch (err) {
       toast.error(err instanceof Error ? `Delete failed: ${err.message}` : "Delete failed.");
@@ -346,7 +346,7 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
               ) {
                 return;
               }
-              deleteChatGroup.mutate(groupId);
+              deleteChatGroup.mutate({ groupId, force: true });
               setActiveChatId(null);
               onClose();
             }}

@@ -67,6 +67,10 @@ const TOPBAR_FORCE_HOVER_CLASS = "bg-[var(--accent)]";
 const TOPBAR_ACCENT_ICON_CLASS = "mari-topbar-accent-icon mari-accent-animated";
 const CHAT_TOPBAR_GRADIENT_ID = "mari-topbar-chats-gradient";
 
+function isMobileTopbarNavigation() {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+}
+
 export function TopBar() {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -124,6 +128,23 @@ export function TopBar() {
     !characterLibraryOpen;
 
   const isTopbarHovered = (key: string) => hoveredTopbarKey === key;
+
+  const prepareMobileTopbarNavigation = useCallback(() => {
+    if (isMobileTopbarNavigation()) closeAllDetails();
+  }, [closeAllDetails]);
+
+  const handleSidebarClick = useCallback(() => {
+    prepareMobileTopbarNavigation();
+    toggleSidebar();
+  }, [prepareMobileTopbarNavigation, toggleSidebar]);
+
+  const handleRightPanelClick = useCallback(
+    (panel: Parameters<typeof toggleRightPanel>[0]) => {
+      prepareMobileTopbarNavigation();
+      toggleRightPanel(panel);
+    },
+    [prepareMobileTopbarNavigation, toggleRightPanel],
+  );
 
   const handleTopbarPointerOver = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.pointerType !== "mouse") return;
@@ -213,7 +234,7 @@ export function TopBar() {
       <div className="mari-topbar-left flex min-w-0 flex-1 items-center gap-2">
         <div ref={leftControlsRef} className="mari-topbar-left-controls mari-rgb-icon-scope flex shrink-0 items-center gap-2">
           <button
-            onClick={toggleSidebar}
+            onClick={handleSidebarClick}
             data-tour="sidebar-toggle"
             data-topbar-hover-key="chats"
             className={cn(
@@ -286,7 +307,7 @@ export function TopBar() {
       >
         {/* Browser */}
         <button
-          onClick={() => toggleRightPanel("bot-browser")}
+          onClick={() => handleRightPanelClick("bot-browser")}
           data-tour="panel-bot-browser"
           data-topbar-hover-key="browser"
           className={cn(
@@ -307,7 +328,7 @@ export function TopBar() {
         </button>
 
         <button
-          onClick={() => toggleRightPanel("characters")}
+          onClick={() => handleRightPanelClick("characters")}
           data-tour="panel-characters"
           data-topbar-hover-key="characters"
           className={cn(
@@ -333,7 +354,7 @@ export function TopBar() {
           return (
             <button
               key={panel}
-              onClick={() => toggleRightPanel(panel)}
+              onClick={() => handleRightPanelClick(panel)}
               data-tour={`panel-${panel}`}
               data-topbar-hover-key={panel}
               className={cn(
@@ -363,7 +384,7 @@ export function TopBar() {
 
         {/* Settings */}
         <button
-          onClick={() => toggleRightPanel("settings")}
+          onClick={() => handleRightPanelClick("settings")}
           data-tour="panel-settings"
           data-topbar-hover-key="settings"
           className={cn(

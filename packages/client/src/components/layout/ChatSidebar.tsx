@@ -731,7 +731,7 @@ export function ChatSidebar() {
       return;
     }
     for (const id of selectedChatIds) {
-      deleteChat.mutate(id);
+      deleteChat.mutate({ id, force: true });
     }
     if (activeChatId && selectedChatIds.has(activeChatId)) setActiveChatId(null);
     exitMultiSelect();
@@ -1020,7 +1020,7 @@ export function ChatSidebar() {
                     tone: "destructive",
                   })
                 ) {
-                  deleteChat.mutate(chat.id);
+                  deleteChat.mutate({ id: chat.id, force: true });
                   if (activeChatId === chat.id) setActiveChatId(null);
                 }
               }
@@ -1412,7 +1412,7 @@ export function ChatSidebar() {
             <div className="flex flex-col gap-2">
               <button
                 onClick={() => {
-                  deleteChat.mutate(deleteTarget.chatId);
+                  deleteChat.mutate({ id: deleteTarget.chatId, force: true });
                   if (activeChatId === deleteTarget.chatId) setActiveChatId(null);
                   setDeleteTarget(null);
                 }}
@@ -1424,7 +1424,7 @@ export function ChatSidebar() {
               <button
                 onClick={() => {
                   if (deleteTarget.groupId) {
-                    deleteChatGroup.mutate(deleteTarget.groupId);
+                    deleteChatGroup.mutate({ groupId: deleteTarget.groupId, force: true });
                     if (activeGroupId === deleteTarget.groupId) setActiveChatId(null);
                   }
                   setDeleteTarget(null);

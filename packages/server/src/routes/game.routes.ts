@@ -4002,13 +4002,21 @@ export async function gameRoutes(app: FastifyInstance) {
       maxTokensOverride: conn.maxTokensOverride,
     });
     const setupAbortSignal = createResponseAbortSignal(reply, GAME_GENERATION_TIMEOUT_MS, "Game setup");
+    const setupOverrides: Partial<ChatOptions> = {
+      maxTokens: setupMaxTokens,
+      stream: false,
+      signal: setupAbortSignal,
+    };
+    if (!setupGenerationParameters?.reasoningEffort) {
+      setupOverrides.reasoningEffort = undefined;
+      setupOverrides.enableThinking = false;
+    }
+    if (!setupGenerationParameters?.verbosity) {
+      setupOverrides.verbosity = undefined;
+    }
     const setupOptions = gameGenOptions(
       conn.model,
-      {
-        maxTokens: setupMaxTokens,
-        stream: false,
-        signal: setupAbortSignal,
-      },
+      setupOverrides,
       setupGenerationParameters,
       conn.provider,
     );

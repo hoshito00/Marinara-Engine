@@ -329,7 +329,7 @@ export function useChatGroup(groupId: string | null) {
   });
 }
 
-type DeleteChatInput = string | { id: string; groupId?: string | null };
+type DeleteChatInput = string | { id: string; groupId?: string | null; force?: boolean };
 
 function getDeleteChatId(input: DeleteChatInput) {
   return typeof input === "string" ? input : input.id;
@@ -337,6 +337,10 @@ function getDeleteChatId(input: DeleteChatInput) {
 
 function getDeleteChatGroupId(input: DeleteChatInput) {
   return typeof input === "string" ? null : (input.groupId ?? null);
+}
+
+function getDeleteChatForce(input: DeleteChatInput) {
+  return typeof input === "string" ? false : input.force === true;
 }
 
 function chatMutationErrorMessage(error: unknown, fallback: string) {
@@ -463,7 +467,10 @@ export function useCreateChat() {
 export function useDeleteChat() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: DeleteChatInput) => api.delete(`/chats/${getDeleteChatId(input)}`),
+    mutationFn: (input: DeleteChatInput) => {
+      const force = getDeleteChatForce(input) ? "?force=true" : "";
+      return api.delete(`/chats/${getDeleteChatId(input)}${force}`);
+    },
     onMutate: async (input) => {
       const id = getDeleteChatId(input);
       const providedGroupId = getDeleteChatGroupId(input);
@@ -512,8 +519,13 @@ export function useDeleteChat() {
 export function useDeleteChatGroup() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (groupId: string) => api.delete(`/chats/group/${groupId}`),
-    onMutate: async (groupId) => {
+    mutationFn: (input: string | { groupId: string; force?: boolean }) => {
+      const groupId = typeof input === "string" ? input : input.groupId;
+      const force = typeof input === "string" ? "" : input.force === true ? "?force=true" : "";
+      return api.delete(`/chats/group/${groupId}${force}`);
+    },
+    onMutate: async (input) => {
+      const groupId = typeof input === "string" ? input : input.groupId;
       await qc.cancelQueries({ queryKey: chatKeys.list() });
       const previous = qc.getQueryData<Chat[]>(chatKeys.list());
 
@@ -522,13 +534,13 @@ export function useDeleteChatGroup() {
 
       return { previous, groupId };
     },
-    onError: (_err, _groupId, context) => {
+    onError: (_err, _input, context) => {
       if (context?.previous) qc.setQueryData(chatKeys.list(), context.previous);
       if (context?.groupId) {
         qc.invalidateQueries({ queryKey: chatKeys.group(context.groupId) });
       }
     },
-    onSettled: (_data, _err, _groupId, context) => {
+    onSettled: (_data, _err, _input, context) => {
       qc.invalidateQueries({ queryKey: chatKeys.list() });
       if (context?.groupId) {
         qc.invalidateQueries({ queryKey: chatKeys.group(context.groupId) });

@@ -24,7 +24,13 @@ import {
 import { cn } from "../../lib/utils";
 import { useExtensions, useCreateExtension, useDeleteExtension, useUpdateExtension } from "../../hooks/use-extensions";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ADMIN_SECRET_STORAGE_KEY, ApiError, api, getAdminSecretHeader } from "../../lib/api-client";
+import {
+  ADMIN_SECRET_STORAGE_KEY,
+  ApiError,
+  api,
+  getAdminSecretHeader,
+  getPrivilegedActionErrorMessage,
+} from "../../lib/api-client";
 import { chatBackgroundUrlToMetadata } from "../../lib/backgrounds";
 import { normalizeThemeCss } from "../../lib/theme-css";
 import { forceRefreshSpa } from "@/lib/browser-runtime";
@@ -3317,7 +3323,6 @@ function ThemesSettings() {
   const updateTheme = useUpdateTheme();
   const deleteTheme = useDeleteTheme();
   const setActiveTheme = useSetActiveTheme();
-  const fileRef = useRef<HTMLInputElement>(null);
   const activeCustomTheme = syncedThemes.find((theme) => theme.isActive) ?? null;
   const isSavingTheme = createTheme.isPending || updateTheme.isPending || setActiveTheme.isPending;
 
@@ -3386,9 +3391,7 @@ function ThemesSettings() {
     }
   }, [createTheme, editingId, setActiveTheme, themeCss, themeName, updateTheme]);
 
-  const handleImportTheme = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImportThemeFile = async (file: File) => {
     try {
       const text = await file.text();
       const latestThemes = await api.get<Theme[]>("/themes");
@@ -3459,7 +3462,6 @@ function ThemesSettings() {
       console.error("[ThemesSettings] Failed to import theme:", err);
       toast.error("Failed to import theme. Ensure it's a valid CSS or JSON file.");
     }
-    e.target.value = "";
   };
   // ── CSS Editor View ──
   if (editorOpen) {
@@ -3583,13 +3585,20 @@ function ThemesSettings() {
               <Plus size="0.875rem" /> Create Theme
             </button>
             <button
-              onClick={() => fileRef.current?.click()}
+              onClick={() => {
+                triggerFilePicker({
+                  accept: ".css,.json",
+                  onSelect: (files) => {
+                    const file = files[0];
+                    if (file) void handleImportThemeFile(file);
+                  },
+                });
+              }}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/50"
             >
               <Download size="0.875rem" /> Import File
             </button>
           </div>
-          <input ref={fileRef} type="file" accept=".css,.json" className="hidden" onChange={handleImportTheme} />
 
           {/* Active theme: None option */}
           <div className="flex flex-col gap-1.5">
@@ -3870,6 +3879,57 @@ function describeExtensionImportError(error: unknown, name?: string) {
   return subject;
 }
 
+function triggerFilePicker(options: {
+  accept?: string;
+  multiple?: boolean;
+  webkitdirectory?: boolean;
+  onSelect: (files: FileList) => void;
+}) {
+  const el = document.createElement("input");
+  el.type = "file";
+  el.style.position = "fixed";
+  el.style.top = "10px";
+  el.style.left = "10px";
+  el.style.zIndex = "99999";
+  el.style.opacity = "0";
+  if (options.accept) el.accept = options.accept;
+  if (options.multiple) el.multiple = true;
+  if (options.webkitdirectory) {
+    el.setAttribute("webkitdirectory", "");
+  }
+
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    if (el.parentNode === document.body) {
+      document.body.removeChild(el);
+    }
+    window.removeEventListener("focus", handleWindowFocus);
+  };
+
+  const handleWindowFocus = () => {
+    // Wait a tiny bit for the 'change' event to register and run first if a file was selected.
+    setTimeout(cleanup, 300);
+  };
+
+  el.addEventListener("change", (e) => {
+    const files = (e.target as HTMLInputElement).files;
+    if (files && files.length > 0) {
+      try {
+        options.onSelect(files);
+      } catch (err) {
+        console.error("[triggerFilePicker] Error in onSelect callback:", err);
+      }
+    }
+    cleanup();
+  });
+
+  document.body.appendChild(el);
+  window.addEventListener("focus", handleWindowFocus);
+  el.click();
+}
+
 function ExtensionsSettings() {
   const { data: extensions, isLoading } = useExtensions();
   const extensionList = extensions ?? [];
@@ -3908,19 +3968,27 @@ function ExtensionsSettings() {
       }
     }
     if (imported === 0 && failed === 0 && skipped === 0) throw new Error("No valid extensions found in file");
-    if (failed > 0 || skipped > 0) {
-      const issueCount = failed + skipped;
+    const skipNote = skipped > 0 ? ` (${skipped} skipped — no importable entry)` : "";
+    if (failed > 0) {
+      const more = failureMessages.length > 1 ? ` (+${failureMessages.length - 1} more)` : "";
+      toast.error(
+        imported > 0
+          ? `Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}; ${failed} failed — ${failureMessages[0]}${more}`
+          : `Failed to install ${failed} extension${failed === 1 ? "" : "s"}${skipNote} — ${failureMessages[0]}${more}`,
+        { duration: 12_000 },
+      );
+    } else if (skipped > 0) {
       toast.warning(
         imported > 0
-          ? `Installed ${imported} extension${imported === 1 ? "" : "s"} (${issueCount} issue${issueCount === 1 ? "" : "s"}).`
-          : `Failed to install extension${issueCount === 1 ? "" : "s"}.`,
+          ? `Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}.`
+          : `Skipped ${skipped} extension entr${skipped === 1 ? "y" : "ies"}.`,
         {
           description: failureMessages[0],
           duration: 12_000,
         },
       );
     } else {
-      toast.success(`Installed ${imported} extension${imported === 1 ? "" : "s"}`);
+      toast.success(`Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}`);
     }
   };
 
@@ -3984,7 +4052,7 @@ function ExtensionsSettings() {
         toast.error("Only .zip, .json, .css, and .js extension files are supported.");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to import extension.");
+      toast.error(getPrivilegedActionErrorMessage(err, "Failed to import extension."));
     }
     e.target.value = "";
   };
@@ -4004,7 +4072,7 @@ function ExtensionsSettings() {
         folderName,
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to import extension folder.");
+      toast.error(getPrivilegedActionErrorMessage(err, "Failed to import extension folder."));
     }
     e.target.value = "";
   };

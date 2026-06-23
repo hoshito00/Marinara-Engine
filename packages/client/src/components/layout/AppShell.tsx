@@ -978,7 +978,7 @@ export function AppShell() {
             data-component="MobileDetailSheet"
             aria-label="Detail editor"
             className={cn(
-              "mari-mobile-detail-sheet !fixed bottom-0 right-0 z-40 !w-full overflow-hidden bg-[var(--background)]/95 pb-[max(env(safe-area-inset-bottom),0.5rem)] shadow-2xl backdrop-blur-xl",
+              "mari-mobile-detail-sheet !fixed bottom-0 right-0 z-40 flex min-h-0 !w-full flex-col overflow-hidden bg-[var(--background)]/95 pb-[max(env(safe-area-inset-bottom),0.5rem)] shadow-2xl backdrop-blur-xl",
               MOBILE_SHELL_PANEL_TOP_CLASS,
             )}
           >

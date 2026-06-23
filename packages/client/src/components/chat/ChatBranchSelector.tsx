@@ -156,7 +156,7 @@ export function ChatBranchSelector({
     const nextActiveChatId =
       branchId === activeChatId ? displayBranches.find((branch) => branch.id !== branchId)?.id : null;
     try {
-      await deleteChat.mutateAsync({ id: branchId, groupId: groupId ?? null });
+      await deleteChat.mutateAsync({ id: branchId, groupId: groupId ?? null, force: true });
       if (nextActiveChatId) setActiveChatId(nextActiveChatId);
     } catch (err) {
       toast.error(err instanceof Error ? `Delete failed: ${err.message}` : "Delete failed.");
@@ -386,7 +386,7 @@ export function ChatBranchSelector({
                     ) {
                       return;
                     }
-                    deleteChatGroup.mutate(groupId);
+                    deleteChatGroup.mutate({ groupId, force: true });
                     setActiveChatId(null);
                     setOpen(false);
                   }}

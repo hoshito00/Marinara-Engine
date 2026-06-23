@@ -947,13 +947,23 @@ export async function chatsRoutes(app: FastifyInstance) {
   });
 
   // Delete all chats in a group (all branches)
-  app.delete<{ Params: { groupId: string } }>("/group/:groupId", async (req, reply) => {
+  app.delete<{ Params: { groupId: string }; Querystring: { force?: string } }>("/group/:groupId", async (req, reply) => {
+    const force = req.query.force === "true" || req.query.force === "1";
+    const guard = await storage.canDeleteGroup(req.params.groupId, { force });
+    if (!guard.allowed) {
+      return reply.status(409).send({ error: guard.reason });
+    }
     await storage.removeGroup(req.params.groupId);
     return reply.status(204).send();
   });
 
   // Delete chat
-  app.delete<{ Params: { id: string } }>("/:id", async (req, reply) => {
+  app.delete<{ Params: { id: string }; Querystring: { force?: string } }>("/:id", async (req, reply) => {
+    const force = req.query.force === "true" || req.query.force === "1";
+    const guard = await storage.canDeleteChat(req.params.id, { force });
+    if (!guard.allowed) {
+      return reply.status(409).send({ error: guard.reason });
+    }
     // If this is a scene chat, clean up the origin chat's scene pointer
     const chat = await storage.getById(req.params.id);
     if (chat) {

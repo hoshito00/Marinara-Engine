@@ -45,7 +45,7 @@ import { useConnections } from "../../hooks/use-connections";
 import { useTrackAchievement } from "../../hooks/use-achievements";
 import { chatKeys } from "../../hooks/use-chats";
 import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
-import { api } from "../../lib/api-client";
+import { api, getPrivilegedActionErrorMessage } from "../../lib/api-client";
 import { useChatStore } from "../../stores/chat.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { useUIStore } from "../../stores/ui.store";
@@ -116,7 +116,7 @@ function rememberConnectionId(id: string) {
 }
 
 function describeProfessorMariError(error: unknown) {
-  const message = error instanceof Error ? error.message.trim() : "";
+  const message = getPrivilegedActionErrorMessage(error, "").trim();
   if (message) return `${message} This message will stay visible long enough to screenshot for troubleshooting.`;
   return "The request failed before Professor Mari could answer. This message will stay visible long enough to screenshot for troubleshooting.";
 }

@@ -78,7 +78,7 @@ export function RightPanel() {
     <section
       data-component="RightPanel"
       aria-label={config.title}
-      className="mari-right-panel-content mari-chrome-token-scope flex h-full flex-col"
+      className="mari-right-panel-content mari-chrome-token-scope flex h-full min-h-0 flex-col"
     >
       {/* Header - OS window style */}
       <div className="mari-right-panel-header relative flex h-12 flex-shrink-0 items-center justify-between bg-[var(--card)]/80 px-4 backdrop-blur-sm">
@@ -105,7 +105,7 @@ export function RightPanel() {
       </div>
 
       {/* Content — keep visited panels mounted but hidden to avoid re-animation */}
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {Object.entries(PANELS).map(([key, PanelComp]) => {
           if (!mountedPanels.has(key)) return null;
           const active = key === panel;

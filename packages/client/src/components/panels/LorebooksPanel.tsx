@@ -2,7 +2,16 @@
 // Panel: Lorebooks (overhauled)
 // Category tabs, search, click-to-edit, AI generate
 // ──────────────────────────────────────────────
-import { useState, useMemo, useCallback, useRef, type ChangeEvent, type DragEvent, type TouchEvent } from "react";
+import {
+  useState,
+  useMemo,
+  useCallback,
+  useEffect,
+  useRef,
+  type ChangeEvent,
+  type DragEvent,
+  type TouchEvent,
+} from "react";
 import { toast } from "sonner";
 import {
   Plus,
@@ -72,6 +81,23 @@ const CATEGORY_COLORS: Record<string, string> = {
   all: "from-amber-400 to-orange-500",
 };
 
+function usePanelMobileOverlay() {
+  const [isMobileOverlay, setIsMobileOverlay] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)").matches : false,
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const query = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsMobileOverlay(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  return isMobileOverlay;
+}
+
 function remapLorebookEntryRelationships(
   relationships: Record<string, string> | null | undefined,
   entryIdMap: Map<string, string>,
@@ -96,6 +122,7 @@ export function LorebooksPanel() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedLorebookIds, setSelectedLorebookIds] = useState<Set<string>>(new Set());
   const [exportingSelected, setExportingSelected] = useState(false);
+  const isMobileOverlay = usePanelMobileOverlay();
   const [expandedFolderId, setExpandedFolderId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editFolderName, setEditFolderName] = useState("");
@@ -649,9 +676,10 @@ export function LorebooksPanel() {
           selectionMode={selectionMode}
           isSelected={selectedLorebookIds.has(lb.id)}
           onToggleSelect={() => toggleSelection(lb.id)}
-          draggable
+          draggable={!isMobileOverlay}
           isDragging={draggedLorebookId === lb.id}
           onDragStart={(event) => {
+            if (isMobileOverlay) return;
             const ids = getDraggedLorebookIds(lb.id);
             setDraggedLorebookId(lb.id);
             event.dataTransfer.effectAllowed = "move";
@@ -676,6 +704,7 @@ export function LorebooksPanel() {
       getPersonaNames,
       handleDuplicateLorebook,
       handlePickLorebookImage,
+      isMobileOverlay,
       openLorebookDetail,
       selectedLorebookIds,
       selectionMode,
@@ -774,7 +803,44 @@ export function LorebooksPanel() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-1">
+      <div className="flex gap-1 md:hidden">
+        <label htmlFor="lorebook-category-filter" className="sr-only">
+          Lorebook category
+        </label>
+        <div className="relative min-w-0 flex-1">
+          <select
+            id="lorebook-category-filter"
+            value={activeCategory}
+            onChange={(event) => setActiveCategory(event.target.value as LorebookCategory | "all" | "active")}
+            className="mari-chrome-field h-10 w-full min-w-0 appearance-none truncate py-0 pl-3 pr-8 text-xs"
+            title="Lorebook category"
+          >
+            {CATEGORIES.map((cat) => (
+              <option key={cat.id} value={cat.id}>
+                {cat.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown
+            size="0.75rem"
+            className="mari-chrome-field-icon pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
+          />
+        </div>
+        <button
+          onClick={() => setTagsExpanded(!tagsExpanded)}
+          className={cn(
+            "mari-chrome-control mari-chrome-control--small shrink-0 whitespace-nowrap px-2 text-[0.6875rem]",
+            tagFilterActive && "mari-chrome-control--selected",
+          )}
+          title={tagsExpanded ? "Collapse tags" : "Expand tags"}
+        >
+          <Tag size="0.6875rem" />
+          Tags
+          {tagsExpanded ? <ChevronUp size="0.625rem" /> : <ChevronDown size="0.625rem" />}
+        </button>
+      </div>
+
+      <div className="hidden flex-wrap gap-1 md:flex">
         {PRIMARY_CATEGORIES.map((cat) => {
           const isActive = activeCategory === cat.id;
           return (
@@ -825,7 +891,7 @@ export function LorebooksPanel() {
                 type="button"
                 onClick={() => setActiveCategory(isActive ? "all" : cat.id)}
                 className={cn(
-                  "mari-chrome-control mari-chrome-control--compact cursor-pointer",
+                  "mari-chrome-control mari-chrome-control--compact hidden cursor-pointer md:inline-flex",
                   isActive && "mari-chrome-control--selected",
                 )}
               >

@@ -36,6 +36,7 @@ export const CONVERSATION_NOTES_BUDGET_CHARS = 4000;
 
 export type MetadataPatch = Record<string, unknown>;
 export type MetadataUpdater = (current: MetadataPatch) => MetadataPatch | Promise<MetadataPatch>;
+export type ChatDeleteGuardResult = { allowed: true } | { allowed: false; reason: string };
 
 const metadataPatchQueues = new Map<string, Promise<void>>();
 const messageExtraPatchQueues = new Map<string, Promise<void>>();
@@ -191,6 +192,58 @@ async function invalidateMemoryChunksFrom(db: DB, chatId: string, createdAt: str
 
 /** Create the chat storage facade used by routes and importers. */
 export function createChatsStorage(db: DB) {
+  async function hasGameDeletePayload(chatId: string): Promise<boolean> {
+    const existingMessage = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(eq(messages.chatId, chatId))
+      .limit(1);
+    if (existingMessage.length > 0) return true;
+    const existingSnapshot = await db
+      .select({ id: gameStateSnapshots.id })
+      .from(gameStateSnapshots)
+      .where(eq(gameStateSnapshots.chatId, chatId))
+      .limit(1);
+    if (existingSnapshot.length > 0) return true;
+    const existingCheckpoint = await db
+      .select({ id: gameCheckpoints.id })
+      .from(gameCheckpoints)
+      .where(eq(gameCheckpoints.chatId, chatId))
+      .limit(1);
+    if (existingCheckpoint.length > 0) return true;
+    const existingImage = await db
+      .select({ id: chatImages.id })
+      .from(chatImages)
+      .where(eq(chatImages.chatId, chatId))
+      .limit(1);
+    return existingImage.length > 0;
+  }
+
+  async function isProtectedGameDeleteTarget(chat: {
+    id: string;
+    mode: string | null;
+    metadata: unknown;
+  }): Promise<boolean> {
+    if (chat.mode !== "game") return false;
+    const meta = parseMetadata(chat.metadata);
+    const hasGameId = typeof meta.gameId === "string" && meta.gameId.trim().length > 0;
+    return hasGameId || (await hasGameDeletePayload(chat.id));
+  }
+
+  async function checkDeleteTargets(
+    rows: Array<{ id: string; mode: string | null; metadata: unknown }>,
+    options: { force?: boolean },
+    reason: string,
+  ): Promise<ChatDeleteGuardResult> {
+    if (options.force) return { allowed: true };
+    for (const chat of rows) {
+      if (await isProtectedGameDeleteTarget(chat)) {
+        return { allowed: false, reason };
+      }
+    }
+    return { allowed: true };
+  }
+
   async function deleteGameStateForMessages(messageIds: string[]) {
     const ids = Array.from(new Set(messageIds.filter(Boolean)));
     if (ids.length === 0) return;
@@ -375,6 +428,31 @@ export function createChatsStorage(db: DB) {
     /** List all chats belonging to a group. */
     async listByGroup(groupId: string) {
       return db.select().from(chats).where(eq(chats.groupId, groupId)).orderBy(desc(chats.updatedAt));
+    },
+
+    async canDeleteChat(id: string, options: { force?: boolean } = {}): Promise<ChatDeleteGuardResult> {
+      const rows = await db
+        .select({ id: chats.id, mode: chats.mode, metadata: chats.metadata })
+        .from(chats)
+        .where(eq(chats.id, id))
+        .limit(1);
+      return checkDeleteTargets(
+        rows,
+        options,
+        "Refusing to hard-delete a game campaign without explicit confirmation.",
+      );
+    },
+
+    async canDeleteGroup(groupId: string, options: { force?: boolean } = {}): Promise<ChatDeleteGuardResult> {
+      const rows = await db
+        .select({ id: chats.id, mode: chats.mode, metadata: chats.metadata })
+        .from(chats)
+        .where(eq(chats.groupId, groupId));
+      return checkDeleteTargets(
+        rows,
+        options,
+        "Refusing to hard-delete a game campaign group without explicit confirmation.",
+      );
     },
 
     async updateMetadata(id: string, metadata: Record<string, unknown>) {
@@ -566,6 +644,10 @@ export function createChatsStorage(db: DB) {
     async countMessages(chatId: string): Promise<number> {
       const rows = await db.select({ id: messages.id }).from(messages).where(eq(messages.chatId, chatId));
       return rows.length;
+    },
+
+    async hasGameDeletePayload(chatId: string): Promise<boolean> {
+      return hasGameDeletePayload(chatId);
     },
 
     async listMessages(chatId: string) {

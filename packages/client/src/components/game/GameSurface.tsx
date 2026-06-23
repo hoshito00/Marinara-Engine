@@ -2184,6 +2184,7 @@ export function GameSurface({
   const [viewedMapId, setViewedMapId] = useState<string | null>(null);
   const [startGameRequested, setStartGameRequested] = useState(false);
   const [startSessionRequested, setStartSessionRequested] = useState(false);
+  const [dismissedSetupWizardChatId, setDismissedSetupWizardChatId] = useState<string | null>(null);
   const [activeReadable, setActiveReadable] = useState<JournalReadable | null>(null);
   const readableQueueRef = useRef<JournalReadable[]>([]);
   const recentMusicHistoryRef = useRef<string[]>(normalizeRecentMusicHistory(chatMeta.gameRecentMusic));
@@ -2227,6 +2228,7 @@ export function GameSurface({
     setPendingAssetGeneration(null);
     setAssetGenerationBlocksScene(false);
     setAssetGenerationFailed(false);
+    setDismissedSetupWizardChatId(null);
     {
       const resolve = imagePromptReviewResolveRef.current;
       imagePromptReviewResolveRef.current = null;
@@ -8047,6 +8049,10 @@ export function GameSurface({
 
   // Does this chat need initial game creation?
   const needsCreation = !chatMeta.gameId;
+  const setupWizardDismissed = dismissedSetupWizardChatId === activeChatId;
+  const canAutoDeleteEmptySetupChat = needsCreation && !isMessagesLoading && messages.length === 0;
+  const shouldShowSetupWizard =
+    isSetupActive || (!setupWizardDismissed && (needsCreation || sessionStatus === "setup"));
 
   // While messages are still loading for an existing active game, show a loading
   // indicator instead of flashing the setup/start screens.
@@ -8062,7 +8068,7 @@ export function GameSurface({
   }
 
   // Setup wizard — show when explicitly active, when game needs creation, or when status is still "setup" (e.g. previous setup failed)
-  if (isSetupActive || needsCreation || sessionStatus === "setup") {
+  if (shouldShowSetupWizard) {
     return (
       <>
         <GameSetupWizard
@@ -8104,12 +8110,17 @@ export function GameSurface({
             }
           }}
           onCancel={() => {
-            if (needsCreation || sessionStatus === "setup") {
-              // Delete the broken/empty game chat
-              useChatStore.getState().setActiveChatId(null);
-              deleteChat.mutate(activeChatId);
-            }
             useGameModeStore.getState().setSetupActive(false);
+            if (canAutoDeleteEmptySetupChat) {
+              deleteChat.mutate(activeChatId, {
+                onSuccess: () => useChatStore.getState().setActiveChatId(null),
+              });
+              return;
+            }
+            setDismissedSetupWizardChatId(activeChatId);
+            if (needsCreation || sessionStatus === "setup") {
+              toast.info("Game setup dismissed. The campaign was kept.");
+            }
           }}
           isLoading={createGame.isPending || gameSetup.isPending}
           characters={characters}

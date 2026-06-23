@@ -58,6 +58,7 @@ import {
   Globe,
   Users,
   UserRound,
+  Drama,
   X,
   ArrowUpDown,
   Hash,
@@ -300,7 +301,7 @@ type TabId = (typeof TABS)[number]["id"];
 const CATEGORY_OPTIONS: Array<{ value: LorebookCategory; label: string; icon: typeof Globe }> = [
   { value: "world", label: "World", icon: Globe },
   { value: "character", label: "Character", icon: Users },
-  { value: "npc", label: "NPC", icon: UserRound },
+  { value: "npc", label: "NPC", icon: Drama },
   { value: "spellbook", label: "Spellbook", icon: Wand2 },
   { value: "uncategorized", label: "Uncategorized", icon: BookOpen },
 ];
@@ -1744,8 +1745,31 @@ export function LorebookEditor() {
 
                 {/* Category */}
                 <div className="mari-editor-panel p-3">
-                  <label className="mb-1.5 block text-xs font-medium">Category</label>
-                  <div className="flex gap-2">
+                  <label htmlFor="lorebook-editor-category" className="mb-1.5 block text-xs font-medium">
+                    Category
+                  </label>
+                  <div className="relative md:hidden">
+                    <select
+                      id="lorebook-editor-category"
+                      value={formCategory}
+                      onChange={(event) => {
+                        setFormCategory(event.target.value as LorebookCategory);
+                        markLorebookDirty();
+                      }}
+                      className="mari-editor-field h-10 w-full min-w-0 appearance-none truncate px-3 py-0 pr-9 text-xs"
+                    >
+                      {CATEGORY_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      size="0.75rem"
+                      className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--marinara-editor-muted)]"
+                    />
+                  </div>
+                  <div className="hidden gap-2 md:flex">
                     {CATEGORY_OPTIONS.map((opt) => {
                       const Icon = opt.icon;
                       return (
