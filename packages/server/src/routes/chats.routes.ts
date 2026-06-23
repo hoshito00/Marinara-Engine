@@ -644,8 +644,9 @@ export async function chatsRoutes(app: FastifyInstance) {
     // For delete: restore visibility of the messages this entry covered (except
     // any still covered by another enabled entry) BEFORE removing it, so deleting
     // an entry can never strand messages hidden with nothing left to summarize
-    // them. Unhiding first means a failure here aborts the delete rather than
-    // leaving an orphan.
+    // them. `unhidden` is tracked so we can re-hide (compensate) if the metadata
+    // write below fails, keeping the two writes consistent either way.
+    let unhidden: string[] = [];
     if (body.operation === "delete") {
       const current = await storage.getById(req.params.id);
       if (!current) return reply.status(404).send({ error: "Chat not found" });
@@ -664,51 +665,71 @@ export async function chatsRoutes(app: FastifyInstance) {
         const toUnhide = covered.filter((id) => !stillCovered.has(id));
         if (toUnhide.length > 0) {
           await storage.bulkSetHiddenFromAI(req.params.id, toUnhide, false);
+          unhidden = toUnhide;
         }
       }
     }
 
-    const updated = await storage.patchMetadata(req.params.id, (freshMeta) => {
-      const entries = normalizeChatSummaryEntries(freshMeta.summaryEntries, {
-        legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,
+    // Compensation: if the entry removal does not persist, re-hide whatever we
+    // optimistically unhid so the entry and its messages' visibility stay
+    // consistent — a delete never leaves a half-applied state in either direction.
+    const reHide = async () => {
+      if (unhidden.length === 0) return;
+      await storage.bulkSetHiddenFromAI(req.params.id, unhidden, true).catch((err) => {
+        logger.error(err, "[chat-summary] Failed to re-hide messages after a failed summary-entry delete");
       });
-      let nextEntries: ChatSummaryEntry[];
+    };
 
-      if (body.operation === "replace") {
-        const now = new Date().toISOString();
-        const existing = entries.find((entry) => entry.id === body.entry.id);
-        const replacement = createChatSummaryEntry(
-          {
-            ...existing,
-            ...body.entry,
-            id: body.entry.id,
-            content: body.entry.content,
-            updatedAt: now,
-            createdAt: existing?.createdAt ?? body.entry.createdAt ?? now,
-          },
-          { createId: newId, now },
-        );
-        nextEntries = entries.some((entry) => entry.id === replacement.id)
-          ? entries.map((entry) => (entry.id === replacement.id ? replacement : entry))
-          : [...entries, replacement];
-      } else if (body.operation === "delete") {
-        nextEntries = entries.filter((entry) => entry.id !== body.entryId);
-      } else if (body.operation === "toggle") {
-        const now = new Date().toISOString();
-        nextEntries = entries.map((entry) =>
-          entry.id === body.entryId ? { ...entry, enabled: body.enabled, updatedAt: now } : entry,
-        );
-      } else {
-        nextEntries = entries;
-      }
+    let updated: Awaited<ReturnType<typeof storage.patchMetadata>>;
+    try {
+      updated = await storage.patchMetadata(req.params.id, (freshMeta) => {
+        const entries = normalizeChatSummaryEntries(freshMeta.summaryEntries, {
+          legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,
+        });
+        let nextEntries: ChatSummaryEntry[];
 
-      return {
-        summaryEntries: nextEntries,
-        summary: compileChatSummaryEntries(nextEntries),
-      };
-    });
+        if (body.operation === "replace") {
+          const now = new Date().toISOString();
+          const existing = entries.find((entry) => entry.id === body.entry.id);
+          const replacement = createChatSummaryEntry(
+            {
+              ...existing,
+              ...body.entry,
+              id: body.entry.id,
+              content: body.entry.content,
+              updatedAt: now,
+              createdAt: existing?.createdAt ?? body.entry.createdAt ?? now,
+            },
+            { createId: newId, now },
+          );
+          nextEntries = entries.some((entry) => entry.id === replacement.id)
+            ? entries.map((entry) => (entry.id === replacement.id ? replacement : entry))
+            : [...entries, replacement];
+        } else if (body.operation === "delete") {
+          nextEntries = entries.filter((entry) => entry.id !== body.entryId);
+        } else if (body.operation === "toggle") {
+          const now = new Date().toISOString();
+          nextEntries = entries.map((entry) =>
+            entry.id === body.entryId ? { ...entry, enabled: body.enabled, updatedAt: now } : entry,
+          );
+        } else {
+          nextEntries = entries;
+        }
 
-    if (!updated) return reply.status(404).send({ error: "Chat not found" });
+        return {
+          summaryEntries: nextEntries,
+          summary: compileChatSummaryEntries(nextEntries),
+        };
+      });
+    } catch (err) {
+      await reHide();
+      throw err;
+    }
+
+    if (!updated) {
+      await reHide();
+      return reply.status(404).send({ error: "Chat not found" });
+    }
     return updated;
   });
 

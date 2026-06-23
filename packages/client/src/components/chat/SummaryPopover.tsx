@@ -303,19 +303,10 @@ export function SummaryPopover({
   const entryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Per-chat metadata is the source of truth (default off). A chat with no
-  // persisted value adopts the legacy global pref once (effect below), so no chat
-  // ever reads another chat's setting at runtime.
+  // Per-chat metadata is the single source of truth (default off). The hide
+  // preference is owned per-chat and set via the toggle below — there is no global
+  // fallback, so one chat can never read or inherit another chat's setting.
   const hideSummarisedResolved = hideSummarisedMessages === true;
-  const legacyHidePref = summaryPopoverSettings.hideSummarisedMessages;
-  const migratedHideChatsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (typeof hideSummarisedMessages === "boolean") return; // already per-chat
-    if (!legacyHidePref) return; // nothing to migrate; stays opt-out
-    if (migratedHideChatsRef.current.has(chatId)) return;
-    migratedHideChatsRef.current.add(chatId);
-    updateMeta.mutate({ id: chatId, hideSummarisedMessages: true });
-  }, [chatId, hideSummarisedMessages, legacyHidePref, updateMeta]);
 
   const persistSummaryContextSize = useCallback(
     (size: number) => {
