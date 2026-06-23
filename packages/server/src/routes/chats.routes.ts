@@ -641,6 +641,33 @@ export async function chatsRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "Unsupported summary entry operation" });
     }
 
+    // For delete: restore visibility of the messages this entry covered (except
+    // any still covered by another enabled entry) BEFORE removing it, so deleting
+    // an entry can never strand messages hidden with nothing left to summarize
+    // them. Unhiding first means a failure here aborts the delete rather than
+    // leaving an orphan.
+    if (body.operation === "delete") {
+      const current = await storage.getById(req.params.id);
+      if (!current) return reply.status(404).send({ error: "Chat not found" });
+      const currentMeta = parseExtra(current.metadata) as Record<string, unknown>;
+      const currentEntries = normalizeChatSummaryEntries(currentMeta.summaryEntries, {
+        legacySummary: typeof currentMeta.summary === "string" ? currentMeta.summary : null,
+      });
+      const target = currentEntries.find((entry) => entry.id === body.entryId);
+      if (target) {
+        const covered = target.messageIds ?? [];
+        const stillCovered = new Set<string>();
+        for (const entry of currentEntries) {
+          if (entry.id === body.entryId || !entry.enabled) continue;
+          for (const id of entry.messageIds ?? []) stillCovered.add(id);
+        }
+        const toUnhide = covered.filter((id) => !stillCovered.has(id));
+        if (toUnhide.length > 0) {
+          await storage.bulkSetHiddenFromAI(req.params.id, toUnhide, false);
+        }
+      }
+    }
+
     const updated = await storage.patchMetadata(req.params.id, (freshMeta) => {
       const entries = normalizeChatSummaryEntries(freshMeta.summaryEntries, {
         legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,

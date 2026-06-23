@@ -732,6 +732,9 @@ function useSummaryEntryMutation() {
       }
       qc.invalidateQueries({ queryKey: chatKeys.list() });
       qc.invalidateQueries({ queryKey: lorebookKeys.active(vars.chatId) });
+      // Deleting an entry can unhide messages server-side; refresh the list so
+      // their restored visibility shows without a manual reload.
+      qc.invalidateQueries({ queryKey: chatKeys.messages(vars.chatId) });
     },
   });
 }

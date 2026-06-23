@@ -303,11 +303,19 @@ export function SummaryPopover({
   const entryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Per-chat metadata when set; otherwise fall back to the legacy browser-local pref.
-  const hideSummarisedResolved =
-    typeof hideSummarisedMessages === "boolean"
-      ? hideSummarisedMessages
-      : summaryPopoverSettings.hideSummarisedMessages;
+  // Per-chat metadata is the source of truth (default off). A chat with no
+  // persisted value adopts the legacy global pref once (effect below), so no chat
+  // ever reads another chat's setting at runtime.
+  const hideSummarisedResolved = hideSummarisedMessages === true;
+  const legacyHidePref = summaryPopoverSettings.hideSummarisedMessages;
+  const migratedHideChatsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (typeof hideSummarisedMessages === "boolean") return; // already per-chat
+    if (!legacyHidePref) return; // nothing to migrate; stays opt-out
+    if (migratedHideChatsRef.current.has(chatId)) return;
+    migratedHideChatsRef.current.add(chatId);
+    updateMeta.mutate({ id: chatId, hideSummarisedMessages: true });
+  }, [chatId, hideSummarisedMessages, legacyHidePref, updateMeta]);
 
   const persistSummaryContextSize = useCallback(
     (size: number) => {
@@ -662,16 +670,10 @@ export function SummaryPopover({
         tone: "destructive",
       });
       if (!confirmed) return;
-      // Unhide the messages this entry covered, except any still referenced by
-      // another *enabled* entry (a disabled entry is not in the prompt, so its
-      // messages must become visible again). Prevents orphaned hidden messages.
-      const covered = entry.messageIds ?? [];
-      const stillCovered = new Set<string>();
-      for (const other of displayEntries) {
-        if (other.id === entry.id || !other.enabled) continue;
-        for (const id of other.messageIds ?? []) stillCovered.add(id);
-      }
-      const toUnhide = covered.filter((id) => !stillCovered.has(id));
+      // The server unhides the messages this entry covered (minus any still
+      // covered by another enabled entry) as part of the delete, so deletion and
+      // visibility restoration succeed or fail together — no orphaned hidden
+      // messages on the client side.
       try {
         await deleteSummaryEntry.mutateAsync({ chatId, entryId: entry.id });
       } catch {
@@ -684,18 +686,8 @@ export function SummaryPopover({
         next.delete(entry.id);
         return next;
       });
-      // The entry is gone; restore its no-longer-covered messages. Awaited separately
-      // so a failure here surfaces a specific warning instead of leaving the messages
-      // silently hidden with nothing summarizing them.
-      if (toUnhide.length > 0) {
-        try {
-          await bulkSetMessagesHiddenFromAI.mutateAsync({ chatId, messageIds: toUnhide, hidden: false });
-        } catch {
-          toast.error("Summary deleted, but some messages stayed hidden — unhide them from the message menu.");
-        }
-      }
     },
-    [chatId, deleteSummaryEntry, bulkSetMessagesHiddenFromAI, displayEntries, editingEntryId, handleCancelEditEntry],
+    [chatId, deleteSummaryEntry, editingEntryId, handleCancelEditEntry],
   );
 
   const persistPromptTemplates = useCallback(
