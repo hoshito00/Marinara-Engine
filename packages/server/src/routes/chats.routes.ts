@@ -2861,6 +2861,12 @@ export async function chatsRoutes(app: FastifyInstance) {
           tail: resolveRoleplaySummaryTail(chatMeta.summaryTailMessages),
         })
       : [];
+    // Perform the hide on the server, BEFORE the entry records hiddenMessageIds,
+    // so the recorded set always reflects messages actually hidden (no phantom
+    // set if a separate client call were to fail). The client no longer hides.
+    if (hideMessageIds.length > 0) {
+      await storage.bulkSetHiddenFromAI(req.params.id, hideMessageIds, true);
+    }
 
     // Append as a structured entry and recompile the prompt-facing summary
     // without replacing concurrent metadata changes.

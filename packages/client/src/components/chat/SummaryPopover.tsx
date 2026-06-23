@@ -14,7 +14,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
-  useBulkSetMessagesHiddenFromAI,
   useDeleteSummaryEntry,
   useGenerateSummary,
   useToggleSummaryEntry,
@@ -295,7 +294,6 @@ export function SummaryPopover({
   const rangeInputFocused = useRef(false);
   const automaticIntervalFocused = useRef(false);
   const generateSummary = useGenerateSummary();
-  const bulkSetMessagesHiddenFromAI = useBulkSetMessagesHiddenFromAI();
   const updateMeta = useUpdateChatMetadata();
   const { data: connectionsData } = useConnections();
   const updateSummaryEntry = useUpdateSummaryEntry();
@@ -509,11 +507,9 @@ export function SummaryPopover({
 
   const handleGenerate = useCallback(() => {
     if (!canGenerate) return;
-    // Hide the server-computed tail-excluded subset (data.hideMessageIds).
-    const maybeHideSummarisedMessages = (hideMessageIds: string[] | undefined) => {
-      if (!hideSummarisedResolved || !hideMessageIds?.length) return;
-      bulkSetMessagesHiddenFromAI.mutate({ chatId, messageIds: hideMessageIds, hidden: true });
-    };
+    // The server hides the tail-excluded subset itself (when the chat opts in)
+    // and the generate-summary mutation refreshes the message list, so there is
+    // no separate client-side hide to keep in sync.
     if (sourceMode === "range") {
       setRangeStart(String(rangeLow));
       setRangeEnd(String(rangeHigh));
@@ -526,7 +522,6 @@ export function SummaryPopover({
             }
             setEditingEntryId(null);
             setDraftEntry(null);
-            maybeHideSummarisedMessages(data.hideMessageIds);
           },
           onError: (error) => toast.error(summaryErrorMessage(error)),
         },
@@ -544,13 +539,11 @@ export function SummaryPopover({
           }
           setEditingEntryId(null);
           setDraftEntry(null);
-          maybeHideSummarisedMessages(data.hideMessageIds);
         },
         onError: (error) => toast.error(summaryErrorMessage(error)),
       },
     );
   }, [
-    bulkSetMessagesHiddenFromAI,
     canGenerate,
     chatId,
     generateSummary,
@@ -560,7 +553,6 @@ export function SummaryPopover({
     persistSummaryContextSize,
     sourceMode,
     activePromptTemplateId,
-    hideSummarisedResolved,
   ]);
 
   const handleToggleExpanded = useCallback((entryId: string) => {

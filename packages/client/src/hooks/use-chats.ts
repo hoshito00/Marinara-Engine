@@ -1133,6 +1133,11 @@ export function useGenerateSummary() {
         });
       }
       qc.invalidateQueries({ queryKey: chatKeys.detail(vars.chatId) });
+      // The server may have hidden the tail-excluded subset; refresh the message
+      // list so the hidden state shows without a manual reload.
+      if (data.hideMessageIds.length > 0) {
+        qc.invalidateQueries({ queryKey: chatKeys.messages(vars.chatId) });
+      }
     },
   });
 }
