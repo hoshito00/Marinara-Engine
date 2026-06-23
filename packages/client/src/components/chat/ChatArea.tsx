@@ -36,6 +36,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { characterKeys, spriteKeys, useCharacters, usePersonas, type SpriteInfo } from "../../hooks/use-characters";
 import { usePageActivity } from "../../hooks/use-page-activity";
+import { usePresenceClock } from "../../hooks/use-presence-clock";
 import { api, ApiError } from "../../lib/api-client";
 import { getChatDisplayName, getConnectedChatDisplayName, parseChatMetadata } from "../../lib/chat-display";
 import { getChatCharacterIds } from "../../lib/chat-macros";
@@ -631,6 +632,10 @@ export function ChatArea() {
     })),
   });
 
+  // A 60s-cadence clock so schedule/override-derived presence refreshes when time
+  // alone changes the effective status (mirrors the presence pill's refetch).
+  const presenceNow = usePresenceClock();
+
   // Build character lookup map. Cold launches can render chat detail before the
   // full library list has produced every active character, so merge exact
   // per-chat character fetches as a rescue path.
@@ -654,7 +659,7 @@ export function ChatArea() {
       convoMeta.conversationSchedulesEnabled === false
         ? undefined
         : (convoMeta.characterSchedules as Record<string, WeekSchedule> | undefined);
-    const statusNow = new Date();
+    const statusNow = presenceNow;
     const presenceIds = new Set<string>([
       ...Object.keys(chatStatuses ?? {}),
       ...Object.keys(statusOverrides ?? {}),
@@ -680,7 +685,7 @@ export function ChatArea() {
       }
     }
     return map;
-  }, [baseCharacterMap, missingCharacterQueries, chat?.metadata]);
+  }, [baseCharacterMap, missingCharacterQueries, chat?.metadata, presenceNow]);
 
   const characterNames = useMemo(
     () => chatCharIds.map((id) => characterMap.get(id)?.name).filter((n): n is string => !!n),

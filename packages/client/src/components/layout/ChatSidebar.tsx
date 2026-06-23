@@ -45,6 +45,7 @@ import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-di
 import { useUIStore, type UserStatus } from "../../stores/ui.store";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { usePresenceClock } from "../../hooks/use-presence-clock";
 import { toast } from "sonner";
 import {
   getActiveStatusOverride,
@@ -163,6 +164,9 @@ export function ChatSidebar() {
   const unreadCounts = useChatStore((s) => s.unreadCounts);
   const hydrateUnread = useChatStore((s) => s.hydrateUnread);
   const { data: allCharacters } = useCharacters({ includeBuiltIn: true });
+  // One interval for the whole list: a 60s-cadence clock so schedule/override-derived
+  // status dots refresh when time alone changes them, without per-row timers.
+  const presenceNow = usePresenceClock();
   const hasAnyDetailOpen = useUIStore((s) => s.hasAnyDetailOpen);
   const editorDirty = useUIStore((s) => s.editorDirty);
   const closeAllDetails = useUIStore((s) => s.closeAllDetails);
@@ -864,7 +868,7 @@ export function ChatSidebar() {
               convoMeta?.conversationSchedulesEnabled === false
                 ? undefined
                 : (convoMeta?.characterSchedules as Record<string, WeekSchedule> | undefined);
-            const statusNow = new Date();
+            const statusNow = presenceNow;
             // Prefer the live override/schedule-derived status (matching the presence pill)
             // over the generation-time snapshot, which only refreshes on the next generated
             // message. Fall back to the snapshot when there is no active override or schedule.
