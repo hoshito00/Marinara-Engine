@@ -79,6 +79,8 @@ export class OpenAIProvider extends BaseLLMProvider {
     maxTokensOverride?: number | null,
     private readonly providerKind: OpenAIProviderKind = "openai",
     private readonly extraHeaders?: Record<string, string>,
+    /** When true, body.tools is sent even if the model name triggers parameter suppression. */
+    private readonly allowsToolCalling: boolean = false,
   ) {
     super(baseUrl, apiKey, defaultMaxContext, defaultOpenrouterProvider, maxTokensOverride);
   }
@@ -1087,7 +1089,10 @@ export class OpenAIProvider extends BaseLLMProvider {
     const url = `${this.baseUrl}/chat/completions`;
     const reasoning = this.isReasoningModel(options.model);
 
-    const useStream = options.tools?.length ? false : (options.stream ?? !!options.onToken);
+    // When tools are present, default to non-streaming so the full tool_calls JSON arrives
+    // in one piece. Allow explicit stream: true to override — local backends (e.g. llama.cpp
+    // with --jinja + Gemma 4) produce delta.tool_calls more reliably in streaming mode.
+    const useStream = options.stream === true ? true : options.tools?.length ? false : !!options.onToken;
 
     const formatted = this.formatMessages(messages, options.model);
     if (!formatted.some((m) => m.role !== "system" && m.role !== "developer")) {
@@ -1108,9 +1113,13 @@ export class OpenAIProvider extends BaseLLMProvider {
       body.max_tokens = maxTokens;
     }
 
+    if (options.tools?.length && !options.forceTextualToolCalls && (!suppressModelParameters || this.allowsToolCalling)) {
+      body.tools = options.tools;
+      body.tool_choice = "auto";
+    }
+
     if (!suppressModelParameters) {
       if (this.shouldSendStopSequences(options.model) && options.stop?.length) body.stop = options.stop;
-      if (options.tools?.length && !options.forceTextualToolCalls) body.tools = options.tools;
       if (useStream) body.stream_options = { include_usage: true };
 
       // o-series models never support temperature/topP; GPT-5.x only with effort=none

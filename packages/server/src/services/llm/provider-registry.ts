@@ -32,6 +32,11 @@ export function createLLMProvider(
   maxTokensOverride?: number | null,
   /** Claude (Subscription) only. When true, asks the Agent SDK to use fast-mode routing. */
   claudeFastMode?: boolean,
+  /**
+   * Custom endpoints: when false, body.tools is sent to the API even when the model name is
+   * not in the OpenAI catalog (suppression bypass). Mirrors the connection's treatAsLocalEndpoint flag.
+   */
+  treatAsLocalEndpoint?: boolean,
 ): BaseLLMProvider {
   const normalizedMaxContext =
     typeof maxContext === "number" && Number.isFinite(maxContext) && maxContext > 0
@@ -48,7 +53,6 @@ export function createLLMProvider(
     case "nanogpt":
     case "xai":
     case "mistral":
-    case "custom":
       return new OpenAIProvider(
         baseUrl,
         apiKey,
@@ -56,6 +60,17 @@ export function createLLMProvider(
         openrouterProvider,
         normalizedMaxTokensOverride,
         provider,
+      );
+    case "custom":
+      return new OpenAIProvider(
+        baseUrl,
+        apiKey,
+        normalizedMaxContext,
+        openrouterProvider,
+        normalizedMaxTokensOverride,
+        "custom",
+        undefined,
+        !(treatAsLocalEndpoint ?? false),
       );
     case "openai_chatgpt":
       return new OpenAIChatGPTProvider(
@@ -110,6 +125,8 @@ export function createLLMProvider(
         openrouterProvider,
         normalizedMaxTokensOverride,
         "custom",
+        undefined,
+        !(treatAsLocalEndpoint ?? false),
       );
   }
 }

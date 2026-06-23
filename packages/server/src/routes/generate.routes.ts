@@ -202,7 +202,6 @@ import {
   buildLockedPersonaTrackerPatch,
   extractImageAttachmentDataUrls,
   appendNonLeadingSystemMessagesToLastUser,
-  computeSummaryHideIds,
   injectIntoOutputFormatOrLastUser,
   isManualTrackerCharacterId,
   isMessageHiddenFromAI,
@@ -217,7 +216,6 @@ import {
   prefixGroupIndividualHistorySpeakers,
   resolveActiveCharacterIds,
   resolveBaseUrl,
-  resolveRoleplaySummaryTail,
   resolveCharacterNameMap,
   resolvePromptCharacterIdsForTarget,
   resolveRegenerationGameStateFallbackMessageIds,
@@ -3740,6 +3738,7 @@ export async function generateRoutes(app: FastifyInstance) {
           conn.openrouterProvider,
           conn.maxTokensOverride,
           conn.claudeFastMode === "true",
+          conn.treatAsLocalEndpoint === "true",
         );
 
         const chatConnectionMaxParallelJobs = Number(conn.maxParallelJobs) || 1;
@@ -5099,6 +5098,14 @@ export async function generateRoutes(app: FastifyInstance) {
           agentContext,
           emitMetadataPatch: (patch) => trySendSseEvent(reply, { type: "metadata_patch", data: patch }),
         });
+        if (enableChatTools && toolDefs && toolDefs.length > 0) {
+          const toolLines = toolDefs.map(
+            (t) =>
+              `- ${t.function.name}: ${t.function.description}\n  Parameters: ${JSON.stringify(t.function.parameters)}`,
+          );
+          const toolBlock = `<available_functions>\nYou may call the following functions when appropriate. To invoke a function, include a tool_call block in your response:\n<tool_call>{"name": "function_name", "arguments": {"param_name": param_value}}</tool_call>\n\nAvailable functions:\n${toolLines.join("\n")}\n</available_functions>`;
+          appendToFirstSystemMessage(finalMessages, toolBlock);
+        }
         // Pre-generation prompt-patch agents read the assembled prompt here; this is overwritten
         // with the fitted provider prompt before each main model call.
         agentContext.memory._mainPromptPreview = promptPreviewForAgents(finalMessages);
@@ -7316,17 +7323,6 @@ export async function generateRoutes(app: FastifyInstance) {
           let createdEntry: ChatSummaryEntry | null = null;
           let summaryEntries: ChatSummaryEntry[] = [];
           const shouldReviewSummary = requireAgentWriteApproval && !!newText;
-          const autoEntryMessageIds = selectedMessages.map((message: any) => message.id);
-          // Compute the hide subset up front so it can be persisted on the entry
-          // (deletion restores exactly this set) and reused for the actual hide.
-          const autoHideIds =
-            newText && !shouldReviewSummary && chatMeta.hideSummarisedMessages === true
-              ? computeSummaryHideIds({
-                  messages: freshMessages,
-                  entryMessageIds: autoEntryMessageIds,
-                  tail: resolveRoleplaySummaryTail(chatMeta.summaryTailMessages),
-                })
-              : [];
           const updatedChat = await chats.patchMetadata(
             input.chatId,
             (currentMeta) => {
@@ -7348,8 +7344,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   content: newText,
                   enabled: true,
                   messageCount: selectedMessages.length,
-                  messageIds: autoEntryMessageIds,
-                  ...(autoHideIds.length > 0 ? { hiddenMessageIds: autoHideIds } : {}),
+                  messageIds: selectedMessages.map((message: any) => message.id),
                   promptTemplateId:
                     typeof chatMeta.activeSummaryPromptTemplateId === "string"
                       ? chatMeta.activeSummaryPromptTemplateId
@@ -7390,23 +7385,10 @@ export async function generateRoutes(app: FastifyInstance) {
               });
             } else {
               const combined = typeof chatMeta.summary === "string" ? chatMeta.summary : newText;
-              // Opt-in token compression: hide the messages this summary covered
-              // (except the protected recent tail, already excluded in autoHideIds)
-              // so the summary is a net token reduction. Best-effort; never aborts
-              // the stream. The same set is persisted on the entry above.
-              let hiddenMessageIds: string[] = [];
-              if (autoHideIds.length > 0) {
-                try {
-                  await chats.bulkSetHiddenFromAI(input.chatId, autoHideIds, true);
-                  hiddenMessageIds = autoHideIds;
-                } catch (err) {
-                  logger.error(err, "[chat-summary] Failed to auto-hide summarized roleplay messages");
-                }
-              }
               reply.raw.write(
                 `data: ${JSON.stringify({
                   type: "chat_summary",
-                  data: { summary: combined, entry: createdEntry, entries: summaryEntries, hiddenMessageIds },
+                  data: { summary: combined, entry: createdEntry, entries: summaryEntries },
                 })}\n\n`,
               );
             }
