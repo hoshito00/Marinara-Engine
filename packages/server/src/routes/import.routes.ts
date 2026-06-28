@@ -6,7 +6,7 @@ import { execFile } from "child_process";
 import { platform, homedir } from "os";
 import { readdir, stat } from "fs/promises";
 import { resolve as pathResolve } from "path";
-import { normalizeTextForMatch } from "@marinara-engine/shared";
+import { normalizeTextForMatch, type ChatMode } from "@marinara-engine/shared";
 import { importSTChat } from "../services/import/st-chat.importer.js";
 import {
   importSTCharacter,
@@ -329,6 +329,21 @@ function readMultipartRegexScriptScope(file: { fields?: Record<string, any> } | 
   return readRegexScriptScope(rawValue);
 }
 
+function readChatMode(value: unknown): ChatMode | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "conversation" || normalized === "roleplay" || normalized === "visual_novel" || normalized === "game") {
+    return normalized;
+  }
+  return undefined;
+}
+
+function readMultipartChatModeField(file: { fields?: Record<string, any> } | null | undefined) {
+  const field = file?.fields?.mode;
+  const rawValue = Array.isArray(field) ? field.at(-1)?.value : field?.value;
+  return readChatMode(rawValue);
+}
+
 function invalidTagImportModeResponse() {
   return {
     success: false,
@@ -471,6 +486,7 @@ export async function importRoutes(app: FastifyInstance) {
     const content = await data.toBuffer();
     const text = content.toString("utf-8");
     const timestampOverrides = readTimestampOverridesFromMultipart(data as any);
+    const mode = readMultipartChatModeField(data as any);
 
     // Use the uploaded filename (minus extension) as chat name if available
     const rawName = data.filename ?? "";
@@ -509,6 +525,7 @@ export async function importRoutes(app: FastifyInstance) {
     return importSTChat(text, app.db, {
       ...(chatName ? { chatName } : {}),
       ...(characterId ? { characterId } : {}),
+      ...(mode ? { mode } : {}),
       ...(timestampOverrides ? { timestampOverrides } : {}),
     });
   });

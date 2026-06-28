@@ -667,6 +667,7 @@ export function ChatSidebar() {
       try {
         const formData = new FormData();
         formData.append("file", file);
+        formData.append("mode", activeTab);
         const res = await fetch("/api/import/st-chat", { method: "POST", body: formData });
         const data = (await res.json().catch(() => ({}))) as {
           success?: boolean;
@@ -688,7 +689,7 @@ export function ChatSidebar() {
         setIsImportingChat(false);
       }
     },
-    [refetchChats, setActiveChatId],
+    [activeTab, refetchChats, setActiveChatId],
   );
 
   const activeModeConfig = MODE_CONFIG[activeTab] ?? MODE_CONFIG.conversation;

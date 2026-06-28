@@ -257,9 +257,7 @@ function stringifyForSeed(value: unknown): string {
 }
 
 function buildCompatibleLorebookExport(lb: Record<string, unknown>, entries: Array<Record<string, unknown>>) {
-  const exportedEntries: Record<string, Record<string, unknown>> = {};
-  entries.forEach((entry, index) => {
-    exportedEntries[String(index)] = {
+  const exportedEntries = entries.map((entry, index) => ({
       uid: index,
       key: asStringArray(entry.keys),
       keysecondary: asStringArray(entry.secondaryKeys),
@@ -291,8 +289,7 @@ function buildCompatibleLorebookExport(lb: Record<string, unknown>, entries: Arr
       excludeRecursion: entry.excludeRecursion === true,
       delayUntilRecursion: entry.delayUntilRecursion === true,
       vectorized: entry.excludeFromVectorization !== true,
-    };
-  });
+  }));
 
   return {
     name: String(lb.name ?? "Lorebook"),
@@ -1111,5 +1108,15 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     }
 
     return { vectorized, total: allEntries.length, skipped: allEntries.length - entries.length };
+  });
+
+  app.delete<{ Params: { id: string } }>("/:id/vectors", async (req, reply) => {
+    const lorebook = await storage.getById(req.params.id);
+    if (!lorebook) return reply.status(404).send({ error: "Lorebook not found" });
+
+    const entries = (await storage.listEntries(req.params.id)) as Array<Record<string, unknown>>;
+    const cleared = entries.filter((entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0).length;
+    await storage.clearEntryEmbeddings(req.params.id);
+    return { cleared, total: entries.length };
   });
 }

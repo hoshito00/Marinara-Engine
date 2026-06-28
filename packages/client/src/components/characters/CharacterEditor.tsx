@@ -1187,6 +1187,29 @@ function MetadataTab({
         helpText={CHARACTER_METADATA_HELP}
       />
 
+      {characterId && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/70 px-3 py-2">
+          <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+            Character ID
+          </span>
+          <code className="min-w-0 flex-1 break-all rounded-lg bg-[var(--background)] px-2 py-1 text-[0.6875rem] text-[var(--foreground)]">
+            {characterId}
+          </code>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard?.writeText(characterId);
+              toast.success("Character ID copied");
+            }}
+            className="mari-editor-action inline-flex h-8 px-2 text-[0.6875rem]"
+            title="Copy character ID"
+          >
+            <Copy size="0.75rem" />
+            Copy
+          </button>
+        </div>
+      )}
+
       {/* Avatar Crop */}
       {avatarPreview && (
         <AvatarCropWidget

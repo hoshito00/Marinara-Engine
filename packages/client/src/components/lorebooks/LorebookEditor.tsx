@@ -2030,18 +2030,16 @@ export function LorebookEditor() {
                   <div className="flex items-end">
                     <div className="mari-editor-panel flex w-full items-center justify-between px-3 py-2.5">
                       <span className="mr-2 inline-flex items-center gap-1 text-xs">
-                        No Vector
-                        <HelpTooltip text="Skip semantic embeddings for every entry in this lorebook. Keyword matching still works." />
+                        Vectors
+                        <HelpTooltip text="When on, entries in this lorebook may use semantic embeddings. When off, keyword matching still works and vectorization skips this lorebook." />
                       </span>
                       <SettingsSwitch
                         ariaLabel={
-                          formExcludeFromVectorization
-                            ? "Include lorebook in vectorization"
-                            : "Exclude lorebook from vectorization"
+                          formExcludeFromVectorization ? "Enable lorebook vectors" : "Disable lorebook vectors"
                         }
-                        checked={formExcludeFromVectorization}
+                        checked={!formExcludeFromVectorization}
                         onChange={(checked) => {
-                          setFormExcludeFromVectorization(checked);
+                          setFormExcludeFromVectorization(!checked);
                           markLorebookDirty();
                         }}
                         className="p-0 hover:bg-transparent"
@@ -2550,6 +2548,7 @@ function VectorizeSection({
   );
   const [selectedConnectionId, setSelectedConnectionId] = useState<string>("");
   const [vectorizing, setVectorizing] = useState(false);
+  const [clearingVectors, setClearingVectors] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
   const excludedCount = excludeFromVectorization
     ? entries.length
@@ -2561,6 +2560,7 @@ function VectorizeSection({
   const vectorizedCount = vectorizableEntries.filter(
     (entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0,
   ).length;
+  const storedVectorCount = entries.filter((entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0).length;
   const missingCount = Math.max(0, vectorizableEntryCount - vectorizedCount);
   const allVectorized = vectorizableEntryCount > 0 && missingCount === 0;
 
@@ -2633,6 +2633,33 @@ function VectorizeSection({
     }
   };
 
+  const handleClearVectors = async () => {
+    if (storedVectorCount === 0 || clearingVectors) return;
+    const confirmed = await showConfirmDialog({
+      title: "Delete Stored Vectors",
+      message: `Delete ${storedVectorCount} stored embedding vector${storedVectorCount === 1 ? "" : "s"} from this lorebook? Keyword matching and entries will remain unchanged.`,
+      confirmLabel: "Delete vectors",
+      cancelLabel: "Cancel",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+
+    setClearingVectors(true);
+    setResult(null);
+    try {
+      const data = (await api.delete(`/lorebooks/${lorebookId}/vectors`)) as { cleared: number; total?: number };
+      await queryClient.invalidateQueries({ queryKey: lorebookKeys.entries(lorebookId) });
+      setResult({
+        success: true,
+        message: `Deleted ${data.cleared} stored vector${data.cleared === 1 ? "" : "s"}`,
+      });
+    } catch (err) {
+      setResult({ success: false, message: err instanceof Error ? err.message : "Failed to delete vectors" });
+    } finally {
+      setClearingVectors(false);
+    }
+  };
+
   return (
     <div className="mari-editor-panel space-y-3 p-4">
       <div className="flex items-center gap-2">
@@ -2658,7 +2685,7 @@ function VectorizeSection({
       </div>
       {excludeFromVectorization ? (
         <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-          Semantic search is disabled by the lorebook-level No Vector toggle.
+          Semantic search is disabled by the lorebook-level Vectors toggle.
         </p>
       ) : embeddingConnections.length === 0 ? (
         <p className="text-[0.625rem] text-[var(--muted-foreground)]">
@@ -2693,7 +2720,22 @@ function VectorizeSection({
                     ? `Re-vectorize ${vectorizableEntryCount} entries`
                     : `Vectorize ${missingCount} missing`}
             </button>
+            <button
+              onClick={handleClearVectors}
+              disabled={clearingVectors || vectorizing || storedVectorCount === 0}
+              className="flex items-center gap-1.5 rounded-xl bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-400 ring-1 ring-red-500/20 transition-all hover:bg-red-500/15 active:scale-[0.98] disabled:opacity-50"
+              title="Delete all stored vectors for this lorebook"
+            >
+              {clearingVectors ? <Loader2 size="0.75rem" className="animate-spin" /> : <Trash2 size="0.75rem" />}
+              Delete vectors
+            </button>
           </div>
+          {storedVectorCount > 0 && (
+            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+              {storedVectorCount} stored vector{storedVectorCount === 1 ? "" : "s"} can be deleted without changing
+              lorebook text.
+            </p>
+          )}
           {!selectedConnectionId && (
             <p className="text-[0.625rem] text-[var(--muted-foreground)]">
               Semantic search is off until you choose an embedding connection and vectorize entries.

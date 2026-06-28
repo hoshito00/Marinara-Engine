@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // App: Root component with layout
 // ──────────────────────────────────────────────
-import { lazy, Suspense, useEffect } from "react";
+import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { APP_VERSION } from "@marinara-engine/shared";
 import { AppShell } from "./components/layout/AppShell";
@@ -69,6 +69,65 @@ const ACCENT_RGB_SOLID_CYCLE_MS = 7_200;
 const ACCENT_RGB_GRADIENT_STOP_MS = 6_000;
 const TOAST_DURATION_MS = 6_000;
 const TOAST_VISIBLE_LIMIT = 3;
+
+export class AppRecoveryBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[AppRecoveryBoundary] Unhandled render error", error, info.componentStack);
+  }
+
+  private resetLocalUiState = () => {
+    try {
+      window.localStorage.removeItem("marinara-engine-ui");
+      window.localStorage.removeItem("marinara-active-chat-id");
+      window.localStorage.removeItem("marinara-input-drafts");
+      window.sessionStorage.removeItem("marinara-input-drafts");
+    } catch {
+      /* ignore storage reset errors */
+    }
+    window.location.reload();
+  };
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--background,#050312)] px-4 text-[var(--foreground,#f8fafc)]">
+        <div className="w-full max-w-lg rounded-xl border border-[var(--border,rgba(255,255,255,0.16))] bg-[var(--card,rgba(15,23,42,0.88))] p-5 shadow-2xl">
+          <h1 className="text-lg font-semibold">Marinara hit a recoverable UI error.</h1>
+          <p className="mt-2 text-sm text-[var(--muted-foreground,#cbd5e1)]">
+            The app shell crashed while rendering. Reload first; reset local UI state only if the same screen keeps
+            returning after restart.
+          </p>
+          <pre className="mt-3 max-h-32 overflow-auto rounded-lg bg-black/30 p-2 text-xs text-[var(--muted-foreground,#cbd5e1)]">
+            {this.state.error.message}
+          </pre>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-lg bg-[var(--primary,#d4acfb)] px-3 py-2 text-sm font-semibold text-[var(--primary-foreground,#120718)]"
+            >
+              Reload
+            </button>
+            <button
+              type="button"
+              onClick={this.resetLocalUiState}
+              className="rounded-lg border border-[var(--border,rgba(255,255,255,0.16))] px-3 py-2 text-sm font-semibold"
+            >
+              Reset local UI state
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
 
 function stripFontFamilyQuotes(family: string): string {
   const trimmed = family.trim();

@@ -4482,52 +4482,6 @@ function ImportSettings() {
     return () => window.clearInterval(timer);
   }, [profileImportBusy]);
 
-  const handleMarinaraImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const head = file.size >= 4 ? new Uint8Array(await file.slice(0, 4).arrayBuffer()) : new Uint8Array();
-      const isZip = head.length >= 2 && head[0] === 0x50 && head[1] === 0x4b;
-      let res: Response;
-      if (isZip) {
-        const form = new FormData();
-        form.append("file", file, file.name);
-        res = await fetch("/api/import/marinara-package", { method: "POST", body: form });
-      } else {
-        let envelope: unknown;
-        try {
-          envelope = JSON.parse(await file.text());
-        } catch {
-          throw new Error("parse");
-        }
-        res = await fetch("/api/import/marinara", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(envelope),
-        });
-      }
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        name?: string;
-        type?: string;
-        error?: string;
-      };
-      if (res.ok && data.success) {
-        qc.invalidateQueries();
-        toast.success(`Imported ${data.name ?? data.type} successfully!`);
-      } else {
-        toast.error(`Import failed: ${data.error ?? res.statusText ?? "Unknown error"}`);
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message === "parse") {
-        toast.error("Import failed. Make sure this is a valid .marinara or .json file.");
-      } else {
-        toast.error(`Import failed: ${err instanceof Error ? err.message : "network/server error"}`);
-      }
-    }
-    e.target.value = "";
-  };
-
   const handleProfileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -4855,12 +4809,6 @@ function ImportSettings() {
               )}
             </div>
           )}
-
-          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-3 text-xs font-semibold ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98]">
-            <Download size="1rem" />
-            Import Marinara File (.marinara / .json)
-            <input type="file" accept=".json,.marinara" onChange={handleMarinaraImport} className="hidden" />
-          </label>
         </div>
       </SettingsSection>
 
@@ -5217,10 +5165,21 @@ function AdvancedSettings() {
     }
   }, [adminSecret]);
 
+  type UpdateChannelId = "stable" | "staging";
+  const [updateChannel, setUpdateChannel] = useState<UpdateChannelId>("stable");
   const updateCheck = useQuery<{
     currentVersion: string;
     currentCommit: string | null;
     currentBuild: string;
+    channel: UpdateChannelId;
+    channelLabel: string;
+    channels: Array<{
+      id: UpdateChannelId;
+      label: string;
+      branch: string;
+      targetRef: string;
+      warning?: string | null;
+    }>;
     targetRef: string;
     targetCommit: string | null;
     latestVersion: string;
@@ -5243,8 +5202,8 @@ function AdvancedSettings() {
     manualUpdateCommand?: string | null;
     manualUpdateHint?: string | null;
   }>({
-    queryKey: ["update-check"],
-    queryFn: () => api.get("/updates/check"),
+    queryKey: ["update-check", updateChannel],
+    queryFn: () => api.get(`/updates/check?channel=${encodeURIComponent(updateChannel)}`),
     enabled: false,
     retry: false,
   });
@@ -5253,6 +5212,7 @@ function AdvancedSettings() {
     mutationFn: () =>
       api.post<{ status: string; message: string }>("/updates/apply", {
         confirm: true,
+        channel: updateChannel,
         currentVersion: updateCheck.data?.currentVersion ?? health.data?.version ?? APP_VERSION,
         currentCommit: updateCheck.data?.currentCommit ?? health.data?.commit ?? null,
         currentBuild: updateCheck.data?.currentBuild ?? health.data?.build ?? null,
@@ -5281,6 +5241,17 @@ function AdvancedSettings() {
     },
   });
 
+  const updateChannelOptions = updateCheck.data?.channels ?? [
+    { id: "stable" as const, label: "Latest Stable", branch: "main", targetRef: "origin/main", warning: null },
+    {
+      id: "staging" as const,
+      label: "Staging/UAT",
+      branch: "staging",
+      targetRef: "origin/staging",
+      warning: "Staging builds are pre-release tester builds. Back up your app data before applying them.",
+    },
+  ];
+  const selectedUpdateChannel = updateChannelOptions.find((channel) => channel.id === updateChannel);
   const currentReleaseLabel = `v${health.data?.version ?? updateCheck.data?.currentVersion ?? APP_VERSION}`;
   const currentCommit = health.data?.commit ?? updateCheck.data?.currentCommit ?? null;
   const currentBuildLabel = currentCommit ? `Build: ${currentCommit.slice(0, 7)}` : "Build: unavailable";
@@ -5371,6 +5342,20 @@ function AdvancedSettings() {
       >
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
+            <label className="flex min-w-[12rem] flex-col gap-1 text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+              Release Channel
+              <select
+                value={updateChannel}
+                onChange={(event) => setUpdateChannel(event.target.value as UpdateChannelId)}
+                className="rounded-lg bg-[var(--background)] px-3 py-2 text-xs font-medium normal-case tracking-normal text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
+              >
+                {updateChannelOptions.map((channel) => (
+                  <option key={channel.id} value={channel.id}>
+                    {channel.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               onClick={() => updateCheck.refetch()}
               disabled={updateCheck.isFetching}
@@ -5394,11 +5379,20 @@ function AdvancedSettings() {
             </div>
           </div>
 
+          {selectedUpdateChannel?.warning && (
+            <div className="flex items-start gap-1.5 rounded-lg bg-amber-500/10 px-2.5 py-2 text-[0.6875rem] text-amber-700 ring-1 ring-amber-500/30 dark:text-amber-200">
+              <AlertTriangle size="0.8125rem" className="mt-0.5 shrink-0" />
+              <span>{selectedUpdateChannel.warning}</span>
+            </div>
+          )}
+
           {updateCheck.data && !updateCheck.data.updateAvailable && (
             <div className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-2 ring-1 ring-[var(--border)]">
               <Check size="0.8125rem" className="text-green-500 shrink-0" />
               <div className="flex flex-col gap-0.5">
-                <span className="text-xs">You're on the latest release ({currentReleaseLabel})</span>
+                <span className="text-xs">
+                  You're on the latest {updateCheck.data.channelLabel ?? "release"} target ({currentReleaseLabel})
+                </span>
                 <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{currentBuildLabel}</span>
               </div>
             </div>

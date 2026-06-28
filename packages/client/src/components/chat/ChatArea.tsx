@@ -649,10 +649,32 @@ export function ChatArea() {
       const char = query.data;
       if (char?.id) map.set(char.id, toCharacterMapValue(char));
     }
+    const convoMeta = parseChatMetadata(chat?.metadata);
+    const archivedSnapshots = convoMeta.archivedCharacterSnapshots as Record<string, unknown> | undefined;
+    if (archivedSnapshots && typeof archivedSnapshots === "object" && !Array.isArray(archivedSnapshots)) {
+      for (const [id, value] of Object.entries(archivedSnapshots)) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        const snapshot = value as CharacterMapValue;
+        if (typeof snapshot.name !== "string") continue;
+        map.set(id, {
+          name: snapshot.name,
+          description: snapshot.description ?? "",
+          personality: snapshot.personality ?? "",
+          backstory: snapshot.backstory ?? "",
+          appearance: snapshot.appearance ?? "",
+          scenario: snapshot.scenario ?? "",
+          example: snapshot.example ?? "",
+          avatarUrl: snapshot.avatarUrl ?? null,
+          avatarCrop: snapshot.avatarCrop ?? null,
+          nameColor: snapshot.nameColor,
+          dialogueColor: snapshot.dialogueColor,
+          boxColor: snapshot.boxColor,
+        });
+      }
+    }
     // Overlay per-chat presence status so status dots reflect this chat, not the last chat to
     // generate. Prefer the live override/schedule-derived status (matching the presence pill, via
     // the shared resolver) over the generation-time snapshot, which only refreshes on generation.
-    const convoMeta = parseChatMetadata(chat?.metadata);
     const chatStatuses = convoMeta.conversationCharacterStatuses as
       | Record<string, { status?: string; activity?: string }>
       | undefined;
@@ -1488,12 +1510,20 @@ export function ChatArea() {
 
   const handleBranch = useCallback(
     (messageId: string) => {
-      if (!activeChatId) return;
+      if (!activeChatId || branchChat.isPending) return;
+      const branchToastId = toast.loading("Creating branch...");
       branchChat.mutate(
         { chatId: activeChatId, upToMessageId: messageId },
         {
           onSuccess: (newChat) => {
             if (newChat) useChatStore.getState().setActiveChatId(newChat.id);
+            toast.success("Branch created.");
+          },
+          onError: (error) => {
+            toast.error(error instanceof Error ? `Branch failed: ${error.message}` : "Branch failed.");
+          },
+          onSettled: () => {
+            toast.dismiss(branchToastId);
           },
         },
       );

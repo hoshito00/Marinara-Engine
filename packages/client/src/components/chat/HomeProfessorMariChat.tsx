@@ -100,6 +100,10 @@ type ProfessorMariConnectionOption = {
   isDefault?: boolean;
 };
 
+type ProfessorMariChatSummary = Chat & {
+  messageCount?: number;
+};
+
 function readStoredConnectionId() {
   try {
     return window.localStorage.getItem(MARI_CONNECTION_STORAGE_KEY);
@@ -138,6 +142,17 @@ function toMessageExtra(message: Message): Message["extra"] {
     }
   }
   return message.extra;
+}
+
+function isProfessorMariChatActive(chat: ProfessorMariChatSummary) {
+  const raw = chat.metadata;
+  try {
+    const metadata =
+      typeof raw === "string" ? (JSON.parse(raw) as Record<string, unknown>) : (raw as Record<string, unknown> | null);
+    return metadata?.professorMariActive !== false && metadata?.professorMariArchived !== true;
+  } catch {
+    return false;
+  }
 }
 
 function createWelcomeMessage(chatId: string | null): Message {
@@ -1526,6 +1541,11 @@ export function HomeProfessorMariChat({
   const [workspaceActive, setWorkspaceActive] = useState(false);
   const [workspaceActivity, setWorkspaceActivity] = useState<string | null>(null);
   const [workspaceTimeline, setWorkspaceTimeline] = useState<WorkspaceTimelineItem[]>([]);
+  const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
+  const [chatHistory, setChatHistory] = useState<ProfessorMariChatSummary[]>([]);
+  const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
+  const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [skillsMenuOpen, setSkillsMenuOpen] = useState(false);
   const [skills, setSkills] = useState<MariWorkspaceSkillDetail[]>([]);
   const [skillsDiagnostics, setSkillsDiagnostics] = useState<string[]>([]);
@@ -1588,6 +1608,16 @@ export function HomeProfessorMariChat({
   const loadMessages = useCallback(async (id: string) => {
     const items = await api.get<Message[]>(`/chats/${id}/messages?limit=80`);
     setMessages(items.map((message) => ({ ...message, extra: toMessageExtra(message) })));
+  }, []);
+
+  const loadChatHistory = useCallback(async () => {
+    setChatHistoryLoading(true);
+    try {
+      const items = await api.get<ProfessorMariChatSummary[]>("/chats/internal/professor-mari/chats");
+      setChatHistory(items);
+    } finally {
+      setChatHistoryLoading(false);
+    }
   }, []);
 
   const loadSkills = useCallback(async () => {
@@ -1718,6 +1748,17 @@ export function HomeProfessorMariChat({
   }, [loadSkills]);
 
   useEffect(() => {
+    if (!chatHistoryOpen) return;
+    void loadChatHistory().catch((error) => {
+      console.error("[Professor Mari] Failed to load chats", error);
+      toast.error("Professor Mari could not load her previous chats.", {
+        description: describeProfessorMariError(error),
+        duration: 12_000,
+      });
+    });
+  }, [chatHistoryOpen, loadChatHistory]);
+
+  useEffect(() => {
     if (!selectedSkill) {
       setSkillDraft({ name: "", description: "", content: "" });
       return;
@@ -1815,12 +1856,14 @@ export function HomeProfessorMariChat({
   const closeMobileFocusMode = useCallback(() => {
     setConnectionMenuOpen(false);
     setSkillsMenuOpen(false);
+    setChatHistoryOpen(false);
     setMobileFocusMode(false);
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }, []);
 
   const openMobileChat = useCallback(() => {
     setSkillsMenuOpen(false);
+    setChatHistoryOpen(false);
     setConnectionMenuOpen(false);
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setMobileFocusMode(true);
@@ -1830,10 +1873,21 @@ export function HomeProfessorMariChat({
     const next = !skillsMenuOpen;
     if (next) {
       setConnectionMenuOpen(false);
+      setChatHistoryOpen(false);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     }
     setSkillsMenuOpen(next);
   }, [skillsMenuOpen]);
+
+  const toggleChatHistory = useCallback(() => {
+    const next = !chatHistoryOpen;
+    if (next) {
+      setConnectionMenuOpen(false);
+      setSkillsMenuOpen(false);
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    }
+    setChatHistoryOpen(next);
+  }, [chatHistoryOpen]);
 
   useEffect(() => {
     window.addEventListener("marinara:home-professor-mari-close", closeMobileFocusMode);
@@ -1841,14 +1895,13 @@ export function HomeProfessorMariChat({
   }, [closeMobileFocusMode]);
 
   const handleRestart = useCallback(async () => {
-    const chat = await ensureProfessorMariChat(effectiveConnectionId);
-    const currentMessages = await api.get<Message[]>(`/chats/${chat.id}/messages`);
+    const params = new URLSearchParams();
+    if (effectiveConnectionId) params.set("connectionId", effectiveConnectionId);
+    const query = params.toString();
+    const chat = await api.post<Chat>(`/chats/internal/professor-mari/restart${query ? `?${query}` : ""}`);
+    setChatId(chat.id);
+    qc.setQueryData(chatKeys.detail(chat.id), chat);
     await api.post("/professor-mari/workspace/reset", { clearHistory: true });
-    if (currentMessages.length > 0) {
-      await api.post(`/chats/${chat.id}/messages/bulk-delete`, {
-        messageIds: currentMessages.map((message) => message.id),
-      });
-    }
     setMessages([]);
     setDraft("");
     setWorkspaceActive(false);
@@ -1858,9 +1911,10 @@ export function HomeProfessorMariChat({
     useChatStore.getState().setAbortController(chat.id, null);
     useChatStore.getState().setMariPhase(chat.id, "idle");
     setWorkspaceTimeline([]);
+    if (chatHistoryOpen) await loadChatHistory();
     await qc.invalidateQueries({ queryKey: chatKeys.messages(chat.id) });
-    toast.success("Professor Mari's home chat was restarted.");
-  }, [effectiveConnectionId, ensureProfessorMariChat, qc]);
+    toast.success("Professor Mari's previous chat was saved.");
+  }, [chatHistoryOpen, effectiveConnectionId, loadChatHistory, qc]);
 
   const runRestart = useCallback(async () => {
     if (isBusy) return;
@@ -2049,6 +2103,74 @@ export function HomeProfessorMariChat({
     [loadSkills, refreshWorkspaceStatus, skills],
   );
 
+  const handleSelectProfessorChat = useCallback(
+    async (id: string) => {
+      try {
+        const chat = await api.post<Chat>(`/chats/internal/professor-mari/chats/${id}/activate`);
+        setChatId(chat.id);
+        qc.setQueryData(chatKeys.detail(chat.id), chat);
+        setSkillsMenuOpen(false);
+        setChatHistoryOpen(false);
+        setWorkspaceTimeline([]);
+        useChatStore.getState().clearStreamBuffer(chat.id);
+        useChatStore.getState().clearThinkingBuffer(chat.id);
+        await loadMessages(chat.id);
+        await loadChatHistory();
+      } catch (error) {
+        console.error("[Professor Mari] Failed to open previous chat", error);
+        toast.error("Professor Mari could not open that chat.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
+      }
+    },
+    [loadChatHistory, loadMessages, qc],
+  );
+
+  const handleRenameProfessorChat = useCallback(
+    async (id: string) => {
+      const name = renameDraft.trim();
+      if (!name) return;
+      try {
+        await api.patch(`/chats/internal/professor-mari/chats/${id}`, { name });
+        setRenamingChatId(null);
+        setRenameDraft("");
+        await loadChatHistory();
+      } catch (error) {
+        console.error("[Professor Mari] Failed to rename chat", error);
+        toast.error("Professor Mari could not rename that chat.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
+      }
+    },
+    [loadChatHistory, renameDraft],
+  );
+
+  const handleDeleteProfessorChat = useCallback(
+    async (id: string) => {
+      const item = chatHistory.find((chat) => chat.id === id);
+      if (!item) return;
+      if (!window.confirm(`Delete ${item.name || "this Professor Mari chat"}?`)) return;
+      try {
+        await api.delete(`/chats/internal/professor-mari/chats/${id}`);
+        if (id === chatId) {
+          const chat = await ensureProfessorMariChat(effectiveConnectionId);
+          setChatId(chat.id);
+          await loadMessages(chat.id);
+        }
+        await loadChatHistory();
+      } catch (error) {
+        console.error("[Professor Mari] Failed to delete chat", error);
+        toast.error("Professor Mari could not delete that chat.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
+      }
+    },
+    [chatHistory, chatId, effectiveConnectionId, ensureProfessorMariChat, loadChatHistory, loadMessages],
+  );
+
   const sendWorkspaceMessage = useCallback(
     async (chat: Chat, text: string) => {
       const controller = new AbortController();
@@ -2232,16 +2354,6 @@ export function HomeProfessorMariChat({
                   <MessageCircle size="0.9rem" />
                   Ask Professor Mari
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void runRestart()}
-                  disabled={isBusy}
-                  className="mari-chrome-control mari-chrome-control--small h-8 w-8 p-0"
-                  aria-label="Restart Professor Mari chat"
-                  title="Restart Professor Mari chat"
-                >
-                  <RefreshCw size="0.9rem" />
-                </button>
               </div>
             </div>
             <div className="hidden sm:block w-full">
@@ -2256,7 +2368,136 @@ export function HomeProfessorMariChat({
           </div>
 
           <AnimatePresence mode="wait" initial={false}>
-            {skillsMenuOpen ? (
+            {chatHistoryOpen ? (
+              <motion.div
+                key="professor-mari-chats"
+                initial={{ opacity: 0, y: -14, rotateX: -10, transformOrigin: "top center" }}
+                animate={{ opacity: 1, y: 0, rotateX: 0, transformOrigin: "top center" }}
+                exit={{ opacity: 0, y: 12, rotateX: 8, transformOrigin: "bottom center" }}
+                transition={PROFESSOR_MARI_PANE_TRANSITION}
+                className={cn("min-w-0", !mobileFocusMode && "hidden sm:block", mobileFocusMode && "h-full")}
+              >
+                <section
+                  className={cn(
+                    "flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70",
+                    mobileFocusMode &&
+                      "h-full min-h-0 rounded-none border-0 bg-[var(--background)] sm:h-[clamp(24rem,70dvh,31rem)] sm:rounded-lg sm:border sm:bg-[var(--background)]/70",
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-[var(--foreground)]">Professor Mari Chats</div>
+                      <div className="truncate text-[0.625rem] text-[var(--muted-foreground)]">
+                        Restart saves the current chat here.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setChatHistoryOpen(false)}
+                      className="mari-chrome-control mari-chrome-control--small h-8 w-8 p-0"
+                      aria-label="Close chats"
+                      title="Close"
+                    >
+                      <X size="0.85rem" />
+                    </button>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                    {chatHistoryLoading ? (
+                      <div className="flex h-full items-center justify-center text-xs text-[var(--muted-foreground)]">
+                        <Loader2 size="0.875rem" className="mr-2 animate-spin" />
+                        Loading chats...
+                      </div>
+                    ) : chatHistory.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-xs text-[var(--muted-foreground)]">
+                        No previous Professor Mari chats yet.
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {chatHistory.map((item) => {
+                          const active = item.id === chatId || isProfessorMariChatActive(item);
+                          const renaming = renamingChatId === item.id;
+                          return (
+                            <div
+                              key={item.id}
+                              className={cn(
+                                "rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-2",
+                                active && "border-[var(--primary)]/50 bg-[var(--primary)]/5",
+                              )}
+                            >
+                              {renaming ? (
+                                <form
+                                  className="flex items-center gap-1.5"
+                                  onSubmit={(event) => {
+                                    event.preventDefault();
+                                    void handleRenameProfessorChat(item.id);
+                                  }}
+                                >
+                                  <input
+                                    value={renameDraft}
+                                    onChange={(event) => setRenameDraft(event.target.value)}
+                                    className="min-w-0 flex-1 rounded-md bg-[var(--background)] px-2 py-1.5 text-xs outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
+                                    autoFocus
+                                  />
+                                  <button
+                                    type="submit"
+                                    className="mari-chrome-control mari-chrome-control--primary mari-chrome-control--small h-8 px-2 text-[0.625rem]"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRenamingChatId(null);
+                                      setRenameDraft("");
+                                    }}
+                                    className="mari-chrome-control mari-chrome-control--small h-8 px-2 text-[0.625rem]"
+                                  >
+                                    Cancel
+                                  </button>
+                                </form>
+                              ) : (
+                                <div className="flex items-start gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleSelectProfessorChat(item.id)}
+                                    className="min-w-0 flex-1 text-left"
+                                  >
+                                    <div className="truncate text-xs font-semibold text-[var(--foreground)]">
+                                      {item.name || "Professor Mari chat"}
+                                    </div>
+                                    <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+                                      <span>{item.messageCount ?? 0} messages</span>
+                                      {active && <span>Active</span>}
+                                    </div>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRenamingChatId(item.id);
+                                      setRenameDraft(item.name || "");
+                                    }}
+                                    className="mari-chrome-control mari-chrome-control--small h-8 px-2 text-[0.625rem]"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteProfessorChat(item.id)}
+                                    className="mari-chrome-control mari-chrome-control--danger mari-chrome-control--small h-8 px-2 text-[0.625rem]"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </motion.div>
+            ) : skillsMenuOpen ? (
               <motion.div
                 key="professor-mari-skills"
                 initial={{ opacity: 0, y: -14, rotateX: -10, transformOrigin: "top center" }}
@@ -2313,12 +2554,26 @@ export function HomeProfessorMariChat({
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-2">
                       <span className="min-w-0 text-center">
-                        <span className="block truncate text-xs font-semibold text-[var(--foreground)]">
+                        <span className="hidden truncate text-xs font-semibold text-[var(--foreground)] sm:block">
                           Ask Professor Mari
                         </span>
                       </span>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={toggleChatHistory}
+                        className={cn(
+                          "inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50",
+                          "mari-chrome-accent-text-muted mari-accent-animated hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
+                          chatHistoryOpen && "bg-[var(--marinara-chat-chrome-highlight-bg)]",
+                        )}
+                        title="Open previous Professor Mari chats"
+                        aria-expanded={chatHistoryOpen}
+                      >
+                        <BookOpen size="0.75rem" />
+                        <span className="max-[360px]:hidden">Chats</span>
+                      </button>
                       <button
                         type="button"
                         onClick={toggleSkillsMenu}
@@ -2505,9 +2760,9 @@ export function HomeProfessorMariChat({
                             void handleSubmit();
                           }
                         }}
-                        rows={1}
+                        rows={3}
                         placeholder="Ask Professor Mari..."
-                        className="mari-chat-input-textarea max-h-24 min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm leading-normal text-foreground/90 outline-none placeholder:text-foreground/30 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="mari-chat-input-textarea max-h-40 min-h-20 flex-1 resize-y bg-transparent px-1 py-1.5 text-sm leading-normal text-foreground/90 outline-none placeholder:text-foreground/30 disabled:cursor-not-allowed disabled:opacity-40"
                         disabled={isBusy}
                       />
                       <button

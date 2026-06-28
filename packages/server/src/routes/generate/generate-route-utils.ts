@@ -1198,6 +1198,10 @@ function isNpcTrackerAvatarPath(value: unknown): value is string {
   return typeof value === "string" && value.trim().startsWith("/api/avatars/npc/");
 }
 
+function isTrackerAvatarCrop(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 export function isManualTrackerCharacterId(value: unknown): boolean {
   return typeof value === "string" && value.trim().startsWith("manual-");
 }
@@ -1238,11 +1242,15 @@ export function preserveTrackerCharacterUiFields(
     const previousPortraitFocusY = previous?.portraitFocusY;
     const previousPortraitZoom = previous?.portraitZoom;
     const previousAvatarPath = previous?.avatarPath;
+    const previousAvatarCrop = previous?.avatarCrop;
     if (
       (typeof character.avatarPath !== "string" || !character.avatarPath.trim()) &&
       isNpcTrackerAvatarPath(previousAvatarPath)
     ) {
       character.avatarPath = previousAvatarPath.trim();
+    }
+    if (!isTrackerAvatarCrop(character.avatarCrop) && isTrackerAvatarCrop(previousAvatarCrop)) {
+      character.avatarCrop = previousAvatarCrop;
     }
     if (
       (typeof character.portraitFocusX !== "number" || !Number.isFinite(character.portraitFocusX)) &&
