@@ -4711,7 +4711,8 @@ function ImportSettings() {
         <div className="flex flex-col gap-2.5">
           <label
             className={cn(
-              "flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-emerald-500/15 px-3 py-3 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-500/30 transition-all hover:bg-emerald-500/20 active:scale-[0.98] dark:text-emerald-300",
+              SETTINGS_PRIMARY_BUTTON_CLASS,
+              "w-full cursor-pointer gap-2",
               profileImportBusy && "pointer-events-none opacity-75",
             )}
           >
@@ -5856,20 +5857,20 @@ function AdvancedSettings() {
               );
             })}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2">
             <button
               onClick={() =>
                 setSelectedScopes(isAllScopesSelected ? [] : EXPUNGE_SCOPE_OPTIONS.map((scope) => scope.id))
               }
               disabled={isClearing}
-              className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium transition-all hover:bg-[var(--secondary)] active:scale-95 disabled:opacity-50"
+              className={cn(SETTINGS_BUTTON_CLASS, "w-full px-3 py-2 text-xs")}
             >
               {isAllScopesSelected ? "Clear Selection" : "Select All"}
             </button>
             <button
               onClick={() => setConfirmAction("selected")}
               disabled={selectedScopes.length === 0 || isClearing}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)]/85 px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              className={cn(SETTINGS_BUTTON_CLASS, "w-full px-3 py-2 text-xs")}
             >
               <Trash2 size="0.8125rem" />
               Clear Selected Data
@@ -5877,7 +5878,7 @@ function AdvancedSettings() {
             <button
               onClick={() => setConfirmAction("all")}
               disabled={isClearing}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+              className={cn(SETTINGS_BUTTON_CLASS, "w-full px-3 py-2 text-xs")}
             >
               <Trash2 size="0.8125rem" />
               Clear All Data
@@ -5891,18 +5892,18 @@ function AdvancedSettings() {
                   ? "Delete all supported data categories except Professor Mari? There is no undo."
                   : `Delete ${selectedScopes.length} selected data categor${selectedScopes.length === 1 ? "y" : "ies"}? There is no undo.`}
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2">
                 <button
                   onClick={() => setConfirmAction(null)}
                   disabled={isClearing}
-                  className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium transition-all hover:bg-[var(--secondary)] active:scale-95 disabled:opacity-50"
+                  className={cn(SETTINGS_BUTTON_CLASS, "w-full px-3 py-2 text-xs")}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => runExpunge(confirmAction)}
                   disabled={isClearing}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+                  className={cn(SETTINGS_BUTTON_CLASS, "w-full px-3 py-2 text-xs")}
                 >
                   {isClearing ? <Loader2 size="0.75rem" className="animate-spin" /> : <Trash2 size="0.75rem" />}
                   Confirm Delete
