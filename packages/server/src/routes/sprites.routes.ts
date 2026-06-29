@@ -77,12 +77,14 @@ import {
   type ImageGenerationDefaultsProfile,
   type ImageStyleProfileSettings,
 } from "@marinara-engine/shared";
+import { logger } from "../lib/logger.js";
 
 const SPRITES_ROOT = join(DATA_DIR, "sprites");
 const ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
 const CLIENT_PUBLIC_DIR = resolve(ROUTE_DIR, "../../../client/public");
 const CLIENT_DIST_DIR = resolve(ROUTE_DIR, "../../../client/dist");
 const MAX_SPRITE_GRID_DIMENSION = 8;
+const MAX_INDIVIDUAL_SPRITE_EXPRESSIONS = 8;
 const SPRITE_FILE_RE = /\.(png|jpg|jpeg|gif|webp|avif|svg)$/i;
 const CLEANUP_INPUT_FILE_RE = /\.(png|jpg|jpeg|webp|avif)$/i;
 const SPRITE_EXPORT_NAME_RE = /[^a-z0-9._ -]+/gi;
@@ -1099,9 +1101,8 @@ async function buildSpritePromptPlan(
   const cols = coerceSpriteGridDimension(body.cols, 2);
   const rows = coerceSpriteGridDimension(body.rows, 3);
   const fullBodyExpressionMode = body.spriteType === "full-body" && body.fullBodyExpressionMode === true;
-  const expressions = (body.expressions ?? []).slice(0, cols * rows);
+  let expressions = (body.expressions ?? []).slice(0, cols * rows);
 
-  const expressionList = expressions.join(", ");
   const singlePortrait = body.spriteType !== "full-body" && expressions.length === 1 && cols === 1 && rows === 1;
   const singleFullBody = body.spriteType === "full-body" && expressions.length === 1 && cols === 1 && rows === 1;
   const generateExpressionsIndividually =
@@ -1109,6 +1110,10 @@ async function buildSpritePromptPlan(
     !singlePortrait &&
     isOpenAIGptImageModel(imgModel) &&
     !isOpenAIGptImage2Model(imgModel);
+  if (generateExpressionsIndividually && expressions.length > MAX_INDIVIDUAL_SPRITE_EXPRESSIONS) {
+    expressions = expressions.slice(0, MAX_INDIVIDUAL_SPRITE_EXPRESSIONS);
+  }
+  const expressionList = expressions.join(", ");
   const promptOverridesStorage = createPromptOverridesStorage(app.db);
   const trimmedAppearance = body.appearance?.trim() || "";
   const nativeTransparentPng = body.nativeTransparentPng === true;
@@ -1397,14 +1402,14 @@ export async function spritesRoutes(app: FastifyInstance) {
           try {
             unlinkSync(inputPath);
           } catch (unlinkErr) {
-            app.log.warn(unlinkErr, "Failed to remove original sprite after cleanup");
+            logger.warn(unlinkErr, "Failed to remove original sprite after cleanup");
           }
         }
 
         engineCounts[output.engine] += 1;
         processed += 1;
       } catch (err) {
-        app.log.warn(err, 'Saved sprite "%s" background cleanup failed', expression);
+        logger.warn(err, 'Saved sprite "%s" background cleanup failed', expression);
         failed.push({
           expression,
           error: err instanceof Error ? err.message : "Cleanup failed",
@@ -1492,7 +1497,7 @@ export async function spritesRoutes(app: FastifyInstance) {
         }
         restored += 1;
       } catch (err) {
-        app.log.warn(err, 'Saved sprite "%s" cleanup restore failed', entry.expression);
+        logger.warn(err, 'Saved sprite "%s" cleanup restore failed', entry.expression);
         failed.push({
           expression: entry.expression,
           error: err instanceof Error ? err.message : "Restore failed",
@@ -1809,7 +1814,10 @@ export async function spritesRoutes(app: FastifyInstance) {
                 const meta = await sharp(spriteBuffer).metadata();
                 if (meta.width && meta.height && (meta.width !== targetSize || meta.height !== targetSize)) {
                   spriteBuffer = await sharp(spriteBuffer)
-                    .resize(targetSize, targetSize, { fit: "cover", position: "centre" })
+                    .resize(targetSize, targetSize, {
+                      fit: "contain",
+                      background: nativeTransparentPng ? { r: 0, g: 0, b: 0, alpha: 0 } : { r: 255, g: 255, b: 255 },
+                    })
                     .png()
                     .toBuffer();
                 }
@@ -1818,7 +1826,7 @@ export async function spritesRoutes(app: FastifyInstance) {
                   try {
                     spriteBuffer = (await removeSpriteBackgroundPng(spriteBuffer, cleanupStrength)).buffer;
                   } catch (bgErr) {
-                    app.log.warn(bgErr, "Expression sprite background cleanup failed; continuing with original image");
+                    logger.warn(bgErr, "Expression sprite background cleanup failed; continuing with original image");
                   }
                 }
 
@@ -1830,7 +1838,7 @@ export async function spritesRoutes(app: FastifyInstance) {
                 const msg = String(expressionErr?.message || "Generation failed")
                   .replace(/<[^>]*>/g, "")
                   .slice(0, 300);
-                app.log.warn(expressionErr, `Expression sprite "${expression}" generation failed; skipping`);
+                logger.warn(expressionErr, 'Expression sprite "%s" generation failed; skipping', expression);
                 failedExpressions.push({ expression, error: msg });
               }
             }
@@ -1876,7 +1884,7 @@ export async function spritesRoutes(app: FastifyInstance) {
               sheetBuffer = (await removeSpriteBackgroundPng(sheetBuffer, cleanupStrength)).buffer;
               metadata = await sharp(sheetBuffer).metadata();
             } catch (bgErr) {
-              app.log.warn(bgErr, "Sprite background cleanup failed; continuing with original image");
+              logger.warn(bgErr, "Sprite background cleanup failed; continuing with original image");
               sheetBuffer = originalSheetBuffer;
               metadata = await sharp(sheetBuffer).metadata();
             }
@@ -1921,7 +1929,7 @@ export async function spritesRoutes(app: FastifyInstance) {
         })(),
       );
     } catch (err: any) {
-      app.log.error(err, "Sprite sheet generation failed");
+      logger.error(err, "Sprite sheet generation failed");
       const failedExpressions = Array.isArray(err?.failedExpressions)
         ? { failedExpressions: err.failedExpressions }
         : {};
@@ -1982,7 +1990,7 @@ export async function spritesRoutes(app: FastifyInstance) {
         builtinProcessed: engineCounts.builtin,
       };
     } catch (err: any) {
-      app.log.error(err, "Sprite cleanup failed");
+      logger.error(err, "Sprite cleanup failed");
       return reply.status(500).send({
         error: err?.message || "Sprite cleanup failed",
       });

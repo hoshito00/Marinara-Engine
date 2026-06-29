@@ -31,6 +31,10 @@ function buildUrl(filename: string) {
   return `/api/global-gallery/file/${encodeURIComponent(filename)}`;
 }
 
+function expectedImageExt(ext: string): string {
+  return ext === ".jpeg" ? "jpg" : ext.slice(1);
+}
+
 function isValidCustomDimension(value: unknown, max: number): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= max;
 }
@@ -121,7 +125,8 @@ export async function globalGalleryRoutes(app: FastifyInstance) {
         error: tooLarge ? "Gallery image is too large" : "Failed to read uploaded image",
       });
     }
-    if (!isAllowedImageBuffer(buffer, ext)) {
+    const detectedImage = isAllowedImageBuffer(buffer, ext);
+    if (!detectedImage || detectedImage.ext !== expectedImageExt(ext)) {
       return reply.status(400).send({ error: "Unsupported or invalid image file" });
     }
     try {

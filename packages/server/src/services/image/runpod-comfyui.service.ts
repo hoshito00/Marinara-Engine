@@ -228,7 +228,11 @@ function extractRunPodImage(status: RunPodStatusResponse, endpointId: string): I
       const trimmed = data.trim();
       // Could be data URL or raw base64
       if (trimmed.startsWith("data:")) {
-        return decodeDataUrl(trimmed);
+        try {
+          return decodeDataUrl(trimmed);
+        } catch {
+          continue;
+        }
       }
       // Raw base64 (most common for RunPod)
       const decoded = decodeRawRunPodImageBase64(trimmed);
@@ -242,7 +246,11 @@ function extractRunPodImage(status: RunPodStatusResponse, endpointId: string): I
     if (fallbackBase64) {
       const trimmed = fallbackBase64.trim();
       if (trimmed.startsWith("data:")) {
-        return decodeDataUrl(trimmed);
+        try {
+          return decodeDataUrl(trimmed);
+        } catch {
+          continue;
+        }
       }
       const decoded = decodeRawRunPodImageBase64(trimmed);
       if (decoded) return decoded;

@@ -77,6 +77,10 @@ function buildGalleryImageUrl(image: { filePath: string }, fallbackChatId: strin
   return `/api/gallery/file/${encodeURIComponent(ownerChatId)}/${encodeURIComponent(filename)}`;
 }
 
+function expectedImageExt(ext: string): string {
+  return ext === ".jpeg" ? "jpg" : ext.slice(1);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -415,7 +419,8 @@ export async function galleryRoutes(app: FastifyInstance) {
         error: tooLarge ? "Gallery image is too large" : "Failed to read uploaded image",
       });
     }
-    if (!isAllowedImageBuffer(buffer, ext)) {
+    const detectedImage = isAllowedImageBuffer(buffer, ext);
+    if (!detectedImage || detectedImage.ext !== expectedImageExt(ext)) {
       return reply.status(400).send({ error: "Unsupported or invalid image file" });
     }
     try {
@@ -433,15 +438,22 @@ export async function galleryRoutes(app: FastifyInstance) {
     const width = fields?.width?.value ? parseInt(fields.width.value, 10) : undefined;
     const height = fields?.height?.value ? parseInt(fields.height.value, 10) : undefined;
 
-    const image = await storage.create({
-      chatId,
-      filePath: `${chatId}/${filename}`,
-      prompt,
-      provider,
-      model,
-      width: Number.isFinite(width) ? width : undefined,
-      height: Number.isFinite(height) ? height : undefined,
-    });
+    let image;
+    try {
+      image = await storage.create({
+        chatId,
+        filePath: `${chatId}/${filename}`,
+        prompt,
+        provider,
+        model,
+        width: Number.isFinite(width) ? width : undefined,
+        height: Number.isFinite(height) ? height : undefined,
+      });
+    } catch (err) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+      logger.error(err, "Failed to persist chat gallery image %s", filename);
+      return reply.status(500).send({ error: "Failed to save image metadata" });
+    }
 
     return {
       ...image,
