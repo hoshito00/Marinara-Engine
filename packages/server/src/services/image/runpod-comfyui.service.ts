@@ -126,7 +126,7 @@ export async function generateRunPodComfyUI(
     method: "POST",
     headers,
     body: JSON.stringify({ input: { workflow } }),
-    signal: AbortSignal.timeout(30_000),
+    signal: runPodFetchSignal(request),
   });
 
   if (!jobResp.ok) {
@@ -141,12 +141,12 @@ export async function generateRunPodComfyUI(
 
   // ── Step 2: Poll for completion ──
   for (let attempt = 0; attempt < RUNPOD_MAX_POLLS; attempt++) {
-    await new Promise((r) => setTimeout(r, runPodPollIntervalMs()));
+    await runPodSleep(runPodPollIntervalMs(), request.signal);
 
     const statusResp = await runPodFetch(buildRunPodUrl(baseUrl, endpointIdSegment, "status", jobId), request, {
       method: "GET",
       headers,
-      signal: AbortSignal.timeout(30_000),
+      signal: runPodFetchSignal(request),
     });
 
     if (!statusResp.ok) {
@@ -231,14 +231,8 @@ function extractRunPodImage(status: RunPodStatusResponse, endpointId: string): I
         return decodeDataUrl(trimmed);
       }
       // Raw base64 (most common for RunPod)
-      if (/^[A-Za-z0-9+/]*={0,2}$/.test(trimmed)) {
-        const mimeType = detectImageMimeType(trimmed);
-        return {
-          base64: trimmed,
-          mimeType,
-          ext: imageExtensionFromMimeType(mimeType),
-        };
-      }
+      const image = decodeRunPodRawBase64(trimmed);
+      if (image) return image;
     }
 
     // Also try "base64" or "image" keys (defensive fallback)
@@ -247,12 +241,12 @@ function extractRunPodImage(status: RunPodStatusResponse, endpointId: string): I
 
     if (fallbackBase64) {
       const trimmed = fallbackBase64.trim();
-      const mimeType = detectImageMimeType(trimmed);
-      return {
-        base64: trimmed,
-        mimeType,
-        ext: imageExtensionFromMimeType(mimeType),
-      };
+      if (trimmed.startsWith("data:")) {
+        return decodeDataUrl(trimmed);
+      }
+      const image = decodeRunPodRawBase64(trimmed);
+      if (image) return image;
+      continue;
     }
   }
 
@@ -323,7 +317,51 @@ function runPodFetch(url: URL, request: ImageGenRequest, init: RequestInit): Pro
   });
 }
 
-function detectImageMimeType(base64: string): string {
+function runPodFetchSignal(request: ImageGenRequest): AbortSignal {
+  const timeout = AbortSignal.timeout(30_000);
+  return request.signal ? AbortSignal.any([request.signal, timeout]) : timeout;
+}
+
+function runPodSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new Error("RunPod generation aborted"));
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    timer.unref?.();
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason instanceof Error ? signal.reason : new Error("RunPod generation aborted"));
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function decodeRunPodRawBase64(value: string): ImageGenResult | null {
+  const compact = value.replace(/\s+/g, "");
+  if (!compact || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) return null;
+
+  const buffer = Buffer.from(compact, "base64");
+  if (buffer.byteLength === 0) return null;
+
+  const base64 = buffer.toString("base64");
+  const mimeType = detectImageMimeType(base64);
+  if (!mimeType) return null;
+  return {
+    base64,
+    mimeType,
+    ext: imageExtensionFromMimeType(mimeType),
+  };
+}
+
+function detectImageMimeType(base64: string): string | null {
   const bytes = Buffer.from(base64.slice(0, 64), "base64");
   if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
@@ -351,7 +389,7 @@ function detectImageMimeType(base64: string): string {
   ) {
     return "image/avif";
   }
-  return "image/png";
+  return null;
 }
 
 function imageExtensionFromMimeType(mimeType: string): string {

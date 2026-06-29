@@ -2,17 +2,18 @@
 // Routes: Global Gallery (profile-wide images + flat folders)
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { existsSync, mkdirSync, unlinkSync, createWriteStream } from "fs";
+import { existsSync, mkdirSync, unlinkSync } from "fs";
+import { writeFile } from "fs/promises";
 import { join, extname } from "path";
-import { pipeline } from "stream/promises";
 import { createGlobalGalleryStorage } from "../services/storage/global-gallery.storage.js";
 import { newId } from "../utils/id-generator.js";
 import { DATA_DIR } from "../utils/data-dir.js";
-import { assertInsideDir } from "../utils/security.js";
+import { assertInsideDir, isAllowedImageBuffer } from "../utils/security.js";
 import { logger } from "../lib/logger.js";
 
 const GLOBAL_GALLERY_ROOT = join(DATA_DIR, "gallery", "global");
 const ALLOWED_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
+const GALLERY_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
 const CUSTOM_NAME_RE = /^[a-z0-9_]{1,32}$/;
 const CUSTOM_KIND_MAX_DIMENSION = {
   emoji: 256,
@@ -81,7 +82,7 @@ export async function globalGalleryRoutes(app: FastifyInstance) {
   });
 
   app.post<{ Querystring: { folderId?: string } }>("/upload", async (req, reply) => {
-    const data = await req.file();
+    const data = await req.file({ limits: { fileSize: GALLERY_UPLOAD_MAX_BYTES } });
     if (!data) {
       return reply.status(400).send({ error: "No file uploaded" });
     }
@@ -109,7 +110,26 @@ export async function globalGalleryRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "Invalid path" });
     }
 
-    await pipeline(data.file, createWriteStream(filePath));
+    let buffer: Buffer;
+    try {
+      buffer = await data.toBuffer();
+    } catch (err) {
+      const truncated = (data.file as typeof data.file & { truncated?: boolean }).truncated === true;
+      const tooLarge = truncated || (err as { code?: string }).code === "FST_REQ_FILE_TOO_LARGE";
+      logger.warn(err, "Failed to receive global gallery upload %s", data.filename);
+      return reply.status(tooLarge ? 413 : 400).send({
+        error: tooLarge ? "Gallery image is too large" : "Failed to read uploaded image",
+      });
+    }
+    if (!isAllowedImageBuffer(buffer, ext)) {
+      return reply.status(400).send({ error: "Unsupported or invalid image file" });
+    }
+    try {
+      await writeFile(filePath, buffer);
+    } catch (err) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+      throw err;
+    }
 
     const fields = data.fields as Record<string, { value?: string } | undefined>;
     const prompt = fields?.prompt?.value ?? "";
