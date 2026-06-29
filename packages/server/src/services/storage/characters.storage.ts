@@ -90,7 +90,10 @@ function buildPersonaSnapshot(persona: PersonaRow): PersonaCardSnapshot {
   };
 }
 
-function mergePersonaSnapshot(current: PersonaCardSnapshot, updates: Partial<PersonaCardSnapshot>): PersonaCardSnapshot {
+function mergePersonaSnapshot(
+  current: PersonaCardSnapshot,
+  updates: Partial<PersonaCardSnapshot>,
+): PersonaCardSnapshot {
   return {
     ...current,
     ...updates,
@@ -291,18 +294,26 @@ export function createCharactersStorage(db: DB) {
     },
 
     async remove(id: string) {
-      await db.delete(characters).where(eq(characters.id, id));
-      const groups = await this.listGroups();
-      for (const group of groups) {
-        let memberIds: string[];
-        try {
-          memberIds = typeof group.characterIds === "string" ? (JSON.parse(group.characterIds) as string[]) : [];
-        } catch {
-          continue;
+      await db.transaction(async (tx) => {
+        await tx.delete(characters).where(eq(characters.id, id));
+        const groups = await tx.select().from(characterGroups);
+        for (const group of groups) {
+          let memberIds: string[];
+          try {
+            memberIds = typeof group.characterIds === "string" ? (JSON.parse(group.characterIds) as string[]) : [];
+          } catch {
+            continue;
+          }
+          if (!Array.isArray(memberIds) || !memberIds.includes(id)) continue;
+          await tx
+            .update(characterGroups)
+            .set({
+              characterIds: JSON.stringify(memberIds.filter((characterId) => characterId !== id)),
+              updatedAt: now(),
+            })
+            .where(eq(characterGroups.id, group.id));
         }
-        if (!Array.isArray(memberIds) || !memberIds.includes(id)) continue;
-        await this.updateGroup(group.id, { characterIds: memberIds.filter((characterId) => characterId !== id) });
-      }
+      });
     },
 
     async duplicateCharacter(id: string) {
@@ -439,25 +450,33 @@ export function createCharactersStorage(db: DB) {
     },
 
     async setActivePersona(id: string) {
-      // Deactivate all
-      await db.update(personas).set({ isActive: "false" });
-      // Activate the one
-      await db.update(personas).set({ isActive: "true", updatedAt: now() }).where(eq(personas.id, id));
+      return db.transaction(async (tx) => {
+        const existing = await tx.select({ id: personas.id }).from(personas).where(eq(personas.id, id));
+        if (!existing[0]) return false;
+        await tx.update(personas).set({ isActive: "false" });
+        await tx.update(personas).set({ isActive: "true", updatedAt: now() }).where(eq(personas.id, id));
+        return true;
+      });
     },
 
     async removePersona(id: string) {
-      await db.delete(personas).where(eq(personas.id, id));
-      const groups = await this.listPersonaGroups();
-      for (const group of groups) {
-        let memberIds: string[];
-        try {
-          memberIds = JSON.parse(group.personaIds) as string[];
-        } catch {
-          continue;
+      await db.transaction(async (tx) => {
+        await tx.delete(personas).where(eq(personas.id, id));
+        const groups = await tx.select().from(personaGroups);
+        for (const group of groups) {
+          let memberIds: string[];
+          try {
+            memberIds = JSON.parse(group.personaIds) as string[];
+          } catch {
+            continue;
+          }
+          if (!Array.isArray(memberIds) || !memberIds.includes(id)) continue;
+          await tx
+            .update(personaGroups)
+            .set({ personaIds: JSON.stringify(memberIds.filter((personaId) => personaId !== id)), updatedAt: now() })
+            .where(eq(personaGroups.id, group.id));
         }
-        if (!Array.isArray(memberIds) || !memberIds.includes(id)) continue;
-        await this.updatePersonaGroup(group.id, { personaIds: memberIds.filter((personaId) => personaId !== id) });
-      }
+      });
     },
 
     async duplicatePersona(id: string) {

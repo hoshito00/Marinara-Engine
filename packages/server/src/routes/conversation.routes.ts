@@ -546,7 +546,7 @@ export async function conversationRoutes(app: FastifyInstance) {
             : {};
           const mergedSchedules: CharacterSchedules = { ...currentSchedules };
           for (const id of changedCharIds) {
-            mergedSchedules[id] = newSchedules[id]!;
+            mergedSchedules[id] = preserveTimingSettings(newSchedules[id]!, currentSchedules[id]);
           }
           return {
             conversationSchedulesEnabled: true,
@@ -572,12 +572,18 @@ export async function conversationRoutes(app: FastifyInstance) {
           if (!areConversationSchedulesEnabled(cMeta)) continue;
           const cSchedules: CharacterSchedules = hasSchedules(cMeta.characterSchedules) ? cMeta.characterSchedules : {};
           await chats.patchMetadata(c.id, (current) => {
+            if (!areConversationSchedulesEnabled(current)) {
+              return {};
+            }
             const currentSchedules: CharacterSchedules = hasSchedules(current.characterSchedules)
               ? (current.characterSchedules as CharacterSchedules)
               : {};
             const mergedSchedules: CharacterSchedules = { ...currentSchedules };
             for (const cid of overlap) {
-              mergedSchedules[cid] = preserveTimingSettings(newSchedules[cid]!, currentSchedules[cid] ?? cSchedules[cid]);
+              mergedSchedules[cid] = preserveTimingSettings(
+                newSchedules[cid]!,
+                currentSchedules[cid] ?? cSchedules[cid],
+              );
             }
             return {
               conversationSchedulesEnabled: true,
@@ -611,7 +617,10 @@ export async function conversationRoutes(app: FastifyInstance) {
     const statusOverrides = parseConversationStatusOverrides(meta.conversationStatusOverrides);
 
     const now = new Date();
-    const statuses: Record<string, { status: string; activity: string; schedule?: WeekSchedule; override?: object; lastContact?: string }> = {};
+    const statuses: Record<
+      string,
+      { status: string; activity: string; schedule?: WeekSchedule; override?: object; lastContact?: string }
+    > = {};
 
     for (const charId of characterIds) {
       const schedule = schedules[charId];
@@ -828,7 +837,12 @@ export async function conversationRoutes(app: FastifyInstance) {
             return reply.send(result);
           }
 
-          const evaluation = evaluateAutonomousCandidate(chatId, catchUpCharacterId, autonomySchedules[catchUpCharacterId], meta);
+          const evaluation = evaluateAutonomousCandidate(
+            chatId,
+            catchUpCharacterId,
+            autonomySchedules[catchUpCharacterId],
+            meta,
+          );
           if (!evaluation.ok) return reply.send(blockedAutonomousResponse(evaluation.reason));
 
           // Character is online but hasn't responded — trigger catch-up
