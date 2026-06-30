@@ -1,5 +1,7 @@
 # 🍝 Marinara Engine
 
+> **This is a fork** — [hoshito00/Hositos-Marinara-Engine](https://github.com/hoshito00/Hositos-Marinara-Engine) — built on top of [Pasta-Devs/Marinara-Engine](https://github.com/Pasta-Devs/Marinara-Engine) with the **Hoshito Simplified TTRPG Ruleset** layered on top of Game Mode. Everything from the original engine still works; this fork just makes Game Mode actually play a Limbus Company styled TTRPG. See [RULESET.md](#RULESET.md) below.
+
 <h3 align="center"><b>Fun. Intuitive. Plug-And-Play.</b></h3>
 
 <p align="center">
@@ -27,6 +29,14 @@
     - [Prompt Engineering](#prompt-engineering)
     - [Connections \& Providers](#connections--providers)
     - [Export \& Data](#export--data)
+  - [Hoshito TTRPG System](#hoshito-ttrpg-system)
+    - [Domains \& Attributes](#domains--attributes)
+    - [Grades \& Sparks](#grades--sparks)
+    - [Strands](#strands)
+    - [Merits \& Core Merits](#merits--core-merits)
+    - [Combat](#combat)
+    - [Resistance System](#resistance-system)
+    - [Exaltation](#exaltation)
   - [Documentation](#documentation)
   - [Community \& Support](#community--support)
   - [Contributors](#contributors)
@@ -167,7 +177,118 @@ Export individual chats or bulk transcript zips as JSONL or plain text. Fully lo
 
 ---
 
+## Hoshito TTRPG System
+
+This fork adds a complete custom TTRPG ruleset to Marinara's Game Mode — the **Hoshito Simplified TTRPG Ruleset v1.1**. The GM is an LLM that actually knows the rules. Your character sheet lives in the engine. Encounters run mechanically. It's a real tabletop RPG, just with an AI at the table who never cancels on you.
+
+Enable it per-character in the **Persona Editor → Hoshito Stats**, then start a Game Mode session. The GM picks up from there.
+
+---
+
+### Domains & Attributes
+
+Every character has **three Domains**, each containing **three Attributes**. The defaults are:
+
+| Domain | Attributes |
+|--------|------------|
+| **Physical** | MIG (Might), AGI (Agility), VIT (Vitality) |
+| **Mental** | INT (Intellect), INS (Instinct), WIL (Will) |
+| **Social** | CHA (Charisma), PSY (Presence), RES (Resolve) |
+
+Domain and Attribute names are fully editable — rename them in the Persona Editor to fit any setting.
+
+---
+
+### Grades & Sparks
+
+Attributes don't use flat numbers. They use a **14-tier Grade scale**:
+
+`FFF → FF → F → E → D → C → B → A → S → SS → SSS → EX`
+
+Each Grade represents a meaningful threshold, not just a +1. The GM uses Grade modifiers for all derived stat calculations (Health, Stagger, AP).
+
+**Sparks** are the growth currency. Earn a Spark on an Attribute through play — reach 4 Sparks and it promotes to the next Grade. The **Vestige Spark** is a special carry-forward: if an Attribute is already at its cap, a Spark earned doesn't vanish; it becomes a Vestige that matters for Exaltation later.
+
+**Verve** and **Story Points** are the session resources: Verve fuels special actions, Story Points let characters bend the narrative.
+
+---
+
+### Strands
+
+A Strand is your character's mechanical identity — their specialisation path. Each Strand designates one **Primary Attribute** as its anchor. That Attribute gets a hard Spark cap of 4 and can't promote further through normal means; instead, it powers the Strand's escalating abilities.
+
+Strands develop through play: new **Abilities** (no Spark cost, purely new axes of action) are unlocked by the GM at key moments. At **Level 13** the Strand reaches its Culmination Merit — a permanent signature ability. At **Level 14** the path forks: a second specialisation choice that shapes the character for the rest of the campaign.
+
+---
+
+### Merits & Core Merits
+
+**Merits** are the rewards, discoveries, and consequences a character accumulates. There are five categories:
+
+| Category | What it does |
+|----------|-------------|
+| **Feat** | A trained discipline. Grants 1 Attribute Spark. Two Feats can fuse into one stronger Feat at Level Up. |
+| **Artifact** | A significant object. Grants 1 Attribute Spark. Weapons/Shields set the Mastery die size; Trinkets grant flat Power bonuses by rarity (+1 / +2 / +3 / +4). |
+| **Ability** | A maneuver or technique. No Spark — a new axis of action, not a number going up. The primary reward of Strand progression. |
+| **Augment** | Permanent, usually irreversible modification to the self. Grants Attribute Sparks directly. |
+| **Contact** | A person, faction, or relationship. No Spark — purely narrative, but opens and closes doors that skill and power can't. |
+
+A Merit can also be marked **Dormant** — acknowledged but not yet narratively active. The GM won't let it affect rolls or fiction until it's reactivated.
+
+**Core Merits** are the three origin pillars every character starts with: **Ancestry**, **Heritage**, and **Background**. Each is a written origin that grants either one Grade step on a chosen Attribute, or a Spark if that Attribute is already at the Grade D creation cap.
+
+At Levels 7, 14, 21, and 26 — or a narratively pivotal moment — a Core Merit can **transform**: it grants a new Ability, Feat, or Vestige Spark thematically linked to that origin's description. The more specific and evocative your origin writing, the more resonant the transformation the GM produces.
+
+Both regular Merits and Core Merits are set in the **Persona Editor** before play, and edited from the **Game Mode Edit Sheet** during a campaign.
+
+---
+
+### Combat
+
+Combat runs on the **Clash** system, not d20 vs. AC.
+
+- Each combatant rolls **Speed Dice** at the start of a round to determine turn order.
+- On your turn you spend **AP** (Action Points) to act. Default AP max is `3 + floor(WIL Grade mod / 3)`.
+- Attacks are resolved by **Clash**: the attacker rolls a pool based on their relevant Attribute Grade, the defender rolls theirs. Higher total wins; the loser takes damage.
+- **Coins** are the Clash resource: flip them to boost or modify rolls. Losing a Clash costs a Coin.
+- **Morale** tracks the encounter's psychological tide. It shifts based on narrative outcomes, not just HP.
+- **Power** is the damage number. Weapons set base Power; Trinket rarity adds flat bonuses. The Mastery Die (d6 through d12, set by weapon Artifact tier) adds a roll on top.
+
+Damage types: **Slash, Pierce, Blunt** (physical) and **Spectral, Elemental, Empyreal** (supernatural).
+
+---
+
+### Resistance System
+
+Each character has separate **Health** and **Stagger** resistance profiles per damage type, with six tiers:
+
+| Tier | Multiplier | Meaning |
+|------|-----------|---------|
+| **Fatal** | ×2 | Double damage — a critical vulnerability |
+| **Weak** | ×1.5 | Half again |
+| **Normal** | ×1 | Standard |
+| **Endured** | ×0.5 | Halved |
+| **Ineffective** | ×0.25 | Mostly shrugged off |
+| **Immune** | ×0 | No effect |
+
+The GM calculates final damage as `floor(Power × multiplier)`. Characters with innate resistances require at least one Fatal vulnerability — you can't be a tank in every direction.
+
+Health and Stagger are tracked separately: lose all Health and you're down; lose all Stagger and you're stunned/broken even if you're still standing.
+
+---
+
+### Exaltation
+
+When a character reaches their Level 26 Domain cap, they face a choice: stop, or **Exalt**.
+
+Exaltation resets one Domain's Attributes back to F, marking them with a `+` superscript (F+, then F++ on a second cycle). The cap extends to Level 52. It's not a regression — it's a metamorphosis. Vestige Sparks stored before the reset carry forward and fuel the Exalted progression differently than normal Sparks.
+
+Exalted characters are tracked with a flag in the character sheet, and the GM knows to treat the `+`-marked Attributes as a distinct tier of potential rather than a simple downgrade.
+
+---
+
 ## Documentation
+
 
 | Document                                             | Description                                                     |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
@@ -190,8 +311,8 @@ Export individual chats or bulk transcript zips as JSONL or plain text. Fully lo
 
 ## Community & Support
 
-- [**Join our Discord**](https://discord.com/invite/KdAkTg94ME) — Chat, get help, share characters, and give feedback
-- [**Support on Ko-fi**](https://ko-fi.com/marinara_spaghetti) — Help keep the project alive
+- [**Join Marinara's Discord**](https://discord.com/invite/KdAkTg94ME) — Chat, get help, share characters, and give feedback
+- [**Support Marinara on Ko-fi**](https://ko-fi.com/marinara_spaghetti) — Help keep the project alive
 
 ---
 
