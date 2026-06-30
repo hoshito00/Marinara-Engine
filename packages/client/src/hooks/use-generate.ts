@@ -417,15 +417,6 @@ function parseMessageExtraRecordForMerge(value: unknown): Record<string, unknown
 
 function mergeCachedGeneratedMessage(existing: Message, incoming: Message): Message {
   const merged = { ...existing, ...incoming };
-  const existingSwipeCount = typeof existing.swipeCount === "number" ? existing.swipeCount : 0;
-  const incomingSwipeCount = typeof incoming.swipeCount === "number" ? incoming.swipeCount : 0;
-  const activeSwipeFloor =
-    typeof incoming.activeSwipeIndex === "number" && Number.isInteger(incoming.activeSwipeIndex)
-      ? incoming.activeSwipeIndex + 1
-      : 0;
-  if (existingSwipeCount || incomingSwipeCount || activeSwipeFloor) {
-    merged.swipeCount = Math.max(existingSwipeCount, incomingSwipeCount, activeSwipeFloor);
-  }
   const existingExtra = parseMessageExtraRecordForMerge(existing.extra);
   const incomingExtra = parseMessageExtraRecordForMerge(incoming.extra);
   // The saved-message SSE snapshot can predate post-processing extras such as
@@ -764,6 +755,14 @@ async function refreshVisibleGameStateAfterGeneration(chatId: string) {
     try {
       const gs = await api.get<import("@marinara-engine/shared").GameState | null>(`/chats/${chatId}/game-state`);
       if (useChatStore.getState().activeChatId === chatId) {
+        // Preserve locally-held hoshitoStats if the server snapshot doesn't have them yet.
+        // This covers the window between the persona auto-sync writing to the local store
+        // and the server PATCH being committed (e.g. first GM turn on a fresh session).
+        const prev = useGameStateStore.getState().current;
+        const prevHoshito = prev?.playerStats?.hoshitoStats;
+        if (gs?.playerStats && prevHoshito && !gs.playerStats.hoshitoStats) {
+          gs.playerStats = { ...gs.playerStats, hoshitoStats: prevHoshito };
+        }
         useGameStateStore.getState().setGameState(gs ?? null);
       }
     } catch {

@@ -1153,8 +1153,14 @@ const GameCombatUI = lazy(async () => {
   return { default: module.GameCombatUI };
 });
 
+const GameHoshitoCombatUI = lazy(async () => {
+  const module = await import("./GameHoshitoCombatUI");
+  return { default: module.GameHoshitoCombatUI };
+});
+
 import { Modal } from "../ui/Modal";
-import type { Chat, SessionSummary, Combatant, Message, GameCombatStateSnapshot } from "@marinara-engine/shared";
+import type { Chat, SessionSummary, Combatant, Message, GameCombatStateSnapshot, HoshitoCharacterStats, HoshitoCombatState, HoshitoCombatant, HoshitoDefaultActions, HoshitoPlayerAction, HoshitoEncounterInitRequest, HoshitoEncounterActionRequest, HoshitoEncounterActionResponse } from "@marinara-engine/shared";
+import { HOSHITO_DEFAULT_ACTIONS } from "@marinara-engine/shared";
 import type { CharacterMap, PersonaInfo } from "../chat/chat-area.types";
 
 /** Typewriter component for the intro screen — reveals text character-by-character. */
@@ -2157,6 +2163,39 @@ function GameSurfaceComponent({
     }
   }, [activeChatId, metaWeather, metaTime]);
 
+  // ── Auto-sync persona hoshitoStats → playerStats.hoshitoStats ──
+  // When the persona has Hoshito stats configured but the game state doesn't yet,
+  // inject them automatically so the sheet is pre-populated from Persona Editor data.
+  useEffect(() => {
+    if (!personaInfo?.hoshitoStats) return;
+    const current = useGameStateStore.getState().current;
+    // Don't overwrite existing hoshitoStats — let the user's in-session edits win
+    if (current?.playerStats?.hoshitoStats) return;
+    const updatedPlayerStats = { ...(current?.playerStats ?? {}), hoshitoStats: personaInfo.hoshitoStats };
+    const matchingState = current?.chatId === activeChatId ? current : null;
+    useGameStateStore.getState().setGameState(
+      matchingState
+        ? { ...matchingState, playerStats: updatedPlayerStats as typeof matchingState.playerStats }
+        : {
+            id: "",
+            chatId: activeChatId,
+            messageId: "",
+            swipeIndex: 0,
+            date: null,
+            time: null,
+            location: null,
+            weather: null,
+            temperature: null,
+            presentCharacters: [],
+            recentEvents: [],
+            playerStats: updatedPlayerStats as import("@marinara-engine/shared").PlayerStats,
+            personaStats: null,
+            createdAt: "",
+          },
+    );
+    api.patch(`/chats/${activeChatId}/game-state`, { playerStats: updatedPlayerStats, manual: true }).catch(() => {});
+  }, [activeChatId, personaInfo?.hoshitoStats]);
+
   // ── Client-side backup: ensure location is added to journal when game state reports one ──
   const lastJournaledLocationRef = useRef<string | null>(null);
   useEffect(() => {
@@ -2300,6 +2339,9 @@ function GameSurfaceComponent({
   const [combatItemEffects, setCombatItemEffects] = useState<CombatItemEffect[]>([]);
   const [combatMechanics, setCombatMechanics] = useState<CombatMechanic[]>([]);
   const [combatDialogueCues, setCombatDialogueCues] = useState<CombatDialogueCue[]>([]);
+  // ── Hoshito combat state — null until init route responds ──
+  const [hoshitoCombatState, setHoshitoCombatState] = useState<HoshitoCombatState | null>(null);
+  const [hoshitoCombatInitializing, setHoshitoCombatInitializing] = useState(false);
   const [queuedCombatStatuses, setQueuedCombatStatuses] = useState<{
     statuses: CombatStatusTag[];
     messageId: string;
@@ -6750,6 +6792,85 @@ function GameSurfaceComponent({
     generateCombatStateForMessage(messageId);
   }, [combatGenerationPending, combatUiActive, generateCombatStateForMessage, latestAssistantMsg?.id]);
 
+  // ── Hoshito combat init ──────────────────────────────────────────────────
+  const initHoshitoCombat = useCallback(async () => {
+    const hoshitoStats = gameSnapshot?.playerStats?.hoshitoStats;
+    if (!hoshitoStats || !combatParty || !combatEnemies) return;
+    if (hoshitoCombatInitializing || hoshitoCombatState) return;
+
+    setHoshitoCombatInitializing(true);
+    const debugMode = useUIStore.getState().debugMode;
+
+    try {
+      const req: HoshitoEncounterInitRequest = {
+        chatId: activeChatId,
+        connectionId: null,
+        spellbookId: null,
+        debugMode,
+      };
+      const data = await api.post<{ combatState: HoshitoCombatState }>("/encounter/hoshito/init", req);
+      setHoshitoCombatState(data.combatState);
+    } catch (err) {
+      console.error("[hoshito:init] server init failed, building fallback state:", err);
+      const buildFallback = (c: Combatant, isPlayer: boolean): HoshitoCombatant => ({
+        name: c.name,
+        health: c.hp,
+        healthMax: c.maxHp,
+        stagger: hoshitoStats.staggerMax ?? Math.round(c.maxHp * 0.6),
+        staggerMax: hoshitoStats.staggerMax ?? Math.round(c.maxHp * 0.6),
+        ap: isPlayer ? (hoshitoStats.apMax ?? 3) : 3,
+        apMax: isPlayer ? (hoshitoStats.apMax ?? 3) : 3,
+        coins: hoshitoStats.coins ?? 3,
+        coinBonus: 0,
+        morale: 0,
+        speedDice: { dieType: "d6", modifier: 0, initiativeResult: 6, remaining: 1, total: 1 },
+        masteryDie: "d6",
+        masteryMod: 0,
+        powerGuardAvailable: true,
+        isStaggered: false,
+        statusEffects: [],
+        isPlayer,
+        sprite: c.sprite,
+      });
+      const party = combatParty.map((c) => buildFallback(c, c.side === "player"));
+      const enemies = combatEnemies.map((c) => buildFallback(c, false));
+      const all = [...party, ...enemies];
+      setHoshitoCombatState({
+        round: 1,
+        initiativeQueue: all.map((c, i) => ({
+          name: c.name,
+          initiativeResult: 10 - i,
+          agiGrade: "F" as const,
+          isPlayer: c.isPlayer,
+          hasActed: false,
+        })),
+        party,
+        enemies,
+        environment: gameSnapshot?.location ?? "Unknown",
+      });
+    } finally {
+      setHoshitoCombatInitializing(false);
+    }
+  }, [
+    activeChatId,
+    combatEnemies,
+    combatParty,
+    gameSnapshot,
+    hoshitoCombatInitializing,
+    hoshitoCombatState,
+  ]);
+
+  // Trigger init when Hoshito combat becomes active; reset when combat ends.
+  useEffect(() => {
+    const hoshitoStats = gameSnapshot?.playerStats?.hoshitoStats;
+    if (combatUiActive && hoshitoStats && !hoshitoCombatState && !hoshitoCombatInitializing) {
+      void initHoshitoCombat();
+    }
+    if (!combatUiActive && hoshitoCombatState) {
+      setHoshitoCombatState(null);
+    }
+  }, [combatUiActive, gameSnapshot, hoshitoCombatInitializing, hoshitoCombatState, initHoshitoCombat]);
+
   useEffect(() => {
     if (!queuedQte || !latestAssistantMsg?.id) return;
     if (queuedQte.messageId !== latestAssistantMsg.id) return;
@@ -7067,6 +7188,7 @@ function GameSurfaceComponent({
             pools?: import("@marinara-engine/shared").RPGStatPool[];
           };
         };
+        hoshitoStats?: HoshitoCharacterStats | null;
       }
     > = {};
 
@@ -7180,6 +7302,7 @@ function GameSurfaceComponent({
                 | undefined,
             }
           : undefined,
+        hoshitoStats: gameSnapshot?.playerStats?.hoshitoStats ?? null,
       };
     } else {
       // No persona selected — default player card
@@ -7208,6 +7331,7 @@ function GameSurfaceComponent({
           quantity: item.quantity,
           location: item.location,
         })),
+        hoshitoStats: gameSnapshot?.playerStats?.hoshitoStats ?? null,
       };
     }
 
@@ -7215,7 +7339,11 @@ function GameSurfaceComponent({
   }, [chatCharacterIds, chatMeta, gameSnapshot, personaInfo, characters, npcs, sessionNumber]);
 
   const handleSaveCharacterSheet = useCallback(
-    async (cardTitle: string, gameCard: GameCharacterSheetGameCard | undefined) => {
+    async (
+      cardTitle: string,
+      gameCard: GameCharacterSheetGameCard | undefined,
+      hoshitoStats?: HoshitoCharacterStats,
+    ) => {
       if (!activeChatId) return;
 
       const normalizedTitle = cardTitle.trim();
@@ -7262,20 +7390,55 @@ function GameSurfaceComponent({
         : null;
 
       const updatedCards = [...currentCards];
+      let shouldUpdateCards = false;
       if (sanitizedGameCard) {
+        shouldUpdateCards = true;
         if (currentIndex >= 0) {
           updatedCards[currentIndex] = sanitizedGameCard;
         } else {
           updatedCards.push(sanitizedGameCard);
         }
       } else if (currentIndex >= 0) {
+        shouldUpdateCards = true;
         updatedCards.splice(currentIndex, 1);
-      } else {
+      } else if (!hoshitoStats) {
+        // No card to create/update/delete, and no hoshitoStats — nothing to do
         return;
       }
 
       try {
-        await updateChatMetadata.mutateAsync({ id: activeChatId, gameCharacterCards: updatedCards });
+        if (shouldUpdateCards) {
+          await updateChatMetadata.mutateAsync({ id: activeChatId, gameCharacterCards: updatedCards });
+        }
+        // Persist Hoshito character stats to player stats if provided (player sheet save)
+        if (hoshitoStats) {
+          const currentGameState = useGameStateStore.getState().current;
+          const matchingState = currentGameState?.chatId === activeChatId ? currentGameState : null;
+          const updatedPlayerStats = { ...(matchingState?.playerStats ?? {}), hoshitoStats };
+          // Update the store — create a minimal game state if none exists yet for this chat
+          useGameStateStore.getState().setGameState(
+            matchingState
+              ? { ...matchingState, playerStats: updatedPlayerStats as typeof matchingState.playerStats }
+              : {
+                  id: "",
+                  chatId: activeChatId,
+                  messageId: "",
+                  swipeIndex: 0,
+                  date: null,
+                  time: null,
+                  location: null,
+                  weather: null,
+                  temperature: null,
+                  presentCharacters: [],
+                  recentEvents: [],
+                  playerStats: updatedPlayerStats as import("@marinara-engine/shared").PlayerStats,
+                  personaStats: null,
+                  createdAt: "",
+                },
+          );
+          // Always patch the server regardless of whether a prior state existed
+          api.patch(`/chats/${activeChatId}/game-state`, { playerStats: updatedPlayerStats, manual: true }).catch(() => {});
+        }
         toast.success(`${normalizedTitle} sheet updated.`);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to save character sheet.");
@@ -9545,6 +9708,79 @@ function GameSurfaceComponent({
                       </>
                     );
 
+                    // ── Hoshito ruleset combat ──────────────────────────────
+                    const hoshitoStats = gameSnapshot?.playerStats?.hoshitoStats;
+                    if (hoshitoStats) {
+                      const hoshitoDefaultActions: HoshitoDefaultActions =
+                        hoshitoStats.defaultActions ?? HOSHITO_DEFAULT_ACTIONS;
+
+                      // Show a loader while the init route is in flight.
+                      if (!hoshitoCombatState) {
+                        return (
+                          <div className="flex h-full items-center justify-center text-sm text-white/70">
+                            {hoshitoCombatInitializing ? "Generating encounter…" : "Preparing…"}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="relative h-full min-h-0 overflow-y-auto p-2">
+                          <Suspense
+                            fallback={
+                              <div className="flex h-full items-center justify-center text-sm text-white/70">
+                                Loading combat...
+                              </div>
+                            }
+                          >
+                            <GameHoshitoCombatUI
+                              chatId={activeChatId}
+                              initialCombatState={hoshitoCombatState}
+                              defaultActions={hoshitoDefaultActions}
+                              onPlayerAction={async (action: HoshitoPlayerAction, currentState: HoshitoCombatState) => {
+                                const req: HoshitoEncounterActionRequest = {
+                                  chatId: activeChatId,
+                                  connectionId: null,
+                                  action,
+                                  combatState: currentState,
+                                  spellbookId: null,
+                                };
+                                return api.post<HoshitoEncounterActionResponse>(
+                                  "/encounter/hoshito/action",
+                                  req,
+                                );
+                              }}
+                              onCombatEnd={(outcome, _narrative) => {
+                                const mappedOutcome = outcome === "fled" ? "flee" : outcome;
+                                handleCombatEnd(mappedOutcome, {
+                                  outcome: mappedOutcome,
+                                  rounds: 1,
+                                  party: combatParty.map((c) => ({
+                                    name: c.name,
+                                    hp: c.hp,
+                                    maxHp: c.maxHp,
+                                    ko: c.hp <= 0,
+                                    statusEffects: (c.statusEffects ?? []).map(
+                                      (e: { name: string }) => e.name,
+                                    ),
+                                  })),
+                                  enemies: combatEnemies.map((c) => ({
+                                    name: c.name,
+                                    hp: c.hp,
+                                    maxHp: c.maxHp,
+                                    defeated: c.hp <= 0,
+                                  })),
+                                });
+                              }}
+                              narration={gameSnapshot?.recentEvents?.[0] ?? "Battle starts."}
+                              gameVoiceVolume={effectiveGameVoiceVolume}
+                              combatControlsSlot={combatControlsSlot}
+                            />
+                          </Suspense>
+                        </div>
+                      );
+                    }
+
+                    // ── Legacy / non-Hoshito combat ──
                     return (
                       <div className="relative h-full min-h-0">
                         <Suspense
@@ -9963,8 +10199,8 @@ function GameSurfaceComponent({
         <GameCharacterSheet
           card={partyCards[characterSheetCharId]}
           onClose={closeCharacterSheet}
-          onSave={(gameCard: GameCharacterSheetGameCard | undefined) =>
-            handleSaveCharacterSheet(partyCards[characterSheetCharId].title, gameCard)
+          onSave={(gameCard: GameCharacterSheetGameCard | undefined, hoshitoStats) =>
+            handleSaveCharacterSheet(partyCards[characterSheetCharId].title, gameCard, hoshitoStats)
           }
         />
       )}

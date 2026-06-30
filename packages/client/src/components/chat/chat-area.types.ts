@@ -1,4 +1,5 @@
 import type { Message } from "@marinara-engine/shared";
+import type { HoshitoCharacterStats } from "@marinara-engine/shared";
 import type { AvatarCrop, LegacyAvatarCrop } from "../../lib/utils";
 
 export type CharacterMap = Map<
@@ -34,6 +35,8 @@ export type PersonaInfo = {
   nameColor?: string;
   dialogueColor?: string;
   boxColor?: string;
+  /** Parsed from persona.personaStats — carries Hoshito stats into GameSurface. */
+  hoshitoStats?: HoshitoCharacterStats | null;
 };
 
 export type PeekPromptData = {

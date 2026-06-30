@@ -243,3 +243,270 @@ export interface EncounterSummaryResponse {
   summary: string;
   messageId: string;
 }
+
+// ══════════════════════════════════════════════
+// Hoshito Ruleset — Combat Types
+// These are additive. Legacy combat types above remain
+// until GameCombatUI.tsx is replaced in Segment 3.
+// ══════════════════════════════════════════════
+
+import type { HoshitoGrade, HoshitoResistanceProfile } from "./game-state.js";
+
+// ── Dice ──────────────────────────────────────
+
+/**
+ * Speed Die type, determined by AGI Grade.
+ * E→d4, D→d6, C→d8, B→d10, A→d12, S→d14, SS→d16, SSS→d18, EX→d20.
+ * Rolled at Scene start for initiative. Expended to respond defensively (Clash).
+ */
+export type HoshitoSpeedDie =
+  | "d4" | "d6" | "d8" | "d10" | "d12"
+  | "d14" | "d16" | "d18" | "d20";
+
+/**
+ * Combat die type, determined by Weapon Mastery tier (not Grade).
+ * Untrained→d6, Trained→d8, Expert→d10, Master→d12.
+ */
+export type HoshitoCombatDie = "d6" | "d8" | "d10" | "d12";
+
+/** A die committed to a Clash — either offensive or defensive. */
+export type HoshitoClashDieRole =
+  | "offensive"    // Slash / Pierce / Blunt — deals Health + Stagger on win
+  | "guard"        // Reduces damage on loss; deals net Stagger to attacker on win; saves as Deployed
+  | "power_guard"  // Clashes directly; single-use per encounter; wins deal Stagger; losses still reduce damage
+  | "evade";       // Win = recycle die; Loss = reduce Stagger taken; vs Defensive win = regain Stagger
+
+/** Outcome of a single Clash between two dice. */
+export type HoshitoClashOutcome = "win" | "lose" | "tie" | "unopposed";
+
+// ── Status Effects ─────────────────────────────
+
+/**
+ * Hoshito Status Effect — LLM-generated per fiction.
+ * No fixed list. Template drives all instances.
+ */
+export interface HoshitoStatusEffect {
+  name: string;
+  type: "DOT" | "Buff" | "Debuff" | "Special";
+  /** What applies it (free text). */
+  trigger: string;
+  /** What it does per stack or per activation (free text). */
+  effect: string;
+  stackable: boolean;
+  /** Current stack count. */
+  count: number;
+  maxStacks: number;
+  /** "Scene" | "Permanent" | number of Scenes. */
+  duration: "Scene" | "Permanent" | number;
+  /** Condition to remove (free text). */
+  removal: string;
+  /** Morale change per activation. Positive = gain, negative = drain. */
+  moralePerActivation: number;
+}
+
+// ── Combatants ─────────────────────────────────
+
+/**
+ * Speed Dice pool for a combatant during a Scene.
+ * The pool depletes as dice are expended to respond to attacks.
+ */
+export interface HoshitoSpeedDicePool {
+  dieType: HoshitoSpeedDie;
+  /** Flat modifier (from AGI Sparks). */
+  modifier: number;
+  /** Initiative roll result this Scene (dieType + modifier). */
+  initiativeResult: number;
+  /** How many Speed Dice remain in the pool to spend on Clashes. */
+  remaining: number;
+  /** Total Speed Dice at Scene start (typically 1, some abilities may grant extras). */
+  total: number;
+}
+
+/**
+ * A combatant in a Hoshito encounter.
+ * All resource values are live — updated each round.
+ */
+export interface HoshitoCombatant {
+  name: string;
+  /** Current Health. Hits 0 = combatant is down. */
+  health: number;
+  healthMax: number;
+  /**
+   * Current Stagger. Hits 0 = Staggered state:
+   * no Skills, no Speed Dice, no AP recovery, no resistances, no Stagger regain this Scene.
+   */
+  stagger: number;
+  staggerMax: number;
+  /** Action Points available this turn. Resets at turn start. */
+  ap: number;
+  apMax: number;
+  /** Coins remaining. Start = 3. Regain 1 on Staggering or Eliminating an enemy. */
+  coins: number;
+  /**
+   * Coin Bonus = Attribute Grade Mod + Overall Domain Grade (relevant Domain).
+   * Added to die Power on a Coin retry.
+   */
+  coinBonus: number;
+  /** Current Morale. Range: −45 to +45. Starts at 0 each encounter. */
+  morale: number;
+  speedDice: HoshitoSpeedDicePool;
+  /** Primary combat die (from Weapon Mastery tier). */
+  masteryDie: HoshitoCombatDie;
+  /**
+   * Sum of all flat Power modifiers applied to the mastery die
+   * (Attribute Grade Mod + Domain Sparks + Morale modifier).
+   */
+  masteryMod: number;
+  /** Power Guard is single-use per encounter. False once spent. */
+  powerGuardAvailable: boolean;
+  /** Whether combatant is currently in the Staggered state. */
+  isStaggered: boolean;
+  statusEffects: HoshitoStatusEffect[];
+  isPlayer: boolean;
+  /** Avatar URL, emoji, or null. */
+  sprite?: string | null;
+  /** AGI Grade — determines Speed Die size and initiative tie-breaking. */
+  agiGrade?: HoshitoGrade;
+  /** Magic alignment — carried from character stats, used for narrative context. */
+  magicAlignment?: "spectral" | "elemental" | "empyreal";
+  /**
+   * Non-Normal resistance entries for this combatant.
+   * Applied to Power after Clash resolution, before damage is dealt (round down).
+   * Only non-Normal entries are stored; all unspecified types default to Normal ×1.
+   */
+  resistances?: HoshitoResistanceProfile;
+}
+
+// ── Clash Resolution ──────────────────────────
+
+/** One die committed to a Clash (or Unopposed). */
+export interface HoshitoClashDie {
+  role: HoshitoClashDieRole;
+  dieType: HoshitoCombatDie;
+  /** Raw die face value rolled. */
+  rolled: number;
+  /** Flat modifier applied (Attribute Grade Mod + Domain Sparks + Morale mod etc.). */
+  modifier: number;
+  /** Final Power = rolled + modifier. */
+  power: number;
+}
+
+/** Full resolution record for a Clash or Unopposed attack. */
+export interface HoshitoClashResult {
+  attackerDie: HoshitoClashDie;
+  /** Null if Unopposed — defender had no Speed Die to expend. */
+  defenderDie: HoshitoClashDie | null;
+  outcome: HoshitoClashOutcome;
+  /** Health damage dealt (to defender on offensive win; to attacker on power_guard/guard win). */
+  healthDamage: number;
+  /** Stagger damage dealt (mirrors healthDamage on offensive win/unopposed; net on guard/power_guard win). */
+  staggerDamage: number;
+  /** Morale change resulting from this Clash. Win = +3, Lose = −3, Tie/Unopposed = 0. */
+  moraleChange: {
+    attacker: number;
+    defender: number;
+  };
+  /** Whether the losing side can spend a Coin to retry. */
+  coinRetryAvailable: boolean;
+  /** Whether a Coin retry was used to resolve this Clash. */
+  wasRetried: boolean;
+  /** Coin Bonus applied if retried. */
+  coinBonus?: number;
+  /** Power after Coin retry (= original power + coinBonus). */
+  retriedPower?: number;
+}
+
+// ── Morale ────────────────────────────────────
+
+/**
+ * Morale state for one side of an encounter.
+ * Drives die Power modifiers at five thresholds.
+ */
+export interface HoshitoMoraleState {
+  /** Current Morale value. Range: −45 to +45. */
+  value: number;
+  /**
+   * Active die Power modifier from current threshold.
+   * +45→+3, +30→+2, +15→+1, 0→0, −15→−1, −30→−2, −45→−3.
+   */
+  modifier: number;
+}
+
+// ── Full Combat State ─────────────────────────
+
+/** Entry in the initiative queue for a Scene. */
+export interface HoshitoInitiativeEntry {
+  name: string;
+  initiativeResult: number;
+  /** AGI Grade for tie-breaking (higher grade wins). */
+  agiGrade: HoshitoGrade;
+  isPlayer: boolean;
+  /** Whether this combatant has already acted this round. */
+  hasActed: boolean;
+}
+
+/**
+ * Full live state of a Hoshito combat encounter.
+ * This drives the GameCombatUI — updated after every action.
+ */
+export interface HoshitoCombatState {
+  round: number;
+  /** Ordered by initiative result descending. */
+  initiativeQueue: HoshitoInitiativeEntry[];
+  party: HoshitoCombatant[];
+  enemies: HoshitoCombatant[];
+  environment: string;
+  /** Record of the most recent Clash for UI display. */
+  lastClash?: HoshitoClashResult;
+  /** Whether combat has ended and why. */
+  combatEnd?: {
+    result: "victory" | "defeat" | "fled" | "interrupted";
+    narrative: string;
+  };
+}
+
+// ── API Shapes ────────────────────────────────
+
+/** Payload for initiating a Hoshito encounter. */
+export interface HoshitoEncounterInitRequest {
+  chatId: string;
+  connectionId: string | null;
+  /** Spellbook lorebook ID if applicable. */
+  spellbookId?: string | null;
+  debugMode?: boolean;
+}
+
+/** Response from Hoshito encounter init. */
+export interface HoshitoEncounterInitResponse {
+  combatState: HoshitoCombatState;
+}
+
+/** Player action sent to the server each turn. */
+export interface HoshitoPlayerAction {
+  type: "attack" | "skill" | "movement" | "maneuver" | "item";
+  /** Free-text description of the action. */
+  description: string;
+  /** Target combatant name. */
+  target?: string;
+  /** Die role chosen for this action (offensive, guard, etc.). */
+  dieRole?: HoshitoClashDieRole;
+  /** Whether a Coin is being spent on a retry. */
+  spendCoin?: boolean;
+}
+
+/** Payload for a Hoshito combat action. */
+export interface HoshitoEncounterActionRequest {
+  chatId: string;
+  connectionId: string | null;
+  action: HoshitoPlayerAction;
+  combatState: HoshitoCombatState;
+  spellbookId?: string | null;
+}
+
+/** Response from a Hoshito combat action. */
+export interface HoshitoEncounterActionResponse {
+  updatedState: HoshitoCombatState;
+  clashResult?: HoshitoClashResult;
+  narrative: string;
+  invalid?: boolean;
+}

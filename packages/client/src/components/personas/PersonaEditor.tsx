@@ -53,7 +53,7 @@ import {
   Library,
 } from "lucide-react";
 import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import { showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { extractColorsFromImage } from "../../lib/avatar-color-extraction";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { ColorPicker } from "../ui/ColorPicker";
@@ -95,6 +95,18 @@ import {
   type RPGStatPool,
   type RPGStatsConfig,
   type TrackerCardColorConfig,
+  type HoshitoCharacterStats,
+  type HoshitoDerivedStatConfig,
+  type HoshitoGrade,
+  type HoshitoDamageType,
+  type HoshitoResistanceTier,
+  type HoshitoResistanceProfile,
+  type HoshitoMerit,
+  type HoshitoCoreMerit,
+  DEFAULT_DERIVED_STAT_CONFIG,
+  HOSHITO_GRADE_ORDER,
+  HOSHITO_GRADE_VALUES,
+  HOSHITO_RESISTANCE_MULTIPLIERS,
 } from "@marinara-engine/shared";
 import { useQuoteFormatter } from "../../hooks/use-quote-formatter";
 import { LorebookAssignmentSection } from "../lorebooks/LorebookAssignmentSection";
@@ -401,8 +413,20 @@ function parsePersonaRpgStats(personaStats: string): RPGStatsConfig | undefined 
   }
 }
 
+function parsePersonaHoshitoStats(personaStats: string): PersonaHoshitoStats | undefined {
+  if (!personaStats.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(personaStats) as { hoshitoStats?: PersonaHoshitoStats } | null;
+    if (!parsed?.hoshitoStats?.enabled) return undefined;
+    return parsed.hoshitoStats;
+  } catch {
+    return undefined;
+  }
+}
+
 function createCharacterDataFromPersona(formData: PersonaFormData): CharacterData {
   const rpgStats = parsePersonaRpgStats(formData.personaStats);
+  const hoshitoStats = parsePersonaHoshitoStats(formData.personaStats);
 
   return {
     name: formData.name.trim(),
@@ -431,6 +455,7 @@ function createCharacterDataFromPersona(formData: PersonaFormData): CharacterDat
       boxColor: formData.boxColor || undefined,
       trackerCardColors: serializeTrackerCardColorConfig(formData.trackerCardColors),
       ...(rpgStats ? { rpgStats } : {}),
+      ...(hoshitoStats ? { hoshitoStats } : {}),
     },
   };
 }
@@ -1875,10 +1900,55 @@ interface PersonaStatBar {
   color: string;
 }
 
+/** Hoshito attribute entry stored in persona stats. */
+interface PersonaHoshitoAttribute {
+  name: string;
+  grade: HoshitoGrade;
+  sparks: number;
+  vestigeSparks: number;
+  /** Whether this attribute was reset by Exaltation (marked F+). */
+  isExalted?: boolean;
+  /** How many times this attribute has been exalted (1 = "+", 2 = "++"). */
+  exaltCount?: number;
+}
+
+/** Hoshito domain entry stored in persona stats. */
+interface PersonaHoshitoDomain {
+  name: string;
+  attributes: PersonaHoshitoAttribute[];
+}
+
+/** Hoshito stats blob stored in personaStats JSON. */
+interface PersonaHoshitoStats {
+  enabled: boolean;
+  level: number;
+  domains: PersonaHoshitoDomain[];
+  verve: number;
+  storyPoints: number;
+  /** Maps derived stat formula slots to freeform attribute names. Falls back to defaults. */
+  derivedStatConfig?: HoshitoDerivedStatConfig;
+  /** Manual override for Health max — used when healthAttr1/2 don't exist in domains. */
+  healthMaxOverride?: number;
+  /** Manual override for Stagger max — used when staggerAttr1/2 don't exist in domains. */
+  staggerMaxOverride?: number;
+  /** Manual override for AP max — used when apAttr doesn't exist in domains. */
+  apMaxOverride?: number;
+  /** Non-Normal resistance entries. Stored on the persona; loaded into HoshitoCombatant at encounter init. */
+  resistances?: HoshitoResistanceProfile;
+  /** Whether this character has undergone Exaltation (post Level 26 domain reset). */
+  isExalted?: boolean;
+  /** Feats / Artifacts / Abilities / Augments / Contacts the character starts with, before play begins. */
+  merits?: HoshitoMerit[];
+  /** The three Core Merits (Ancestry, Heritage, Background) set at creation. Transformations are earned in play and added from Game Mode. */
+  coreMerits?: HoshitoCoreMerit[];
+}
+
 interface PersonaStatsData {
   enabled: boolean;
   bars: PersonaStatBar[];
   rpgStats?: RPGStatsConfig;
+  /** Hoshito ruleset stats. */
+  hoshitoStats?: PersonaHoshitoStats;
 }
 
 const DEFAULT_RPG_STATS: RPGStatsConfig = {
@@ -1895,6 +1965,39 @@ const DEFAULT_RPG_STATS: RPGStatsConfig = {
   pools: createDefaultRpgStatPools(),
 };
 
+const DEFAULT_HOSHITO_STATS: PersonaHoshitoStats = {
+  enabled: false,
+  level: 1,
+  domains: [
+    {
+      name: "Physical",
+      attributes: [
+        { name: "MIG", grade: "F", sparks: 0, vestigeSparks: 0 },
+        { name: "AGI", grade: "F", sparks: 0, vestigeSparks: 0 },
+        { name: "VIT", grade: "F", sparks: 0, vestigeSparks: 0 },
+      ],
+    },
+    {
+      name: "Mental",
+      attributes: [
+        { name: "INT", grade: "F", sparks: 0, vestigeSparks: 0 },
+        { name: "INS", grade: "F", sparks: 0, vestigeSparks: 0 },
+        { name: "WIL", grade: "F", sparks: 0, vestigeSparks: 0 },
+      ],
+    },
+    {
+      name: "Social",
+      attributes: [
+        { name: "APP", grade: "F", sparks: 0, vestigeSparks: 0 },
+        { name: "EMP", grade: "F", sparks: 0, vestigeSparks: 0 },
+        { name: "PSY", grade: "F", sparks: 0, vestigeSparks: 0 },
+      ],
+    },
+  ],
+  verve: 1,
+  storyPoints: 0,
+};
+
 const DEFAULT_PERSONA_STATS: PersonaStatsData = {
   enabled: false,
   bars: [
@@ -1904,7 +2007,40 @@ const DEFAULT_PERSONA_STATS: PersonaStatsData = {
     { name: "Mood", value: 100, max: 100, color: "#eab308" },
   ],
   rpgStats: DEFAULT_RPG_STATS,
+  hoshitoStats: DEFAULT_HOSHITO_STATS,
 };
+
+// ── Resistance system constants (module-level, used only in PersonaStatsTab) ──
+const DAMAGE_TYPES: HoshitoDamageType[] = ["Slash", "Pierce", "Blunt", "Spectral", "Elemental", "Empyreal"];
+const RESISTANCE_TIERS: HoshitoResistanceTier[] = ["Fatal", "Weak", "Normal", "Endured", "Ineffective", "Immune"];
+
+const DAMAGE_TYPE_COLOR: Record<HoshitoDamageType, string> = {
+  Slash:     "text-red-400",
+  Pierce:    "text-orange-400",
+  Blunt:     "text-amber-400",
+  Spectral:  "text-violet-400",
+  Elemental: "text-blue-400",
+  Empyreal:  "text-teal-400",
+};
+
+const TIER_COLOR: Record<HoshitoResistanceTier, string> = {
+  Fatal:       "text-red-400",
+  Weak:        "text-orange-400",
+  Normal:      "text-[var(--muted-foreground)]",
+  Endured:     "text-teal-400",
+  Ineffective: "text-blue-400",
+  Immune:      "text-violet-500",
+};
+
+// ── Merit system constants ──
+const MERIT_CATEGORY_LABELS: Record<HoshitoMerit["category"], string> = {
+  feat: "Feat", artifact: "Artifact", ability: "Ability", augment: "Augment", contact: "Contact",
+};
+const MERIT_CATEGORY_ORDER: HoshitoMerit["category"][] = ["feat", "artifact", "ability", "augment", "contact"];
+const CORE_MERIT_TYPE_LABELS: Record<HoshitoCoreMerit["type"], string> = {
+  ancestry: "Ancestry", heritage: "Heritage", background: "Background",
+};
+const CORE_MERIT_TYPE_ORDER: HoshitoCoreMerit["type"][] = ["ancestry", "heritage", "background"];
 
 function createNewRpgPool(existing: readonly RPGStatPool[]): RPGStatPool {
   const used = new Set(existing.map((pool) => pool.name.trim().toLowerCase()).filter(Boolean));
@@ -1987,6 +2123,189 @@ function PersonaStatsTab({
     updateRpg({ attributes: rpgStats.attributes.filter((_, i) => i !== index) });
   };
 
+  // ── Hoshito Stats helpers ──
+  const hoshitoStats: PersonaHoshitoStats = parsed.hoshitoStats ?? DEFAULT_HOSHITO_STATS;
+  const cfg = hoshitoStats.derivedStatConfig ?? DEFAULT_DERIVED_STAT_CONFIG;
+
+  const updateHoshito = (patch: Partial<PersonaHoshitoStats>) => {
+    save({ ...parsed, hoshitoStats: { ...hoshitoStats, ...patch } });
+  };
+
+  // Attribute CRUD
+  const updateHoshitoAttr = (
+    domainIdx: number,
+    attrIdx: number,
+    field: keyof PersonaHoshitoAttribute,
+    value: string | number | boolean,
+  ) => {
+    const nextDomains = hoshitoStats.domains.map((d, di) =>
+      di === domainIdx
+        ? { ...d, attributes: d.attributes.map((a, ai) => ai === attrIdx ? { ...a, [field]: value } : a) }
+        : d,
+    );
+    updateHoshito({ domains: nextDomains });
+  };
+
+  const toggleAttrExalted = (domainIdx: number, attrIdx: number) => {
+    const attr = hoshitoStats.domains[domainIdx].attributes[attrIdx];
+    const nowExalted = !attr.isExalted;
+    const nextDomains = hoshitoStats.domains.map((d, di) =>
+      di === domainIdx
+        ? {
+            ...d,
+            attributes: d.attributes.map((a, ai) =>
+              ai === attrIdx
+                ? {
+                    ...a,
+                    isExalted: nowExalted,
+                    grade: nowExalted ? ("F" as HoshitoGrade) : a.grade,
+                    exaltCount: nowExalted ? (a.exaltCount ?? 0) + 1 : 0,
+                  }
+                : a,
+            ),
+          }
+        : d,
+    );
+    updateHoshito({ domains: nextDomains });
+  };
+
+  const addHoshitoAttr = (domainIdx: number) => {
+    const nextDomains = hoshitoStats.domains.map((d, di) =>
+      di === domainIdx
+        ? { ...d, attributes: [...d.attributes, { name: "NEW", grade: "F" as HoshitoGrade, sparks: 0, vestigeSparks: 0 }] }
+        : d,
+    );
+    updateHoshito({ domains: nextDomains });
+  };
+
+  const removeHoshitoAttr = (domainIdx: number, attrIdx: number) => {
+    const nextDomains = hoshitoStats.domains.map((d, di) =>
+      di === domainIdx
+        ? { ...d, attributes: d.attributes.filter((_, ai) => ai !== attrIdx) }
+        : d,
+    );
+    updateHoshito({ domains: nextDomains });
+  };
+
+  // Domain CRUD
+  const updateHoshitoDomainName = (domainIdx: number, name: string) => {
+    const nextDomains = hoshitoStats.domains.map((d, di) => di === domainIdx ? { ...d, name } : d);
+    updateHoshito({ domains: nextDomains });
+  };
+
+  const addHoshitoDomain = () => {
+    updateHoshito({
+      domains: [...hoshitoStats.domains, {
+        name: `Domain ${hoshitoStats.domains.length + 1}`,
+        attributes: [{ name: "NEW", grade: "F" as HoshitoGrade, sparks: 0, vestigeSparks: 0 }],
+      }],
+    });
+  };
+
+  const removeHoshitoDomain = (domainIdx: number) => {
+    updateHoshito({ domains: hoshitoStats.domains.filter((_, di) => di !== domainIdx) });
+  };
+
+  const importFromRpgAttrs = async () => {
+    const attrList = rpgStats.attributes.map((a) => a.name).join(", ");
+    const confirmed = await showConfirmDialog({
+      title: "Import from RPG Attributes",
+      message:
+        `This will create a new Domain from your ${rpgStats.attributes.length} RPG attribute${rpgStats.attributes.length !== 1 ? "s" : ""} (${attrList}). Each will be set to Grade F with 0 Sparks — numeric RPG values have no mechanical equivalent in Hoshito and are not mapped.\n\nYour HP max (${rpgStats.hp.max}) will be stored as a manual Health override.\n\nYour existing RPG Attributes section is not removed.`,
+      confirmLabel: "Import",
+      cancelLabel: "Cancel",
+    });
+    if (!confirmed) return;
+
+    const domainName = await showPromptDialog({
+      title: "Domain Name",
+      message: "Name the new Domain for your imported attributes.",
+      defaultValue: "Imported",
+      placeholder: "Imported",
+      confirmLabel: "Create Domain",
+      cancelLabel: "Cancel",
+    });
+    if (domainName === null) return;
+
+    const newDomain: PersonaHoshitoDomain = {
+      name: domainName.trim() || "Imported",
+      attributes: rpgStats.attributes.map((attr) => ({
+        name: attr.name,
+        grade: "F" as HoshitoGrade,
+        sparks: 0,
+        vestigeSparks: 0,
+      })),
+    };
+
+    updateHoshito({
+      domains: [...hoshitoStats.domains, newDomain],
+      healthMaxOverride: rpgStats.hp.max,
+    });
+  };
+
+  // Derived stat config
+  const updateDerivedConfig = (patch: Partial<HoshitoDerivedStatConfig>) => {
+    updateHoshito({ derivedStatConfig: { ...cfg, ...patch } });
+  };
+
+  // ── Merit handlers (instant-save, mirrors the Resistance Profile pattern) ──
+  const addHoshitoMerit = () => {
+    const newMerit: HoshitoMerit = { category: "feat", name: "", description: "" };
+    updateHoshito({ merits: [...(hoshitoStats.merits ?? []), newMerit] });
+  };
+  const updateHoshitoMerit = (
+    idx: number,
+    field: "category" | "name" | "description" | "sparkGrantAttribute" | "dormant",
+    value: string | boolean,
+  ) => {
+    const next = (hoshitoStats.merits ?? []).map((m, i) => (i !== idx ? m : { ...m, [field]: value }));
+    updateHoshito({ merits: next });
+  };
+  const removeHoshitoMerit = (idx: number) => {
+    updateHoshito({ merits: (hoshitoStats.merits ?? []).filter((_, i) => i !== idx) });
+  };
+
+  // ── Core Merit handlers — creation-time fields only (type/description/grant).
+  // Transformations are earned at level milestones during play and are added from Game Mode. ──
+  const addCoreMerit = () => {
+    const used = new Set((hoshitoStats.coreMerits ?? []).map((cm) => cm.type));
+    const nextType = CORE_MERIT_TYPE_ORDER.find((t) => !used.has(t)) ?? "ancestry";
+    const newCoreMerit: HoshitoCoreMerit = { type: nextType, description: "", transformations: [] };
+    updateHoshito({ coreMerits: [...(hoshitoStats.coreMerits ?? []), newCoreMerit] });
+  };
+  const updateCoreMerit = (idx: number, patch: Partial<HoshitoCoreMerit>) => {
+    const next = (hoshitoStats.coreMerits ?? []).map((cm, i) => (i !== idx ? cm : { ...cm, ...patch }));
+    updateHoshito({ coreMerits: next });
+  };
+  const removeCoreMerit = (idx: number) => {
+    updateHoshito({ coreMerits: (hoshitoStats.coreMerits ?? []).filter((_, i) => i !== idx) });
+  };
+
+  // Config-aware grade value lookup — returns null when attribute not found
+  const getGradeVal = (attrName: string): number | null => {
+    for (const domain of hoshitoStats.domains) {
+      const attr = domain.attributes.find((a) => a.name.toUpperCase() === attrName.toUpperCase());
+      if (attr) return HOSHITO_GRADE_VALUES[attr.grade] ?? -1;
+    }
+    return null;
+  };
+
+  // Collect all attribute names across all domains for the config picker
+  const allAttrNames = Array.from(
+    new Set(hoshitoStats.domains.flatMap((d) => d.attributes.map((a) => a.name))),
+  );
+
+  // Derived values — null means attribute not found, use manual override
+  const h1 = getGradeVal(cfg.healthAttr1);
+  const h2 = getGradeVal(cfg.healthAttr2);
+  const s1 = getGradeVal(cfg.staggerAttr1);
+  const s2 = getGradeVal(cfg.staggerAttr2);
+  const ap = getGradeVal(cfg.apAttr);
+
+  const healthComputed  = h1 !== null && h2 !== null ? 25 + (h1 + h2) * 5 : null;
+  const staggerComputed = s1 !== null && s2 !== null ? 15 + (s1 + s2) * 5 : null;
+  const apComputed      = ap !== null ? 3 + Math.floor(ap / 3) : null;
+
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -2060,6 +2379,702 @@ function PersonaStatsTab({
 
         </>
       )}
+
+      {/* ── Hoshito Stats ── */}
+      <div className="border-t border-[var(--border)] pt-6">
+        <SectionHeader
+          title="Hoshito Stats"
+          subtitle="Set your persona's starting Domains, Grades, and Sparks. Health, Stagger, and AP are calculated from your Grades — or set manually if you use custom attribute names."
+          helpText="Each Domain contains Attributes. Grade determines modifier (F = −1, E = +1 … EX = +9). Sparks add +1 per pip to rolls. Vestige Sparks are permanent. Use the Derived Stat Config to map formula slots to your custom attribute names."
+        />
+
+        <SettingsSwitch
+          label={<span className="font-medium">Enable Hoshito Stats</span>}
+          description="Grades, Sparks, and derived combat stats are injected into the prompt and tracked by the GM agent."
+          checked={hoshitoStats.enabled}
+          onChange={(checked) => updateHoshito({ enabled: checked })}
+          labelPosition="start"
+          className="justify-between rounded-xl border border-[var(--border)] bg-[var(--card)] p-4"
+          labelClassName="text-sm"
+        />
+
+        {hoshitoStats.enabled && (
+          <div className="mt-4 space-y-4">
+
+            {/* Level */}
+            <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-3">
+              <span className="text-xs font-semibold text-[var(--muted-foreground)] w-16">Level</span>
+              <input
+                type="number"
+                min={1}
+                max={hoshitoStats.isExalted ? 52 : 26}
+                value={hoshitoStats.level}
+                onChange={(e) => updateHoshito({ level: Math.min(hoshitoStats.isExalted ? 52 : 26, Math.max(1, parseInt(e.target.value) || 1)) })}
+                className="w-16 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-center text-sm"
+              />
+              <span className="text-xs text-[var(--muted-foreground)]">/ {hoshitoStats.isExalted ? 52 : 26}</span>
+            </div>
+
+            {/* Exaltation */}
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold">Exaltation</p>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                    Post-Level 26 domain reset. Raises level cap to 52. Exalted attributes restart from F+.
+                  </p>
+                </div>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={hoshitoStats.isExalted ?? false}
+                    onChange={(e) => updateHoshito({ isExalted: e.target.checked })}
+                    className="h-3.5 w-3.5 rounded accent-white/60"
+                  />
+                  <span className="text-xs text-[var(--muted-foreground)]">Exalted</span>
+                </label>
+              </div>
+
+              {hoshitoStats.isExalted && (
+                <div className="space-y-2">
+                  <p className="text-[0.6rem] text-[var(--muted-foreground)]/60">
+                    Toggle attributes reset by Exaltation. Toggling sets grade to F and marks them F+ on the sheet.
+                  </p>
+                  {hoshitoStats.domains.map((domain, di) => (
+                    <div key={di}>
+                      <p className="mb-1 text-[0.625rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+                        {domain.name}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {domain.attributes.map((attr, ai) => (
+                          <button
+                            key={ai}
+                            type="button"
+                            onClick={() => toggleAttrExalted(di, ai)}
+                            className={cn(
+                              "rounded-lg border px-2.5 py-1 text-xs font-mono font-semibold transition-colors",
+                              attr.isExalted
+                                ? "border-purple-500/40 bg-purple-500/10 text-purple-300"
+                                : "border-[var(--border)] bg-[var(--input)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                            )}
+                          >
+                            {attr.name}{attr.isExalted ? " F+" : ""}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Domains (fully dynamic) */}
+            {hoshitoStats.domains.map((domain, di) => (
+              <div key={di} className="rounded-xl border border-[var(--border)] bg-[var(--card)] overflow-hidden">
+                {/* Domain header */}
+                <div className="flex items-center gap-2 px-3 py-2 bg-[var(--muted)]/30 border-b border-[var(--border)]">
+                  <input
+                    value={domain.name}
+                    onChange={(e) => updateHoshitoDomainName(di, e.target.value)}
+                    className="flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-xs font-bold tracking-wide uppercase text-[var(--muted-foreground)] focus:border-[var(--border)] focus:bg-[var(--input)] outline-none"
+                    placeholder="Domain name"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => addHoshitoAttr(di)}
+                    className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[0.6rem] font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+                    title="Add attribute"
+                  >
+                    <Plus size={10} /> Attr
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeHoshitoDomain(di)}
+                    className="rounded p-0.5 text-[var(--muted-foreground)] hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    title="Remove domain"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+
+                {/* Attributes */}
+                <div className="divide-y divide-[var(--border)]">
+                  {domain.attributes.map((attr, ai) => (
+                    <div key={ai} className="flex items-center gap-2 px-3 py-2.5">
+                      {/* Editable attribute name */}
+                      <input
+                        value={attr.name}
+                        onChange={(e) => updateHoshitoAttr(di, ai, "name", e.target.value)}
+                        className="w-14 rounded border border-[var(--border)] bg-[var(--input)] px-1.5 py-0.5 text-xs font-bold uppercase outline-none focus:border-[var(--primary)]/40"
+                        placeholder="NAME"
+                        maxLength={8}
+                      />
+
+                      {/* Grade selector — arrow buttons */}
+                      <div className="flex items-center rounded-lg border border-[var(--border)] bg-[var(--input)]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const idx = HOSHITO_GRADE_ORDER.indexOf(attr.grade);
+                            if (idx > 0) updateHoshitoAttr(di, ai, "grade", HOSHITO_GRADE_ORDER[idx - 1]);
+                          }}
+                          disabled={HOSHITO_GRADE_ORDER.indexOf(attr.grade) === 0}
+                          className="px-1.5 py-1 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:opacity-20 transition-colors"
+                          title="Lower grade"
+                        >‹</button>
+                        <span
+                          className="w-9 select-none text-center text-xs font-mono font-semibold"
+                          style={{
+                            color:
+                              attr.grade === "EX" ? "#f59e0b"
+                              : attr.grade.startsWith("SS") ? "#a78bfa"
+                              : attr.grade === "S" ? "#7c3aed"
+                              : attr.grade === "A" ? "#d97706"
+                              : attr.grade === "B" || attr.grade === "C" ? "#0d9488"
+                              : attr.grade === "D" || attr.grade === "E" ? "#3b82f6"
+                              : attr.grade === "F" ? "#6b7280"
+                              : "#ef4444",
+                          }}
+                        >
+                          {attr.grade}{attr.isExalted ? "+" : ""}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const idx = HOSHITO_GRADE_ORDER.indexOf(attr.grade);
+                            if (idx < HOSHITO_GRADE_ORDER.length - 1) updateHoshitoAttr(di, ai, "grade", HOSHITO_GRADE_ORDER[idx + 1]);
+                          }}
+                          disabled={HOSHITO_GRADE_ORDER.indexOf(attr.grade) === HOSHITO_GRADE_ORDER.length - 1}
+                          className="px-1.5 py-1 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:opacity-20 transition-colors"
+                          title="Raise grade"
+                        >›</button>
+                      </div>
+
+                      {/* Grade modifier */}
+                      <span className="w-7 text-center text-xs text-[var(--muted-foreground)] font-mono shrink-0">
+                        {HOSHITO_GRADE_VALUES[attr.grade] >= 0 ? `+${HOSHITO_GRADE_VALUES[attr.grade]}` : HOSHITO_GRADE_VALUES[attr.grade]}
+                      </span>
+
+                      {/* Standard Spark pips */}
+                      <div className="flex items-center gap-0.5">
+                        {[0, 1, 2].map((i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => updateHoshitoAttr(di, ai, "sparks", attr.sparks === i + 1 ? i : i + 1)}
+                            className="text-sm leading-none transition-colors"
+                            title={`${i + 1} Spark${i > 0 ? "s" : ""}`}
+                          >
+                            {i < attr.sparks ? <span className="text-amber-400">●</span> : <span className="text-[var(--muted-foreground)]/40">○</span>}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Vestige Sparks */}
+                      <div className="flex items-center gap-0.5 ml-0.5">
+                        <button
+                          type="button"
+                          onClick={() => updateHoshitoAttr(di, ai, "vestigeSparks", Math.max(0, attr.vestigeSparks - 1))}
+                          className="rounded px-1 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:opacity-30"
+                          disabled={attr.vestigeSparks === 0}
+                        >−</button>
+                        <span
+                          className="text-sm font-bold w-6 text-center"
+                          style={{ color: attr.vestigeSparks > 0 ? "#c084fc" : "var(--muted-foreground)" }}
+                          title="Vestige Sparks — permanent"
+                        >
+                          {attr.vestigeSparks > 0 ? `◈${attr.vestigeSparks}` : "◈0"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateHoshitoAttr(di, ai, "vestigeSparks", attr.vestigeSparks + 1)}
+                          className="rounded px-1 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                        >+</button>
+                      </div>
+
+                      {/* Remove attribute */}
+                      <button
+                        type="button"
+                        onClick={() => removeHoshitoAttr(di, ai)}
+                        className="ml-auto rounded p-0.5 text-[var(--muted-foreground)] hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                        title="Remove attribute"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {/* Add Domain button */}
+            <button
+              type="button"
+              onClick={addHoshitoDomain}
+              className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-[var(--border)] py-2 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--foreground)]/30 hover:bg-[var(--muted)]/20 transition-colors"
+            >
+              <Plus size={13} />
+              Add Domain
+            </button>
+
+            {/* Import from RPG Attributes button — only shown when RPG attrs are populated */}
+            {rpgStats.enabled && rpgStats.attributes.length > 0 && (
+              <button
+                type="button"
+                onClick={importFromRpgAttrs}
+                className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-amber-500/40 py-2 text-xs text-amber-400/70 hover:text-amber-300 hover:border-amber-400/50 hover:bg-amber-400/5 transition-colors"
+              >
+                <Download size={13} />
+                Import from RPG Attributes
+              </button>
+            )}
+
+            {/* Derived Stat Config */}
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold text-[var(--muted-foreground)] flex-1">Derived Stat Config</p>
+                <span className="text-[0.6rem] text-[var(--muted-foreground)]/60">maps formula slots → attribute names</span>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                {(
+                  [
+                    { label: "Health Attr 1", key: "healthAttr1" as const },
+                    { label: "Health Attr 2", key: "healthAttr2" as const },
+                    { label: "Stagger Attr 1", key: "staggerAttr1" as const },
+                    { label: "Stagger Attr 2", key: "staggerAttr2" as const },
+                    { label: "AP Attr", key: "apAttr" as const },
+                  ] as const
+                ).map(({ label, key }) => (
+                  <div key={key} className="flex items-center gap-3">
+                    <span className="w-28 text-[0.6875rem] text-[var(--muted-foreground)] shrink-0">{label}</span>
+                    {allAttrNames.length > 0 ? (
+                      <select
+                        value={cfg[key]}
+                        onChange={(e) => updateDerivedConfig({ [key]: e.target.value })}
+                        className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs font-mono"
+                      >
+                        {allAttrNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                        {!allAttrNames.includes(cfg[key]) && (
+                          <option value={cfg[key]}>{cfg[key]} (not found)</option>
+                        )}
+                      </select>
+                    ) : (
+                      <input
+                        value={cfg[key]}
+                        onChange={(e) => updateDerivedConfig({ [key]: e.target.value })}
+                        className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs font-mono"
+                        placeholder="Attribute name"
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Derived Stats preview */}
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-2">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)] mb-3">Derived Stats</p>
+              <div className="grid grid-cols-3 gap-3">
+                {/* Health */}
+                <div className="rounded-lg bg-[var(--muted)]/30 p-2.5 text-center">
+                  {healthComputed !== null ? (
+                    <div className="text-lg font-bold text-red-400">{healthComputed}</div>
+                  ) : (
+                    <input
+                      type="number"
+                      value={hoshitoStats.healthMaxOverride ?? ""}
+                      onChange={(e) => updateHoshito({ healthMaxOverride: parseInt(e.target.value) || undefined })}
+                      placeholder="—"
+                      className="w-full text-lg font-bold text-red-400 bg-transparent text-center outline-none border-b border-red-400/30 focus:border-red-400"
+                    />
+                  )}
+                  <div className="text-[0.625rem] text-[var(--muted-foreground)] mt-0.5">Health</div>
+                  <div className="text-[0.5625rem] text-[var(--muted-foreground)]/60 mt-0.5">
+                    {healthComputed !== null ? `25+(${cfg.healthAttr1}+${cfg.healthAttr2})×5` : "set manually ↑"}
+                  </div>
+                </div>
+                {/* Stagger */}
+                <div className="rounded-lg bg-[var(--muted)]/30 p-2.5 text-center">
+                  {staggerComputed !== null ? (
+                    <div className="text-lg font-bold text-sky-400">{staggerComputed}</div>
+                  ) : (
+                    <input
+                      type="number"
+                      value={hoshitoStats.staggerMaxOverride ?? ""}
+                      onChange={(e) => updateHoshito({ staggerMaxOverride: parseInt(e.target.value) || undefined })}
+                      placeholder="—"
+                      className="w-full text-lg font-bold text-sky-400 bg-transparent text-center outline-none border-b border-sky-400/30 focus:border-sky-400"
+                    />
+                  )}
+                  <div className="text-[0.625rem] text-[var(--muted-foreground)] mt-0.5">Stagger</div>
+                  <div className="text-[0.5625rem] text-[var(--muted-foreground)]/60 mt-0.5">
+                    {staggerComputed !== null ? `15+(${cfg.staggerAttr1}+${cfg.staggerAttr2})×5` : "set manually ↑"}
+                  </div>
+                </div>
+                {/* AP */}
+                <div className="rounded-lg bg-[var(--muted)]/30 p-2.5 text-center">
+                  {apComputed !== null ? (
+                    <div className="text-lg font-bold text-violet-400">{apComputed}</div>
+                  ) : (
+                    <input
+                      type="number"
+                      value={hoshitoStats.apMaxOverride ?? ""}
+                      onChange={(e) => updateHoshito({ apMaxOverride: parseInt(e.target.value) || undefined })}
+                      placeholder="—"
+                      className="w-full text-lg font-bold text-violet-400 bg-transparent text-center outline-none border-b border-violet-400/30 focus:border-violet-400"
+                    />
+                  )}
+                  <div className="text-[0.625rem] text-[var(--muted-foreground)] mt-0.5">AP</div>
+                  <div className="text-[0.5625rem] text-[var(--muted-foreground)]/60 mt-0.5">
+                    {apComputed !== null ? `3+⌊${cfg.apAttr}/3⌋` : "set manually ↑"}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Verve + Story Points */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold">Verve</p>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">Extra d20 pool</p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => updateHoshito({ verve: Math.max(0, hoshitoStats.verve - 1) })}
+                    className="rounded px-1.5 py-0.5 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:opacity-30" disabled={hoshitoStats.verve === 0}>−</button>
+                  <span className="w-6 text-center text-sm font-bold">{hoshitoStats.verve}</span>
+                  <button type="button" onClick={() => updateHoshito({ verve: hoshitoStats.verve + 1 })}
+                    className="rounded px-1.5 py-0.5 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]">+</button>
+                </div>
+              </div>
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold">Story Points</p>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">Narrative auto-success</p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => updateHoshito({ storyPoints: Math.max(0, hoshitoStats.storyPoints - 1) })}
+                    className="rounded px-1.5 py-0.5 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:opacity-30" disabled={hoshitoStats.storyPoints === 0}>−</button>
+                  <span className="w-6 text-center text-sm font-bold">{hoshitoStats.storyPoints}</span>
+                  <button type="button" onClick={() => updateHoshito({ storyPoints: hoshitoStats.storyPoints + 1 })}
+                    className="rounded px-1.5 py-0.5 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]">+</button>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Resistance Profile ── */}
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold">Resistance Profile</p>
+                <span className="text-[0.6rem] text-[var(--muted-foreground)]/60">
+                  non-Normal entries only · all others default to Normal ×1
+                </span>
+              </div>
+
+              {/* Column headers */}
+              {(hoshitoStats.resistances ?? []).length > 0 && (
+                <div className="grid grid-cols-[7rem_1fr_1fr_1.5rem] gap-2 px-1">
+                  <span className="text-[0.6rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Type</span>
+                  <span className="text-[0.6rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Health</span>
+                  <span className="text-[0.6rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Stagger</span>
+                  <span />
+                </div>
+              )}
+
+              {/* Existing entries */}
+              <div className="space-y-2">
+                {(hoshitoStats.resistances ?? []).map((entry, idx) => (
+                  <div key={idx} className="grid grid-cols-[7rem_1fr_1fr_1.5rem] items-center gap-2">
+                    {/* Damage type */}
+                    <span className={cn("text-xs font-semibold", DAMAGE_TYPE_COLOR[entry.type])}>
+                      {entry.type}
+                    </span>
+                    {/* Health tier */}
+                    <select
+                      value={entry.healthTier}
+                      onChange={(e) => {
+                        const next = (hoshitoStats.resistances ?? []).map((r, i) =>
+                          i === idx ? { ...r, healthTier: e.target.value as HoshitoResistanceTier } : r,
+                        );
+                        updateHoshito({ resistances: next });
+                      }}
+                      className={cn(
+                        "rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs font-semibold",
+                        TIER_COLOR[entry.healthTier],
+                      )}
+                    >
+                      {RESISTANCE_TIERS.map((t) => (
+                        <option key={t} value={t}>
+                          {t} ×{HOSHITO_RESISTANCE_MULTIPLIERS[t]}
+                        </option>
+                      ))}
+                    </select>
+                    {/* Stagger tier */}
+                    <select
+                      value={entry.staggerTier}
+                      onChange={(e) => {
+                        const next = (hoshitoStats.resistances ?? []).map((r, i) =>
+                          i === idx ? { ...r, staggerTier: e.target.value as HoshitoResistanceTier } : r,
+                        );
+                        updateHoshito({ resistances: next });
+                      }}
+                      className={cn(
+                        "rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs font-semibold",
+                        TIER_COLOR[entry.staggerTier],
+                      )}
+                    >
+                      {RESISTANCE_TIERS.map((t) => (
+                        <option key={t} value={t}>
+                          {t} ×{HOSHITO_RESISTANCE_MULTIPLIERS[t]}
+                        </option>
+                      ))}
+                    </select>
+                    {/* Remove */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateHoshito({
+                          resistances: (hoshitoStats.resistances ?? []).filter((_, i) => i !== idx),
+                        })
+                      }
+                      className="rounded p-0.5 text-[var(--muted-foreground)] hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                      title="Remove entry"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add entry — always-empty select fires onChange immediately */}
+              <div className="flex items-center gap-2">
+                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">Add:</span>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const type = e.target.value as HoshitoDamageType;
+                    if (!type) return;
+                    const already = (hoshitoStats.resistances ?? []).some((r) => r.type === type);
+                    if (already) return;
+                    updateHoshito({
+                      resistances: [
+                        ...(hoshitoStats.resistances ?? []),
+                        { type, healthTier: "Normal", staggerTier: "Normal" },
+                      ],
+                    });
+                  }}
+                  className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs text-[var(--muted-foreground)]"
+                >
+                  <option value="">+ damage type…</option>
+                  {DAMAGE_TYPES.filter(
+                    (dt) => !(hoshitoStats.resistances ?? []).some((r) => r.type === dt),
+                  ).map((dt) => (
+                    <option key={dt} value={dt} className={DAMAGE_TYPE_COLOR[dt]}>
+                      {dt}
+                    </option>
+                  ))}
+                </select>
+                {(hoshitoStats.resistances ?? []).length > 0 && (
+                  <span className="text-[0.6rem] text-[var(--muted-foreground)]/50 ml-auto">
+                    {(hoshitoStats.resistances ?? []).length} / 6 types configured
+                  </span>
+                )}
+              </div>
+
+              {/* Vulnerability warning */}
+              {(() => {
+                const hasFatal = (hoshitoStats.resistances ?? []).some(
+                  (r) => r.healthTier === "Fatal" || r.staggerTier === "Fatal",
+                );
+                const hasNonNormal = (hoshitoStats.resistances ?? []).some(
+                  (r) => r.healthTier !== "Normal" || r.staggerTier !== "Normal",
+                );
+                if (hasNonNormal && !hasFatal) {
+                  return (
+                    <p className="text-[0.6rem] text-amber-400/70">
+                      ⚠ Innate Resistance requires at least one Fatal vulnerability.
+                    </p>
+                  );
+                }
+                return null;
+              })()}
+            </div>
+
+            {/* ── Merits ── */}
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold">Merits</p>
+                <button
+                  type="button"
+                  onClick={addHoshitoMerit}
+                  className="inline-flex items-center gap-1 rounded-lg border border-dashed border-[var(--border)] px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)]/30 hover:text-[var(--foreground)]"
+                >
+                  <Plus size={12} /> Add Merit
+                </button>
+              </div>
+              {(hoshitoStats.merits ?? []).length > 0 ? (
+                <div className="space-y-2.5">
+                  {(hoshitoStats.merits ?? []).map((merit, mi) => {
+                    const canGrantSpark = merit.category !== "ability" && merit.category !== "contact";
+                    return (
+                      <div key={mi} className="rounded-lg border border-[var(--border)] p-2.5 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={merit.category}
+                            onChange={(e) => updateHoshitoMerit(mi, "category", e.target.value)}
+                            className="rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-[0.6875rem] font-semibold uppercase tracking-wide outline-none"
+                          >
+                            {MERIT_CATEGORY_ORDER.map((cat) => (
+                              <option key={cat} value={cat}>{MERIT_CATEGORY_LABELS[cat]}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={merit.name}
+                            onChange={(e) => updateHoshitoMerit(mi, "name", e.target.value)}
+                            placeholder="Merit name"
+                            className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeHoshitoMerit(mi)}
+                            className="shrink-0 rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-red-500/10 hover:text-red-400"
+                            title="Remove merit"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                        <textarea
+                          value={merit.description}
+                          onChange={(e) => updateHoshitoMerit(mi, "description", e.target.value)}
+                          placeholder="Narrative description — what this Merit does and how it shows up in play"
+                          rows={2}
+                          className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1.5 text-xs outline-none"
+                        />
+                        <div className="flex flex-wrap items-center gap-3">
+                          {canGrantSpark && (
+                            <label className="flex min-w-0 flex-1 items-center gap-1.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                              <span className="shrink-0">Spark →</span>
+                              <input
+                                type="text"
+                                value={merit.sparkGrantAttribute ?? ""}
+                                onChange={(e) => updateHoshitoMerit(mi, "sparkGrantAttribute", e.target.value)}
+                                placeholder="Attribute name (optional)"
+                                className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-0.5 text-[0.6875rem] outline-none"
+                              />
+                            </label>
+                          )}
+                          <label className="ml-auto flex shrink-0 items-center gap-1.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                            <input
+                              type="checkbox"
+                              checked={!!merit.dormant}
+                              onChange={(e) => updateHoshitoMerit(mi, "dormant", e.target.checked)}
+                              className="h-3.5 w-3.5 rounded accent-[var(--foreground)]"
+                            />
+                            Dormant
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                  No merits yet — add Feats, Artifacts, Abilities, Augments, or Contacts your character starts with.
+                </p>
+              )}
+            </div>
+
+            {/* ── Core Merits ── */}
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold">Core Merits</p>
+                <button
+                  type="button"
+                  onClick={addCoreMerit}
+                  disabled={(hoshitoStats.coreMerits ?? []).length >= 3}
+                  className="inline-flex items-center gap-1 rounded-lg border border-dashed border-[var(--border)] px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)]/30 hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Plus size={12} /> Add Core Merit
+                </button>
+              </div>
+              <p className="text-[0.6rem] text-[var(--muted-foreground)]/70">
+                Every character starts with three: Ancestry, Heritage, Background. Each grants one Grade step on an Attribute, or a Spark instead. Transformations are earned during play and added from Game Mode.
+              </p>
+              {(hoshitoStats.coreMerits ?? []).length > 0 ? (
+                <div className="space-y-2.5">
+                  {(hoshitoStats.coreMerits ?? []).map((cm, ci) => (
+                    <div key={ci} className="rounded-lg border border-[var(--border)] p-2.5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={cm.type}
+                          onChange={(e) => updateCoreMerit(ci, { type: e.target.value as HoshitoCoreMerit["type"] })}
+                          className="rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-[0.6875rem] font-semibold uppercase tracking-wide text-amber-500/80 outline-none"
+                        >
+                          {CORE_MERIT_TYPE_ORDER.map((t) => (
+                            <option key={t} value={t}>{CORE_MERIT_TYPE_LABELS[t]}</option>
+                          ))}
+                        </select>
+                        {cm.transformations.length > 0 && (
+                          <span className="text-[0.625rem] text-violet-400">
+                            ×{cm.transformations.length} transformation{cm.transformations.length > 1 ? "s" : ""}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeCoreMerit(ci)}
+                          className="ml-auto shrink-0 rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-red-500/10 hover:text-red-400"
+                          title="Remove core merit"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                      <textarea
+                        value={cm.description}
+                        onChange={(e) => updateCoreMerit(ci, { description: e.target.value })}
+                        placeholder="Narrative origin — where this came from and what it cost or meant. Specific origins produce resonant transformations later."
+                        rows={2}
+                        className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1.5 text-xs outline-none"
+                      />
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="flex min-w-0 flex-1 items-center gap-1.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                          <span className="shrink-0">Grants Grade step →</span>
+                          <input
+                            type="text"
+                            value={cm.attributeGrant ?? ""}
+                            onChange={(e) =>
+                              updateCoreMerit(ci, { attributeGrant: e.target.value || undefined, grantedSpark: e.target.value ? false : cm.grantedSpark })
+                            }
+                            disabled={!!cm.grantedSpark}
+                            placeholder="Attribute name"
+                            className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-0.5 text-[0.6875rem] outline-none disabled:opacity-40"
+                          />
+                        </label>
+                        <label className="ml-auto flex shrink-0 items-center gap-1.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                          <input
+                            type="checkbox"
+                            checked={!!cm.grantedSpark}
+                            onChange={(e) =>
+                              updateCoreMerit(ci, { grantedSpark: e.target.checked, attributeGrant: e.target.checked ? undefined : cm.attributeGrant })
+                            }
+                            className="h-3.5 w-3.5 rounded accent-[var(--foreground)]"
+                          />
+                          Spark instead (Attribute at D cap)
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                  No Core Merits yet — add Ancestry, Heritage, and Background.
+                </p>
+              )}
+            </div>
+
+          </div>
+        )}
+      </div>
 
       {/* ── RPG Attributes ── */}
       <div className="border-t border-[var(--border)] pt-6">
@@ -2185,7 +3200,6 @@ function PersonaStatsTab({
                 ))}
               </div>
             </div>
-
           </>
         )}
       </div>

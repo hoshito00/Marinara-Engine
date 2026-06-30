@@ -25,6 +25,7 @@ import {
   useUpdateMessageExtra,
   usePeekPrompt,
   useSetActiveSwipe,
+  useTouchChat,
   useUpdateChatMetadata,
   useBranchChat,
   useChats,
@@ -132,36 +133,6 @@ function getNewestLoadedMessagePageIndex(pages: MessageWithSwipes[][] | undefine
     }
   }
   return newestIndex;
-}
-
-type GeneratedSceneBackgroundResponse = {
-  success: boolean;
-  filename: string;
-  url: string;
-  tag: string;
-};
-
-function buildRoleplayBackgroundSceneDescription(args: {
-  chatName?: string | null;
-  characterNames: string[];
-  messages?: MessageWithSwipes[];
-}): string {
-  const recentMessages = (args.messages ?? [])
-    .filter((message) => message.role !== "system" && message.content.trim())
-    .slice(-8)
-    .map((message) => {
-      const label = message.role === "user" ? "User" : message.role === "assistant" ? "Character" : "Narrator";
-      return `${label}: ${message.content.replace(/\s+/g, " ").trim().slice(0, 260)}`;
-    });
-
-  return [
-    args.chatName ? `Chat: ${args.chatName}` : null,
-    args.characterNames.length ? `Characters in scene: ${args.characterNames.slice(0, 8).join(", ")}` : null,
-    recentMessages.length ? `Recent scene:\n${recentMessages.join("\n")}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n")
-    .slice(0, 1200);
 }
 
 function sortLoadedMessagePagesChronologically(pages: MessageWithSwipes[][]): MessageWithSwipes[][] {
@@ -585,6 +556,7 @@ export function ChatArea() {
   const updateMessageExtra = useUpdateMessageExtra(activeChatId);
   const peekPrompt = usePeekPrompt();
   const branchChat = useBranchChat();
+  const touchChat = useTouchChat();
   const { generate, retryAgents } = useGenerate();
   const setActiveSwipe = useSetActiveSwipe(activeChatId);
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
@@ -602,6 +574,17 @@ export function ChatArea() {
     if (listedActiveChat) return;
     setActiveChatId(null);
   }, [activeChatId, allChats, listedActiveChat, setActiveChatId]);
+
+  const touchedActiveChatRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!chat?.id) {
+      touchedActiveChatRef.current = null;
+      return;
+    }
+    if (touchedActiveChatRef.current === chat.id) return;
+    touchedActiveChatRef.current = chat.id;
+    touchChat.mutate(chat.id);
+  }, [chat?.id, touchChat]);
 
   const currentGameSessionChatId = useMemo(() => resolveCurrentGameSessionChatId(chat, allChats), [allChats, chat]);
 
@@ -810,6 +793,15 @@ export function ChatArea() {
       nameColor: persona.nameColor || undefined,
       dialogueColor: persona.dialogueColor || undefined,
       boxColor: persona.boxColor || undefined,
+      hoshitoStats: (() => {
+        try {
+          const raw = (persona as unknown as { personaStats?: string }).personaStats;
+          const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return (parsed?.hoshitoStats as import("@marinara-engine/shared").HoshitoCharacterStats | null) ?? null;
+        } catch {
+          return null;
+        }
+      })(),
     };
   }, [allPersonas, chat]);
 
@@ -915,30 +907,6 @@ export function ChatArea() {
 
   const updateMeta = useUpdateChatMetadata();
   const summaryContextSize: number = (chatMeta.summaryContextSize as number) ?? 50;
-  const handleGenerateRoleplayBackground = useCallback(async () => {
-    if (!activeChatId || !chat || (chatMode !== "roleplay" && chatMode !== "visual_novel")) return;
-    const sceneDescription = buildRoleplayBackgroundSceneDescription({
-      chatName: chat.name,
-      characterNames,
-      messages,
-    }).trim();
-    if (!sceneDescription) {
-      toast.error("Send a scene message before generating a background.");
-      return;
-    }
-
-    const result = await api.post<GeneratedSceneBackgroundResponse>("/backgrounds/generate-scene", {
-      chatId: activeChatId,
-      sceneDescription,
-      locationSlug: chat.name,
-      reason: "Manual Gallery background request",
-      debugMode: useUIStore.getState().debugMode,
-    });
-    useUIStore.getState().setChatBackground(result.url);
-    updateMeta.mutate({ id: activeChatId, background: result.filename });
-    queryClient.invalidateQueries({ queryKey: ["backgrounds"] });
-    toast.success("Background generated.", { duration: 1800 });
-  }, [activeChatId, characterNames, chat, chatMode, messages, queryClient, updateMeta]);
 
   // Creator-notes card CSS: resolve the per-chat mode (default "chat") and map
   // the chat mode onto the @chat-mode filter surface (visual novel shares the
@@ -2010,9 +1978,7 @@ export function ChatArea() {
     );
     if (ttsRequests.length === 0) return;
 
-    void ttsService.speakSequence(withTTSVoiceRequestCacheKeys(ttsRequests, cfg, lastMsg.id), lastMsg.id, {
-      progressive: cfg.progressivePlayback,
-    });
+    void ttsService.speakSequence(withTTSVoiceRequestCacheKeys(ttsRequests, cfg, lastMsg.id), lastMsg.id);
   }, [characterMap, isStreaming, resolveTTSCharacterId]);
 
   const newestMsgId = msgData?.pages[0]?.[msgData.pages[0].length - 1]?.id;
@@ -2666,7 +2632,6 @@ export function ChatArea() {
           onCloseFiles={() => setFilesOpen(false)}
           onCloseGallery={handleCloseGalleryPanel}
           onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
-          onGenerateBackground={handleGenerateRoleplayBackground}
           onWizardFinish={() => {
             setWizardOpen(false);
             handleOpenSettingsPanel();

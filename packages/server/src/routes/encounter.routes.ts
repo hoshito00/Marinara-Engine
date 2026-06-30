@@ -22,7 +22,14 @@ import type {
   CombatPlayerActions,
   CombatActionResult,
   EncounterLogEntry,
+  HoshitoEncounterInitRequest,
+  HoshitoEncounterActionRequest,
+  HoshitoEncounterActionResponse,
+  HoshitoCombatState,
   RPGStatsConfig,
+} from "@marinara-engine/shared";
+import {
+  HOSHITO_RESISTANCE_MULTIPLIERS,
 } from "@marinara-engine/shared";
 
 // ──────────────────────────────────────────────
@@ -215,6 +222,57 @@ async function buildPersonaContext(chars: ReturnType<typeof createCharactersStor
       ctx += `- Attributes: ${personaRpg.attributes.map((a) => `${a.name} ${a.value}`).join(", ")}\n`;
     }
   }
+  // Surface configured Hoshito stats (domains, attributes, grades) so the combat-init AI
+  // uses the user's EXACT custom layout — names, grades, and Sparks — instead of inventing
+  // a default 9-attribute schema. `hoshitoStats` is the freeform domain/attribute structure
+  // configured in the Persona Editor; only non-default (renamed) layouts benefit from this,
+  // but it is always emitted when enabled so the GM never has to guess.
+  const personaHoshito = personaStats?.hoshitoStats as
+    | {
+        enabled?: boolean;
+        level?: number;
+        domains?: Array<{ name: string; attributes: Array<{ name: string; grade: string; sparks: number; vestigeSparks: number }> }>;
+        verve?: number;
+        storyPoints?: number;
+        healthMaxOverride?: number;
+        staggerMaxOverride?: number;
+        apMaxOverride?: number;
+        isExalted?: boolean;
+        merits?: Array<{ category: string; name: string; description: string; sparkGrantAttribute?: string; dormant?: boolean }>;
+        coreMerits?: Array<{ type: string; description: string; attributeGrant?: string; grantedSpark?: boolean }>;
+      }
+    | undefined;
+  if (personaHoshito?.enabled && Array.isArray(personaHoshito.domains) && personaHoshito.domains.length > 0) {
+    ctx += `Persona Hoshito Stats (use these EXACT Domain/Attribute names and Grades — do not invent a different layout):\n`;
+    ctx += `- Level: ${personaHoshito.level ?? 1}\n`;
+    for (const domain of personaHoshito.domains) {
+      const attrList = domain.attributes
+        .map((a) => `${a.name} ${a.grade}${a.sparks > 0 ? ` (${a.sparks} Spark${a.sparks > 1 ? "s" : ""})` : ""}${a.vestigeSparks > 0 ? ` (${a.vestigeSparks} Vestige)` : ""}`)
+        .join(", ");
+      ctx += `- ${domain.name}: ${attrList}\n`;
+    }
+    if (personaHoshito.verve != null) ctx += `- Verve: ${personaHoshito.verve}\n`;
+    if (personaHoshito.storyPoints != null) ctx += `- Story Points: ${personaHoshito.storyPoints}\n`;
+    if (personaHoshito.healthMaxOverride) ctx += `- Health max override: ${personaHoshito.healthMaxOverride}\n`;
+    if (personaHoshito.staggerMaxOverride) ctx += `- Stagger max override: ${personaHoshito.staggerMaxOverride}\n`;
+    if (personaHoshito.apMaxOverride) ctx += `- AP max override: ${personaHoshito.apMaxOverride}\n`;
+    if (personaHoshito.isExalted) ctx += `- Exalted: true (level cap 52, F+ markers active)\n`;
+    if (personaHoshito.coreMerits && personaHoshito.coreMerits.length > 0) {
+      ctx += `- Core Merits:\n`;
+      for (const cm of personaHoshito.coreMerits) {
+        const grant = cm.grantedSpark ? "1 Spark" : cm.attributeGrant ? `Grade step on ${cm.attributeGrant}` : "no grant set";
+        ctx += `  - [${cm.type}] ${cm.description} (${grant})\n`;
+      }
+    }
+    if (personaHoshito.merits && personaHoshito.merits.length > 0) {
+      ctx += `- Merits:\n`;
+      for (const m of personaHoshito.merits) {
+        const spark = m.sparkGrantAttribute ? `, Spark → ${m.sparkGrantAttribute}` : "";
+        const dormant = m.dormant ? ", dormant" : "";
+        ctx += `  - [${m.category}] ${m.name}: ${m.description}${spark}${dormant}\n`;
+      }
+    }
+  }
   return { personaName: persona.name, personaCtx: ctx };
 }
 
@@ -252,6 +310,72 @@ async function buildGameStateContext(
     if (playerStats.attributes) {
       const a = playerStats.attributes;
       ctx += `Attributes: STR ${a.str}, DEX ${a.dex}, CON ${a.con}, INT ${a.int}, WIS ${a.wis}, CHA ${a.cha}\n`;
+    }
+    // Live Hoshito character data — current Health/Stagger (not just maxes), Domains/Grades/
+    // Sparks with their actual configured names, Strand, Exaltation, and Resistances. Combat
+    // init and action prompts both pull from this string, so this is the GM's only window into
+    // the character's real Hoshito layout during an active session.
+    const h = playerStats.hoshitoStats as
+      | {
+          level?: number;
+          domains?: Array<{ name: string; attributes: Array<{ name: string; grade: string; sparks: number; vestigeSparks: number }> }>;
+          strand?: { name: string; primaryAttribute: string };
+          health?: number; healthMax?: number;
+          stagger?: number; staggerMax?: number;
+          apMax?: number;
+          coins?: number;
+          verve?: number; storyPoints?: number;
+          isExalted?: boolean;
+          resistances?: Array<{ type: string; healthTier: string; staggerTier: string }>;
+          merits?: Array<{ category: string; name: string; description: string; sparkGrantAttribute?: string; dormant?: boolean }>;
+          coreMerits?: Array<{
+            type: string;
+            description: string;
+            attributeGrant?: string;
+            grantedSpark?: boolean;
+            transformations?: Array<{ merit: { category: string; name: string; description: string }; level: number; narrative: string }>;
+          }>;
+        }
+      | undefined;
+    if (h && Array.isArray(h.domains) && h.domains.length > 0) {
+      ctx += `\n${personaName}'s Hoshito Character (use these EXACT names/grades — do not invent a different layout):\n`;
+      ctx += `- Level: ${h.level ?? 1}${h.isExalted ? " (Exalted — cap 52)" : ""}\n`;
+      for (const domain of h.domains) {
+        const attrList = domain.attributes
+          .map((attr) => `${attr.name} ${attr.grade}${attr.sparks > 0 ? ` (${attr.sparks} Spark${attr.sparks > 1 ? "s" : ""})` : ""}${attr.vestigeSparks > 0 ? ` (${attr.vestigeSparks} Vestige)` : ""}`)
+          .join(", ");
+        ctx += `- ${domain.name}: ${attrList}\n`;
+      }
+      if (h.strand) ctx += `- Strand: ${h.strand.name} (Primary: ${h.strand.primaryAttribute})\n`;
+      if (h.healthMax != null) ctx += `- Health: ${h.health ?? h.healthMax}/${h.healthMax}\n`;
+      if (h.staggerMax != null) ctx += `- Stagger: ${h.stagger ?? h.staggerMax}/${h.staggerMax}\n`;
+      if (h.apMax != null) ctx += `- AP max: ${h.apMax}\n`;
+      if (h.coins != null) ctx += `- Coins: ${h.coins}\n`;
+      if (h.verve != null) ctx += `- Verve: ${h.verve}\n`;
+      if (h.storyPoints != null) ctx += `- Story Points: ${h.storyPoints}\n`;
+      if (h.resistances && h.resistances.length > 0) {
+        ctx += `- Resistances: ${h.resistances.map((r) => `${r.type} (HP ${r.healthTier} / Stagger ${r.staggerTier})`).join(", ")}\n`;
+      }
+      if (h.coreMerits && h.coreMerits.length > 0) {
+        ctx += `- Core Merits:\n`;
+        for (const cm of h.coreMerits) {
+          const grant = cm.grantedSpark ? "1 Spark" : cm.attributeGrant ? `Grade step on ${cm.attributeGrant}` : "no grant set";
+          ctx += `  - [${cm.type}] ${cm.description} (${grant})\n`;
+          if (cm.transformations && cm.transformations.length > 0) {
+            for (const t of cm.transformations) {
+              ctx += `    - Lv${t.level} transformation: [${t.merit.category}] ${t.merit.name} — ${t.merit.description}${t.narrative ? ` (${t.narrative})` : ""}\n`;
+            }
+          }
+        }
+      }
+      if (h.merits && h.merits.length > 0) {
+        ctx += `- Merits:\n`;
+        for (const m of h.merits) {
+          const spark = m.sparkGrantAttribute ? `, Spark → ${m.sparkGrantAttribute}` : "";
+          const dormant = m.dormant ? ", dormant" : "";
+          ctx += `  - [${m.category}] ${m.name}: ${m.description}${spark}${dormant}\n`;
+        }
+      }
     }
   }
 
@@ -298,6 +422,249 @@ async function buildGameStateContext(
 // ──────────────────────────────────────────────
 // Prompt Builders
 // ──────────────────────────────────────────────
+
+// ──────────────────────────────────────────────
+// Hoshito Prompt Builders
+// ──────────────────────────────────────────────
+
+/**
+ * System knowledge block injected into both Hoshito prompts.
+ * Teaches the GM the Hoshito combat rules in compact form.
+ */
+const HOSHITO_RULES_BLOCK = `
+=== HOSHITO COMBAT RULES (read before generating any combat data) ===
+
+DICE TIERS
+Mastery Die (weapon/skill tier): Untrained→d6 · Trained→d8 · Expert→d10 · Master→d12
+Speed Die (AGI Grade):  E→d4 · D→d6 · C→d8 · B→d10 · A→d12 · S→d14 · SS→d16 · SSS→d18 · EX→d20
+
+COMBAT RESOURCES (all live values — update them each action)
+• Health & Stagger are separate damage pools. Health hits 0 = KO. Stagger hits 0 = Staggered.
+• Staggered: no Skills/Speed Dice/AP recovery/resistances/Stagger regain this Scene.
+• AP (Action Points): typically 3 (heroes), 2 (minions), 4-5 (elites/bosses). Resets at turn start.
+• Coins: start at 3. Spend to retry a Clash. Regain 1 when you Stagger or Eliminate a target.
+• coinBonus = Attribute Grade Mod of the relevant skill + Domain Spark total for that Domain.
+• Morale: bidirectional, −45 to +45, starts at 0 each encounter.
+  Thresholds:  +45 → +3 Power | +30 → +2 | +15 → +1 | 0 → 0 | −15 → −1 | −30 → −2 | −45 → −3.
+• masteryMod = (relevant Attribute Grade Mod) + (Domain Sparks on that Attribute) + (Morale modifier).
+
+CLASH RESOLUTION (one round of attack vs defense)
+1. Attacker rolls masteryDie + masteryMod.
+2. Defender may expend a Speed Die to roll it + defender's masteryMod (or speedDice.modifier).
+   If no Speed Die is available → Unopposed (attacker auto-wins; no Morale change).
+3. Compare totals. Higher = win. Tie = both take half damage.
+4. Win result: attacker deals healthDamage + staggerDamage to defender.
+   Damage guidelines: healthDamage ≈ attacker's rolled Power / 4 (rounded down, minimum 1).
+   staggerDamage ≈ same as healthDamage (or slightly higher if attacker is relentless).
+5. Morale: Clash win → winner +3 Morale, loser −3. Tie or Unopposed → 0.
+6. Coin retry: loser may spend a Coin before damage is applied.
+   Retry Power = original Power + coinBonus. If retry beats winner's Power, outcome flips.
+
+DIE RESISTANCE (applied to Power after Clash resolution, before calculating damage — round down)
+Resistance tiers: Fatal ×${HOSHITO_RESISTANCE_MULTIPLIERS.Fatal} · Weak ×${HOSHITO_RESISTANCE_MULTIPLIERS.Weak} · Normal ×${HOSHITO_RESISTANCE_MULTIPLIERS.Normal} · Endured ×${HOSHITO_RESISTANCE_MULTIPLIERS.Endured} · Ineffective ×${HOSHITO_RESISTANCE_MULTIPLIERS.Ineffective} · Immune ×${HOSHITO_RESISTANCE_MULTIPLIERS.Immune}
+Health and Stagger resistances are tracked SEPARATELY per damage type (Slash/Pierce/Blunt/Spectral/Elemental/Empyreal).
+Only non-Normal entries are stored in resistances[]. All unspecified types default to Normal ×1.
+Example: if a creature has Endured (×0.5) for Slash on Health, a 12-Power Slash attack deals floor(12 × 0.5) = 6 Health damage.
+
+DEFAULT STAT FORMULAS (use Hoshito character stats from context when available; otherwise estimate)
+Health max = 25 + (MIG_GradeMod + WIL_GradeMod) × 5
+Stagger max = 15 + (VIT_GradeMod + INT_GradeMod) × 5
+AP max = 3 + floor(PSY_GradeMod / 3)
+Grade mods: F=−1, E=0, D=+1, C=+2, B=+3, A=+4, S=+5, SS=+6, SSS=+7, EX=+9
+
+MERITS (rewards, discoveries, and consequences a character accumulates — context lists them per-character)
+• Feat: a trained discipline. Grants 1 Attribute Spark. Two Feats can fuse into one stronger Feat at Level Up.
+• Artifact: a significant object. Grants 1 Attribute Spark. Weapons/Shields set the Mastery die size; Trinkets instead grant a flat
+  Power modifier by rarity (Common +1 / Uncommon +2 / Rare +3 / Legendary +4).
+• Ability: a maneuver or technique — no Spark, a new axis of action rather than a numerical boost. The primary reward of Strand progression.
+• Augment: a permanent, usually irreversible modification to the self. Grants Attribute Sparks directly.
+• Contact: a person, faction, or relationship. No Spark — purely narrative, but opens and closes doors skill and power cannot.
+A Merit marked dormant is acknowledged but not yet narratively active — do not let it affect rolls or fiction until reactivated.
+
+CORE MERITS (every character has exactly three: Ancestry, Heritage, Background)
+Each is a written origin (the description field) that grants either one Grade step on a chosen Attribute, or 1 Spark if that Attribute
+is already at the Grade D creation cap (see grantedSpark). At Levels 7, 14, 21, 26 — or a narratively pivotal moment — a Core Merit may
+transform: add one Ability Merit, one Feat, or one Vestige Spark, thematically linked to that Core Merit's origin description. A Core
+Merit's transformations[] list is the running record of these grants; treat its narrative field as canon for what that moment meant.
+
+ENEMY GUIDELINES (when enemies have no defined stats)
+• Weak minion: Health 30–50, Stagger 20–35, masteryDie "d6", AP 2, Speed d4–d6
+• Standard enemy: Health 50–90, Stagger 35–60, masteryDie "d8", AP 3, Speed d6–d8
+• Elite: Health 90–140, Stagger 60–90, masteryDie "d10", AP 4, Speed d8–d10
+• Boss: Health 150+, Stagger 100+, masteryDie "d12", AP 5, Speed d10–d12
+
+=== END HOSHITO RULES ===
+`.trim();
+
+function buildHoshitoInitPrompt(
+  personaName: string,
+  personaCtx: string,
+  characterCtx: string,
+  chatHistory: ChatMessage[],
+  gameStateCtx: string,
+  spellbookCtx: string,
+): ChatMessage[] {
+  const msgs: ChatMessage[] = [];
+
+  let system = `You are an expert game master running a Hoshito TTRPG encounter for ${personaName}.\n\n`;
+  system += `${HOSHITO_RULES_BLOCK}\n\n`;
+
+  if (characterCtx) {
+    system += `Characters:\n<characters>\n${characterCtx}</characters>\n\n`;
+  }
+  system += `Persona (${personaName}):\n<persona>\n${personaCtx}\n</persona>\n\n`;
+  if (gameStateCtx) {
+    system += `Game state:\n<context>\n${gameStateCtx}</context>\n\n`;
+  }
+  if (spellbookCtx) {
+    system += `Known abilities / spellbook:\n<spellbook>\n${spellbookCtx}</spellbook>\n\n`;
+  }
+
+  system += `Chat history before the encounter:\n<history>\n`;
+  msgs.push({ role: "system", content: system });
+
+  for (const m of chatHistory) {
+    msgs.push({ role: m.role as "user" | "assistant", content: m.content });
+  }
+
+  let inst = `</history>\n\nCombat begins now.\n\n`;
+  inst += `Analyze the context. Determine who is in the party, who the enemies are, and what this encounter's stakes are.\n`;
+  inst += `Use the Hoshito rules above to populate every combatant's stats accurately.\n`;
+  inst += `If ${personaName}'s Hoshito character stats are defined in the persona/context (Grades, derived Health/Stagger/AP), use those EXACT values. Do NOT invent or rebalance defined stats.\n\n`;
+  inst += `Return ONLY a valid JSON object matching this TypeScript shape:\n\n`;
+  inst += `{\n`;
+  inst += `  "round": 1,\n`;
+  inst += `  "environment": "Brief combat environment description",\n`;
+  inst += `  "party": [\n`;
+  inst += `    {\n`;
+  inst += `      "name": "${personaName}",\n`;
+  inst += `      "health": X, "healthMax": X,\n`;
+  inst += `      "stagger": X, "staggerMax": X,\n`;
+  inst += `      "ap": X, "apMax": X,\n`;
+  inst += `      "coins": 3, "coinBonus": X,\n`;
+  inst += `      "morale": 0,\n`;
+  inst += `      "masteryDie": "d6"|"d8"|"d10"|"d12",\n`;
+  inst += `      "masteryMod": X,\n`;
+  inst += `      "speedDice": { "dieType": "d4"|"d6"|"d8"|"d10"|"d12"|"d14"|"d16"|"d18"|"d20", "modifier": X, "initiativeResult": X, "remaining": 1, "total": 1 },\n`;
+  inst += `      "powerGuardAvailable": true,\n`;
+  inst += `      "isStaggered": false,\n`;
+  inst += `      "statusEffects": [],\n`;
+  inst += `      "isPlayer": true,\n`;
+  inst += `      "sprite": null,\n`;
+  inst += `      "agiGrade": "E"|"D"|"C"|"B"|"A"|"S"|"SS"|"SSS"|"EX",\n`;
+  inst += `      "magicAlignment": "spectral"|"elemental"|"empyreal" (omit if none),\n`;
+  inst += `      "resistances": [] (populate only non-Normal entries if the character has resistances)\n`;
+  inst += `    }\n`;
+  inst += `  ],\n`;
+  inst += `  "enemies": [\n`;
+  inst += `    {\n`;
+  inst += `      "name": "Enemy Name",\n`;
+  inst += `      "health": X, "healthMax": X,\n`;
+  inst += `      "stagger": X, "staggerMax": X,\n`;
+  inst += `      "ap": X, "apMax": X,\n`;
+  inst += `      "coins": 3, "coinBonus": X,\n`;
+  inst += `      "morale": 0,\n`;
+  inst += `      "masteryDie": "d6"|"d8"|"d10"|"d12",\n`;
+  inst += `      "masteryMod": X,\n`;
+  inst += `      "speedDice": { "dieType": "d4"|...|"d20", "modifier": 0, "initiativeResult": X, "remaining": 1, "total": 1 },\n`;
+  inst += `      "powerGuardAvailable": true,\n`;
+  inst += `      "isStaggered": false,\n`;
+  inst += `      "statusEffects": [],\n`;
+  inst += `      "isPlayer": false,\n`;
+  inst += `      "sprite": "emoji or null",\n`;
+  inst += `      "resistances": [] (only non-Normal entries)\n`;
+  inst += `    }\n`;
+  inst += `  ],\n`;
+  inst += `  "initiativeQueue": [\n`;
+  inst += `    { "name": "combatant name", "initiativeResult": X, "agiGrade": "grade", "isPlayer": true|false, "hasActed": false }\n`;
+  inst += `  ]\n`;
+  inst += `}\n\n`;
+  inst += `Rules:\n`;
+  inst += `- initiativeQueue: all combatants ordered by initiativeResult descending. Roll each combatant's Speed Die for their initiativeResult.\n`;
+  inst += `- resistances array: empty [] for most combatants. Only include entries for damage types that are NOT Normal. Use: { "type": "Slash"|"Pierce"|"Blunt"|"Spectral"|"Elemental"|"Empyreal", "healthTier": "tier", "staggerTier": "tier" }.\n`;
+  inst += `- statusEffects array: empty [] to start unless a condition carries over from the narrative.\n`;
+  inst += `- masteryMod for enemies: use a modest positive value (0–4) scaled to their power level.\n`;
+  inst += `- Return ONLY the JSON object — no prose, no fences, no keys outside the schema.\n`;
+  inst += `- All text (names, descriptions, environment) must match the language of the chat history above.\n`;
+
+  msgs.push({ role: "user", content: inst });
+  return msgs;
+}
+
+function buildHoshitoActionPrompt(
+  personaName: string,
+  personaCtx: string,
+  action: { type: string; description: string; target?: string; dieRole?: string; spendCoin?: boolean },
+  combatState: HoshitoCombatState,
+  spellbookCtx: string,
+): ChatMessage[] {
+  const msgs: ChatMessage[] = [];
+
+  let system = `You are the game master resolving a Hoshito combat action. Do NOT play as ${personaName} — only narrate outcomes and control enemies.\n\n`;
+  system += `${HOSHITO_RULES_BLOCK}\n\n`;
+  system += `<persona>\n${personaCtx}\n</persona>\n\n`;
+  if (spellbookCtx) {
+    system += `<spellbook>\n${spellbookCtx}</spellbook>\n\n`;
+  }
+  msgs.push({ role: "system", content: system });
+
+  // Current state summary
+  let state = `=== CURRENT COMBAT STATE (Round ${combatState.round}) ===\n`;
+  state += `Environment: ${combatState.environment || "Unknown"}\n\n`;
+
+  state += `PARTY:\n`;
+  for (const c of combatState.party) {
+    const res = (c.resistances ?? []).map(r => `${r.type}:HP×${r.healthTier}/SGR×${r.staggerTier}`).join(", ");
+    state += `• ${c.name}${c.isPlayer ? " [PLAYER]" : ""}: HP ${c.health}/${c.healthMax} · SGR ${c.stagger}/${c.staggerMax} · AP ${c.ap}/${c.apMax} · Coins ${c.coins} · Morale ${c.morale >= 0 ? "+" : ""}${c.morale}\n`;
+    state += `  MasteryDie: ${c.masteryDie} · MasteryMod: ${c.masteryMod >= 0 ? "+" : ""}${c.masteryMod} · SpeedDice: ${c.speedDice.dieType} (${c.speedDice.remaining}/${c.speedDice.total} remaining) · PowerGuard: ${c.powerGuardAvailable ? "available" : "spent"} · Staggered: ${c.isStaggered}\n`;
+    if (res) state += `  Resistances: ${res}\n`;
+    if (c.statusEffects?.length) state += `  Statuses: ${c.statusEffects.map(s => s.name).join(", ")}\n`;
+  }
+
+  state += `\nENEMIES:\n`;
+  for (const e of combatState.enemies) {
+    const res = (e.resistances ?? []).map(r => `${r.type}:HP×${r.healthTier}/SGR×${r.staggerTier}`).join(", ");
+    state += `• ${e.name} ${e.sprite ?? ""}: HP ${e.health}/${e.healthMax} · SGR ${e.stagger}/${e.staggerMax} · AP ${e.ap}/${e.apMax} · Coins ${e.coins} · Morale ${e.morale >= 0 ? "+" : ""}${e.morale}\n`;
+    state += `  MasteryDie: ${e.masteryDie} · MasteryMod: ${e.masteryMod >= 0 ? "+" : ""}${e.masteryMod} · SpeedDice: ${e.speedDice.dieType} (${e.speedDice.remaining}/${e.speedDice.total} remaining) · Staggered: ${e.isStaggered}\n`;
+    if (res) state += `  Resistances: ${res}\n`;
+    if (e.statusEffects?.length) state += `  Statuses: ${e.statusEffects.map(s => s.name).join(", ")}\n`;
+  }
+
+  state += `\n${personaName}'s Action: [${action.type.toUpperCase()}] ${action.description}`;
+  if (action.target) state += ` → Target: ${action.target}`;
+  if (action.dieRole) state += ` · Die Role: ${action.dieRole}`;
+  if (action.spendCoin) state += ` · Spending a Coin on retry`;
+  state += `\n\n`;
+
+  state += `=== INSTRUCTIONS ===\n`;
+  state += `1. Resolve the action using Hoshito rules (Clash → resistance → damage → Morale update).\n`;
+  state += `2. Have enemies act in turn order (highest initiative not yet acted). Enemies also follow Clash rules.\n`;
+  state += `3. Apply all resource changes (Health, Stagger, AP, Coins, Morale, Speed Dice remaining, statusEffects) to updatedState.\n`;
+  state += `4. When Health ≤ 0, combatant is eliminated. When Stagger ≤ 0, set isStaggered: true (no Speed Dice, no resistances).\n`;
+  state += `5. When all enemies are defeated → add "combatEnd": { "result": "victory", "narrative": "..." }.\n`;
+  state += `6. When all party are defeated → add "combatEnd": { "result": "defeat", "narrative": "..." }.\n`;
+  state += `7. Write the narrative in vivid present-tense prose. Under 180 words. No asterisks. No em-dashes. Do not play as ${personaName}.\n\n`;
+
+  state += `Return ONLY a valid JSON object:\n`;
+  state += `{\n`;
+  state += `  "updatedState": { ...full HoshitoCombatState with all live values updated },\n`;
+  state += `  "narrative": "Prose description of what happened this round.",\n`;
+  state += `  "clashResult": {\n`;
+  state += `    "attackerDie": { "role": "offensive", "dieType": "d8", "rolled": X, "modifier": X, "power": X },\n`;
+  state += `    "defenderDie": { "role": "evade", "dieType": "d6", "rolled": X, "modifier": X, "power": X } | null,\n`;
+  state += `    "outcome": "win"|"lose"|"tie"|"unopposed",\n`;
+  state += `    "healthDamage": X,\n`;
+  state += `    "staggerDamage": X,\n`;
+  state += `    "moraleChange": { "attacker": X, "defender": X },\n`;
+  state += `    "coinRetryAvailable": false,\n`;
+  state += `    "wasRetried": false\n`;
+  state += `  } | null\n`;
+  state += `}\n\n`;
+  state += `CRITICAL: updatedState must include ALL fields from the current state — do not omit any combatant or property. Increment round by 1.\n`;
+
+  msgs.push({ role: "user", content: state });
+  return msgs;
+}
 
 function buildInitPrompt(
   personaName: string,
@@ -800,6 +1167,130 @@ export async function encounterRoutes(app: FastifyInstance) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return reply.status(500).send({ error: `Encounter summary failed: ${message}` });
+    }
+  });
+
+  // ───────────────────── HOSHITO INIT ───────────────────────
+
+  app.post<{ Body: HoshitoEncounterInitRequest }>("/hoshito/init", async (req, reply) => {
+    const { chatId, connectionId, spellbookId, debugMode } = req.body;
+    const debugLog = (message: string, ...args: unknown[]) => {
+      logDebugOverride(debugMode === true, message, ...args);
+    };
+
+    if (!chatId) {
+      return reply.status(400).send({ error: "Missing required field: chatId" });
+    }
+
+    try {
+      const chat = await chats.getById(chatId);
+      if (!chat) return reply.status(404).send({ error: "Chat not found" });
+
+      const { conn, baseUrl } = await resolveConnection(connections, connectionId, chat.connectionId);
+      const provider = createLLMProvider(
+        conn.provider, baseUrl, conn.apiKey,
+        conn.maxContext, conn.openrouterProvider, conn.maxTokensOverride,
+      );
+
+      const characterIds: string[] = JSON.parse(chat.characterIds as string);
+      const characterCtx = await buildCharacterContext(chars, characterIds);
+      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null);
+      let chatMeta: Record<string, unknown> | null = null;
+      if (typeof chat.metadata === "string") {
+        try { chatMeta = JSON.parse(chat.metadata) as Record<string, unknown>; }
+        catch { chatMeta = null; }
+      } else {
+        chatMeta = (chat.metadata as Record<string, unknown> | null) ?? null;
+      }
+      const gameStateCtx = await buildGameStateContext(gsStorage, chatId, personaName, chatMeta);
+      const spellbookCtx = await loadSpellbookContext(spellbookId ?? null);
+
+      const chatMessages = await chats.listMessages(chatId);
+      const recentMsgs: ChatMessage[] = chatMessages.slice(-10).map((m: any) => ({
+        role: (m.role === "narrator" ? "system" : m.role) as "user" | "assistant" | "system",
+        content: m.content as string,
+      }));
+
+      const prompt = buildHoshitoInitPrompt(personaName, personaCtx, characterCtx, recentMsgs, gameStateCtx, spellbookCtx);
+      debugLog("[debug/hoshito:init] prompt:\n%s", JSON.stringify(prompt, null, 2));
+
+      const result = await provider.chatComplete(prompt, {
+        model: conn.model,
+        temperature: 0.8,
+        maxTokens: COMBAT_BLUEPRINT_OUTPUT_TOKENS,
+      });
+      debugLog("[debug/hoshito:init] raw:\n%s", result.content ?? "");
+
+      if (!result.content) return reply.status(502).send({ error: "No response from AI" });
+
+      let combatState: HoshitoCombatState;
+      try {
+        combatState = parseJSON(result.content) as HoshitoCombatState;
+      } catch {
+        return reply.status(502).send({ error: "AI returned invalid JSON" });
+      }
+
+      if (!combatState?.party?.length || !combatState?.enemies?.length) {
+        return reply.status(502).send({ error: "Invalid Hoshito combat state returned by AI" });
+      }
+
+      await chats.patchMetadata(chatId, { encounterActive: true }, { touchUpdatedAt: false });
+      return { combatState };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      logger.warn(err, "[hoshito:init] failed");
+      return reply.status(500).send({ error: `Hoshito init failed: ${message}` });
+    }
+  });
+
+  // ───────────────────── HOSHITO ACTION ─────────────────────
+
+  app.post<{ Body: HoshitoEncounterActionRequest }>("/hoshito/action", async (req, reply) => {
+    const { chatId, connectionId, action, combatState, spellbookId } = req.body;
+
+    if (!chatId || !action || !combatState) {
+      return reply.status(400).send({ error: "Missing required fields: chatId, action, combatState" });
+    }
+
+    try {
+      const chat = await chats.getById(chatId);
+      if (!chat) return reply.status(404).send({ error: "Chat not found" });
+
+      const { conn, baseUrl } = await resolveConnection(connections, connectionId, chat.connectionId);
+      const provider = createLLMProvider(
+        conn.provider, baseUrl, conn.apiKey,
+        conn.maxContext, conn.openrouterProvider, conn.maxTokensOverride,
+      );
+
+      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null);
+      const spellbookCtx = await loadSpellbookContext(spellbookId ?? null);
+
+      const prompt = buildHoshitoActionPrompt(personaName, personaCtx, action, combatState, spellbookCtx);
+
+      const result = await provider.chatComplete(prompt, {
+        model: conn.model,
+        temperature: 0.85,
+        maxTokens: 4096,
+      });
+
+      if (!result.content) return reply.status(502).send({ error: "No response from AI" });
+
+      let response: HoshitoEncounterActionResponse;
+      try {
+        response = parseJSON(result.content) as HoshitoEncounterActionResponse;
+      } catch {
+        return reply.status(502).send({ error: "AI returned invalid JSON" });
+      }
+
+      if (!response?.updatedState || !response?.narrative) {
+        return reply.status(502).send({ error: "Invalid action response from AI" });
+      }
+
+      return response;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      logger.warn(err, "[hoshito:action] failed");
+      return reply.status(500).send({ error: `Hoshito action failed: ${message}` });
     }
   });
 }
