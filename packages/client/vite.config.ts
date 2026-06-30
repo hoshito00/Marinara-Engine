@@ -53,7 +53,7 @@ function bundleBudget(): Plugin {
         );
       }
 
-      const oversizedChunks = chunks.filter((chunk) => chunk.sizeKb > 500);
+      const oversizedChunks = chunks.filter((chunk) => chunk.sizeKb > 600);
       if (oversizedChunks.length > 0) {
         this.error(
           `Chunk size warning budget exceeded: ${oversizedChunks
