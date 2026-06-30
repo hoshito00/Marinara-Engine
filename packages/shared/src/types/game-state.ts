@@ -375,6 +375,8 @@ export const DEFAULT_DERIVED_STAT_CONFIG: HoshitoDerivedStatConfig = {
  * Replaces RPGAttributes. Fully freeform — no attribute names are hardcoded.
  */
 export interface HoshitoCharacterStats {
+  /** Whether Hoshito tracking is active for this session. Undefined/true = active. False = hidden but data preserved — toggling back on does not require re-entry. */
+  enabled?: boolean;
   level: number;
   /** Freeform Domains. Typically 3 (Physical / Mental / Social) but not enforced by the type. */
   domains: HoshitoDomain[];
