@@ -656,13 +656,15 @@ export async function charactersRoutes(app: FastifyInstance) {
     });
 
     let content: string;
+    let finishReason: string;
     try {
       const result = await connection.provider.chatComplete(messages, {
         model: connection.model,
         temperature: 0.9,
-        maxTokens: 1500,
+        maxTokens: 4000,
       });
       content = result.content ?? "";
+      finishReason = result.finishReason;
     } catch (error) {
       logger.error({ error, characterId: req.params.id }, "[characters] Hoshito Merit generation LLM call failed");
       return reply.status(502).send({ error: error instanceof Error ? error.message : "Merit generation failed." });
@@ -672,10 +674,17 @@ export async function charactersRoutes(app: FastifyInstance) {
       return reply.status(502).send({ error: "The model returned an empty response." });
     }
 
+    if (finishReason === "length") {
+      logger.warn(
+        { characterId: req.params.id, model: connection.model, contentLength: content.length },
+        "[characters] Hoshito Merit generation was truncated (finishReason=length) — response likely cut off mid-JSON",
+      );
+    }
+
     const merits = parseMeritGenerationResponse(content, collectAttributeNames(domains));
     if (merits.length === 0) {
       logger.warn(
-        { characterId: req.params.id, model: connection.model, rawContent: content.slice(0, 4000) },
+        { characterId: req.params.id, model: connection.model, finishReason, rawContent: content.slice(0, 4000) },
         "[characters] Hoshito Merit generation returned no parseable merits — check rawContent above",
       );
     }

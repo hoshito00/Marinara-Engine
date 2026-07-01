@@ -213,5 +213,53 @@ function extractMeritArray(cleaned: string): unknown[] | null {
     }
   }
 
+  // Last resort: the response was likely truncated mid-array (finishReason=length)
+  // and neither whole-array nor whole-object parsing succeeded. Salvage whatever
+  // complete top-level {...} objects appear before the cutoff, in order, rather
+  // than discarding a partially-good batch.
+  if (arrayStart !== -1) {
+    const salvaged = salvageBalancedObjects(cleaned.slice(arrayStart));
+    if (salvaged.length > 0) return salvaged;
+  }
+
   return null;
+}
+
+/** Scan for balanced top-level {...} objects and parse each independently, skipping any that fail (e.g. a trailing truncated object). */
+function salvageBalancedObjects(text: string): unknown[] {
+  const results: unknown[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try {
+          results.push(JSON.parse(text.slice(start, i + 1)));
+        } catch {
+          // skip malformed/truncated object, keep scanning
+        }
+        start = -1;
+      }
+    }
+  }
+
+  return results;
 }
