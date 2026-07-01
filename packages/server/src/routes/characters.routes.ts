@@ -639,7 +639,8 @@ export async function charactersRoutes(app: FastifyInstance) {
     const domains = Array.isArray(body.domains) ? body.domains : [];
     const existingMerits = Array.isArray(body.existingMerits) ? body.existingMerits : [];
 
-    const connection = await resolveMeritGenerationConnection(connections);
+    const meritConnections = createConnectionsStorage(app.db);
+    const connection = await resolveMeritGenerationConnection(meritConnections);
     if (!connection.ok) {
       return reply.status(400).send({ error: connection.error });
     }
