@@ -46,6 +46,8 @@ export interface CharacterExtensions {
   boxColor?: string;
   /** Marinara Engine: RPG stats toggle + custom attributes */
   rpgStats?: RPGStatsConfig;
+  /** Marinara Engine: Hoshito ruleset starting stat block (Domains, Grades, Sparks, Merits) */
+  hoshitoStats?: import("./game-state.js").HoshitoCharacterStats;
   /** Marinara Engine: Conversation-mode availability status */
   conversationStatus?: import("./chat.js").ConversationPresenceStatus;
   [key: string]: unknown;

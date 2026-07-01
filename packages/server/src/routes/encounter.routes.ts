@@ -431,6 +431,26 @@ async function buildGameStateContext(
  * System knowledge block injected into both Hoshito prompts.
  * Teaches the GM the Hoshito combat rules in compact form.
  */
+// Merit system rules — factored out so both the combat prompt (below) and the
+// Character Editor's "Generate with AI" Merit generator (characters.routes.ts)
+// teach the model the exact same rules from a single source of truth.
+export const HOSHITO_MERIT_RULES_BLOCK = `
+MERITS (rewards, discoveries, and consequences a character accumulates — context lists them per-character)
+• Feat: a trained discipline. Grants 1 Attribute Spark. Two Feats can fuse into one stronger Feat at Level Up.
+• Artifact: a significant object. Grants 1 Attribute Spark. Weapons/Shields set the Mastery die size; Trinkets instead grant a flat
+  Power modifier by rarity (Common +1 / Uncommon +2 / Rare +3 / Legendary +4).
+• Ability: a maneuver or technique — no Spark, a new axis of action rather than a numerical boost. The primary reward of Strand progression.
+• Augment: a permanent, usually irreversible modification to the self. Grants Attribute Sparks directly.
+• Contact: a person, faction, or relationship. No Spark — purely narrative, but opens and closes doors skill and power cannot.
+A Merit marked dormant is acknowledged but not yet narratively active — do not let it affect rolls or fiction until reactivated.
+
+CORE MERITS (every character has exactly three: Ancestry, Heritage, Background)
+Each is a written origin (the description field) that grants either one Grade step on a chosen Attribute, or 1 Spark if that Attribute
+is already at the Grade D creation cap (see grantedSpark). At Levels 7, 14, 21, 26 — or a narratively pivotal moment — a Core Merit may
+transform: add one Ability Merit, one Feat, or one Vestige Spark, thematically linked to that Core Merit's origin description. A Core
+Merit's transformations[] list is the running record of these grants; treat its narrative field as canon for what that moment meant.
+`.trim();
+
 const HOSHITO_RULES_BLOCK = `
 === HOSHITO COMBAT RULES (read before generating any combat data) ===
 
@@ -472,20 +492,7 @@ Stagger max = 15 + (VIT_GradeMod + INT_GradeMod) × 5
 AP max = 3 + floor(PSY_GradeMod / 3)
 Grade mods: F=−1, E=0, D=+1, C=+2, B=+3, A=+4, S=+5, SS=+6, SSS=+7, EX=+9
 
-MERITS (rewards, discoveries, and consequences a character accumulates — context lists them per-character)
-• Feat: a trained discipline. Grants 1 Attribute Spark. Two Feats can fuse into one stronger Feat at Level Up.
-• Artifact: a significant object. Grants 1 Attribute Spark. Weapons/Shields set the Mastery die size; Trinkets instead grant a flat
-  Power modifier by rarity (Common +1 / Uncommon +2 / Rare +3 / Legendary +4).
-• Ability: a maneuver or technique — no Spark, a new axis of action rather than a numerical boost. The primary reward of Strand progression.
-• Augment: a permanent, usually irreversible modification to the self. Grants Attribute Sparks directly.
-• Contact: a person, faction, or relationship. No Spark — purely narrative, but opens and closes doors skill and power cannot.
-A Merit marked dormant is acknowledged but not yet narratively active — do not let it affect rolls or fiction until reactivated.
-
-CORE MERITS (every character has exactly three: Ancestry, Heritage, Background)
-Each is a written origin (the description field) that grants either one Grade step on a chosen Attribute, or 1 Spark if that Attribute
-is already at the Grade D creation cap (see grantedSpark). At Levels 7, 14, 21, 26 — or a narratively pivotal moment — a Core Merit may
-transform: add one Ability Merit, one Feat, or one Vestige Spark, thematically linked to that Core Merit's origin description. A Core
-Merit's transformations[] list is the running record of these grants; treat its narrative field as canon for what that moment meant.
+${HOSHITO_MERIT_RULES_BLOCK}
 
 ENEMY GUIDELINES (when enemies have no defined stats)
 • Weak minion: Health 30–50, Stagger 20–35, masteryDie "d6", AP 2, Speed d4–d6

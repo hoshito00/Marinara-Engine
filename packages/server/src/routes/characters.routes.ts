@@ -32,6 +32,13 @@ import AdmZip from "adm-zip";
 import { extname } from "path";
 import { pipeline } from "stream/promises";
 import { newId } from "../utils/id-generator.js";
+import type { HoshitoDomain, HoshitoMerit } from "@marinara-engine/shared";
+import {
+  buildMeritGenerationPrompt,
+  collectAttributeNames,
+  parseMeritGenerationResponse,
+  resolveMeritGenerationConnection,
+} from "../services/character/hoshito-merit-generation.js";
 
 const CHARACTER_GALLERY_ROOT = join(DATA_DIR, "gallery", "characters");
 const PERSONA_GALLERY_ROOT = join(DATA_DIR, "gallery", "personas");
@@ -609,6 +616,63 @@ export async function charactersRoutes(app: FastifyInstance) {
     const result = await storage.duplicateCharacter(req.params.id);
     if (!result) return reply.status(404).send({ error: "Character not found" });
     return result;
+  });
+
+  // ── Hoshito Merit generation ("Generate with AI" in the Character Editor's Hoshito tab) ──
+  // Chat-independent: reads the character's fields straight from the request body (the
+  // client's current unsaved formData) rather than the persisted row, since Character
+  // Editor edits templates that may not be attached to any chat and the user may not
+  // have saved yet.
+  app.post<{
+    Params: { id: string };
+    Body: {
+      characterName?: string;
+      description?: string;
+      personality?: string;
+      scenario?: string;
+      backstory?: string;
+      domains?: HoshitoDomain[];
+      existingMerits?: HoshitoMerit[];
+    };
+  }>("/:id/generate-hoshito-merits", async (req, reply) => {
+    const body = req.body ?? {};
+    const domains = Array.isArray(body.domains) ? body.domains : [];
+    const existingMerits = Array.isArray(body.existingMerits) ? body.existingMerits : [];
+
+    const connection = await resolveMeritGenerationConnection(connections);
+    if (!connection.ok) {
+      return reply.status(400).send({ error: connection.error });
+    }
+
+    const messages = buildMeritGenerationPrompt({
+      characterName: body.characterName ?? "",
+      description: body.description ?? "",
+      personality: body.personality ?? "",
+      scenario: body.scenario ?? "",
+      backstory: body.backstory ?? "",
+      domains,
+      existingMerits,
+    });
+
+    let content: string;
+    try {
+      const result = await connection.provider.chatComplete(messages, {
+        model: connection.model,
+        temperature: 0.9,
+        maxTokens: 1500,
+      });
+      content = result.content ?? "";
+    } catch (error) {
+      logger.error({ error, characterId: req.params.id }, "[characters] Hoshito Merit generation LLM call failed");
+      return reply.status(502).send({ error: error instanceof Error ? error.message : "Merit generation failed." });
+    }
+
+    if (!content.trim()) {
+      return reply.status(502).send({ error: "The model returned an empty response." });
+    }
+
+    const merits = parseMeritGenerationResponse(content, collectAttributeNames(domains));
+    return { merits };
   });
 
   // ── Export ──

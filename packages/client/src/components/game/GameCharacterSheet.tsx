@@ -565,7 +565,13 @@ function AttributeRow({
 
   return (
     <div className="flex items-center gap-2 px-3 py-1 rounded hover:bg-white/[0.04] transition-colors">
-      <span className={cn("w-8 shrink-0 text-[0.7rem] font-mono font-bold uppercase tracking-wide", isDeficit ? "text-red-400/60" : "text-neutral-400")}>
+      <span
+        className={cn(
+          "min-w-8 max-w-[6.5rem] shrink-0 truncate text-[0.7rem] font-mono font-bold tracking-wide",
+          isDeficit ? "text-red-400/60" : "text-neutral-400",
+        )}
+        title={attr.name}
+      >
         {attr.name}
       </span>
       {attr.isExalted && (
@@ -912,7 +918,7 @@ function StrandSection({ s }: { s: HoshitoCharacterStats }) {
         </div>
         <div className="mt-2.5 flex flex-wrap gap-2 text-[0.6rem]">
           <span className="text-neutral-500">
-            Primary: <span className="font-bold text-amber-500/80 uppercase">{st.primaryAttribute}</span>
+            Primary: <span className="font-bold text-amber-500/80">{st.primaryAttribute}</span>
           </span>
           {st.fork && (
             <span className="text-neutral-500">
@@ -1588,9 +1594,9 @@ export function GameCharacterSheet({
                                   <input
                                     value={attr.name}
                                     onChange={(e) => updateHoshitoAttr(di, ai, "name", e.target.value)}
-                                    placeholder="NAME"
-                                    maxLength={8}
-                                    className="w-16 rounded border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-input-bg)] px-1.5 py-1 text-xs font-bold uppercase outline-none focus:border-[var(--marinara-chat-chrome-input-border-focus)]"
+                                    placeholder="Name"
+                                    maxLength={20}
+                                    className="w-16 rounded border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-input-bg)] px-1.5 py-1 text-xs font-bold outline-none transition-[width] duration-150 focus:w-28 focus:border-[var(--marinara-chat-chrome-input-border-focus)]"
                                   />
                                   <div className="flex items-center rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-input-bg)]">
                                     <button

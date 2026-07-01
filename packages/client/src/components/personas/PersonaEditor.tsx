@@ -2505,9 +2505,9 @@ function PersonaStatsTab({
                       <input
                         value={attr.name}
                         onChange={(e) => updateHoshitoAttr(di, ai, "name", e.target.value)}
-                        className="w-14 rounded border border-[var(--border)] bg-[var(--input)] px-1.5 py-0.5 text-xs font-bold uppercase outline-none focus:border-[var(--primary)]/40"
-                        placeholder="NAME"
-                        maxLength={8}
+                        className="w-14 rounded border border-[var(--border)] bg-[var(--input)] px-1.5 py-0.5 text-xs font-bold outline-none transition-[width] duration-150 focus:w-28 focus:border-[var(--primary)]/40"
+                        placeholder="Name"
+                        maxLength={20}
                       />
 
                       {/* Grade selector — arrow buttons */}
