@@ -26,6 +26,8 @@ import type {
   HoshitoEncounterActionRequest,
   HoshitoEncounterActionResponse,
   HoshitoCombatState,
+  HoshitoCharacterStats,
+  HoshitoCounters,
   RPGStatsConfig,
 } from "@marinara-engine/shared";
 import {
@@ -276,12 +278,85 @@ async function buildPersonaContext(chars: ReturnType<typeof createCharactersStor
   return { personaName: persona.name, personaCtx: ctx };
 }
 
+/**
+ * Formats a live Hoshito character block (Domains/Grades/Sparks, derived stats, Verve/Story
+ * Points, Resistances, Merits) for combat-init/action prompt context. Shared by the player's
+ * block and each party member's block so the two don't drift out of sync with each other.
+ *
+ * `counters` (Tier B — Verve/Story Points) is passed in separately from `h` (Tier A — the rest
+ * of the sheet) because the two now live in different places and are versioned differently; see
+ * HoshitoCounters. When omitted, falls back to whatever `h.verve`/`h.storyPoints` last had —
+ * this only happens for chats saved before the Tier A/B split.
+ */
+function formatHoshitoLiveContextBlock(
+  label: string,
+  h: HoshitoCharacterStats | undefined,
+  counters?: HoshitoCounters | null,
+): string {
+  if (!h || !Array.isArray(h.domains) || h.domains.length === 0) return "";
+  let ctx = `\n${label} (use these EXACT names/grades — do not invent a different layout):\n`;
+  ctx += `- Level: ${h.level ?? 1}${h.isExalted ? " (Exalted — cap 52)" : ""}\n`;
+  for (const domain of h.domains) {
+    const attrList = domain.attributes
+      .map(
+        (attr) =>
+          `${attr.name} ${attr.grade}${attr.sparks > 0 ? ` (${attr.sparks} Spark${attr.sparks > 1 ? "s" : ""})` : ""}${attr.vestigeSparks > 0 ? ` (${attr.vestigeSparks} Vestige)` : ""}`,
+      )
+      .join(", ");
+    ctx += `- ${domain.name}: ${attrList}\n`;
+  }
+  if (h.strand) ctx += `- Strand: ${h.strand.name} (Primary: ${h.strand.primaryAttribute})\n`;
+  if (h.healthMax != null) ctx += `- Health: ${h.health ?? h.healthMax}/${h.healthMax}\n`;
+  if (h.staggerMax != null) ctx += `- Stagger: ${h.stagger ?? h.staggerMax}/${h.staggerMax}\n`;
+  if (h.apMax != null) ctx += `- AP max: ${h.apMax}\n`;
+  if (h.coins != null) ctx += `- Coins: ${h.coins}\n`;
+  const verve = counters?.verve ?? h.verve;
+  const storyPoints = counters?.storyPoints ?? h.storyPoints;
+  if (verve != null) ctx += `- Verve: ${verve}\n`;
+  if (storyPoints != null) ctx += `- Story Points: ${storyPoints}\n`;
+  if (h.resistances && h.resistances.length > 0) {
+    ctx += `- Resistances: ${h.resistances.map((r) => `${r.type} (HP ${r.healthTier} / Stagger ${r.staggerTier})`).join(", ")}\n`;
+  }
+  if (h.coreMerits && h.coreMerits.length > 0) {
+    ctx += `- Core Merits:\n`;
+    for (const cm of h.coreMerits) {
+      const grant = cm.grantedSpark ? "1 Spark" : cm.attributeGrant ? `Grade step on ${cm.attributeGrant}` : "no grant set";
+      ctx += `  - [${cm.type}] ${cm.description} (${grant})\n`;
+      if (cm.transformations && cm.transformations.length > 0) {
+        for (const t of cm.transformations) {
+          ctx += `    - Lv${t.level} transformation: [${t.merit.category}] ${t.merit.name} — ${t.merit.description}${t.narrative ? ` (${t.narrative})` : ""}\n`;
+        }
+      }
+    }
+  }
+  if (h.merits && h.merits.length > 0) {
+    ctx += `- Merits:\n`;
+    for (const m of h.merits) {
+      const spark = m.sparkGrantAttribute ? `, Spark → ${m.sparkGrantAttribute}` : "";
+      const dormant = m.dormant ? ", dormant" : "";
+      ctx += `  - [${m.category}] ${m.name}: ${m.description}${spark}${dormant}\n`;
+    }
+  }
+  return ctx;
+}
+
+/** Case-insensitive name match against a chatMeta.gameCharacterCards array. */
+function findGameCharacterCardByName(
+  cards: Array<Record<string, unknown>>,
+  name: string | undefined,
+): Record<string, unknown> | undefined {
+  const target = (name ?? "").trim().toLowerCase();
+  if (!target) return undefined;
+  return cards.find((c) => typeof c.name === "string" && c.name.trim().toLowerCase() === target);
+}
+
 /** Get the latest game state context string for the chat. */
 async function buildGameStateContext(
   gsStorage: ReturnType<typeof createGameStateStorage>,
   chatId: string,
   personaName: string,
   chatMeta?: Record<string, unknown> | null,
+  chars?: ReturnType<typeof createCharactersStorage>,
 ) {
   const gs = await gsStorage.getLatest(chatId);
   if (!gs) return "";
@@ -290,6 +365,13 @@ async function buildGameStateContext(
   if (gs.weather) ctx += `Weather: ${gs.weather}\n`;
   if (gs.time) ctx += `Time: ${gs.time}\n`;
   if (gs.date) ctx += `Date: ${gs.date}\n`;
+
+  // Tier A sheets (Domains, Grades, Merits, etc.) for BOTH the player and party members are
+  // canonically stored here — chatMeta.gameCharacterCards[], matched by name. See
+  // formatHoshitoLiveContextBlock for why Tier B (Verve/Story Points) is sourced separately.
+  const gameCharCards = Array.isArray(chatMeta?.gameCharacterCards)
+    ? (chatMeta!.gameCharacterCards as Array<Record<string, unknown>>)
+    : [];
 
   const playerStats = gs.playerStats
     ? typeof gs.playerStats === "string"
@@ -315,78 +397,25 @@ async function buildGameStateContext(
     // Sparks with their actual configured names, Strand, Exaltation, and Resistances. Combat
     // init and action prompts both pull from this string, so this is the GM's only window into
     // the character's real Hoshito layout during an active session.
-    const h = playerStats.hoshitoStats as
-      | {
-          level?: number;
-          domains?: Array<{ name: string; attributes: Array<{ name: string; grade: string; sparks: number; vestigeSparks: number }> }>;
-          strand?: { name: string; primaryAttribute: string };
-          health?: number; healthMax?: number;
-          stagger?: number; staggerMax?: number;
-          apMax?: number;
-          coins?: number;
-          verve?: number; storyPoints?: number;
-          isExalted?: boolean;
-          resistances?: Array<{ type: string; healthTier: string; staggerTier: string }>;
-          merits?: Array<{ category: string; name: string; description: string; sparkGrantAttribute?: string; dormant?: boolean }>;
-          coreMerits?: Array<{
-            type: string;
-            description: string;
-            attributeGrant?: string;
-            grantedSpark?: boolean;
-            transformations?: Array<{ merit: { category: string; name: string; description: string }; level: number; narrative: string }>;
-          }>;
-        }
-      | undefined;
-    if (h && Array.isArray(h.domains) && h.domains.length > 0) {
-      ctx += `\n${personaName}'s Hoshito Character (use these EXACT names/grades — do not invent a different layout):\n`;
-      ctx += `- Level: ${h.level ?? 1}${h.isExalted ? " (Exalted — cap 52)" : ""}\n`;
-      for (const domain of h.domains) {
-        const attrList = domain.attributes
-          .map((attr) => `${attr.name} ${attr.grade}${attr.sparks > 0 ? ` (${attr.sparks} Spark${attr.sparks > 1 ? "s" : ""})` : ""}${attr.vestigeSparks > 0 ? ` (${attr.vestigeSparks} Vestige)` : ""}`)
-          .join(", ");
-        ctx += `- ${domain.name}: ${attrList}\n`;
-      }
-      if (h.strand) ctx += `- Strand: ${h.strand.name} (Primary: ${h.strand.primaryAttribute})\n`;
-      if (h.healthMax != null) ctx += `- Health: ${h.health ?? h.healthMax}/${h.healthMax}\n`;
-      if (h.staggerMax != null) ctx += `- Stagger: ${h.stagger ?? h.staggerMax}/${h.staggerMax}\n`;
-      if (h.apMax != null) ctx += `- AP max: ${h.apMax}\n`;
-      if (h.coins != null) ctx += `- Coins: ${h.coins}\n`;
-      if (h.verve != null) ctx += `- Verve: ${h.verve}\n`;
-      if (h.storyPoints != null) ctx += `- Story Points: ${h.storyPoints}\n`;
-      if (h.resistances && h.resistances.length > 0) {
-        ctx += `- Resistances: ${h.resistances.map((r) => `${r.type} (HP ${r.healthTier} / Stagger ${r.staggerTier})`).join(", ")}\n`;
-      }
-      if (h.coreMerits && h.coreMerits.length > 0) {
-        ctx += `- Core Merits:\n`;
-        for (const cm of h.coreMerits) {
-          const grant = cm.grantedSpark ? "1 Spark" : cm.attributeGrant ? `Grade step on ${cm.attributeGrant}` : "no grant set";
-          ctx += `  - [${cm.type}] ${cm.description} (${grant})\n`;
-          if (cm.transformations && cm.transformations.length > 0) {
-            for (const t of cm.transformations) {
-              ctx += `    - Lv${t.level} transformation: [${t.merit.category}] ${t.merit.name} — ${t.merit.description}${t.narrative ? ` (${t.narrative})` : ""}\n`;
-            }
-          }
-        }
-      }
-      if (h.merits && h.merits.length > 0) {
-        ctx += `- Merits:\n`;
-        for (const m of h.merits) {
-          const spark = m.sparkGrantAttribute ? `, Spark → ${m.sparkGrantAttribute}` : "";
-          const dormant = m.dormant ? ", dormant" : "";
-          ctx += `  - [${m.category}] ${m.name}: ${m.description}${spark}${dormant}\n`;
-        }
-      }
-    }
+    //
+    // Tier A (the sheet itself) is canonically chatMeta.gameCharacterCards[] — the character may
+    // have leveled up, gained Merits, etc. since the game started, and Game Mode's Edit Sheet
+    // writes there, not to playerStats.hoshitoStats anymore. playerStats.hoshitoStats is kept as
+    // a fallback purely for chats saved before that pipeline existed.
+    const playerCardEntry = findGameCharacterCardByName(gameCharCards, personaName);
+    const h =
+      (playerCardEntry?.hoshitoStats as HoshitoCharacterStats | undefined) ??
+      (playerStats.hoshitoStats as HoshitoCharacterStats | undefined);
+    // Tier B — Verve/Story Points are live counters, not part of the Tier A sheet blob above.
+    const playerCounters = playerStats.hoshitoCounters as HoshitoCounters | undefined;
+    ctx += formatHoshitoLiveContextBlock(`${personaName}'s Hoshito Character`, h, playerCounters);
   }
 
   // Fallback: if playerStats.attributes is missing (it is never seeded today),
   // surface the player's Game Mode character-sheet attributes so the encounter
   // init prompt can scale combat stats to match the build.
   if (!playerStats?.attributes && chatMeta) {
-    const cards = Array.isArray(chatMeta.gameCharacterCards)
-      ? (chatMeta.gameCharacterCards as Array<Record<string, unknown>>)
-      : [];
-    const playerCard = cards[0];
+    const playerCard = gameCharCards[0];
     const rpgStats = playerCard?.rpgStats as { attributes?: Array<{ name: string; value: number }> } | undefined;
     const mapped = mapSheetAttributesToRPG(rpgStats?.attributes);
     const ordered: Array<keyof typeof mapped> = ["str", "dex", "con", "int", "wis", "cha"];
@@ -414,6 +443,26 @@ async function buildGameStateContext(
     ctx += `\nPresent Characters:\n`;
     for (const pc of presentChars) {
       ctx += `  - ${pc.name} (${pc.mood}): ${pc.action}\n`;
+      // Party-member Hoshito context, same precedence as the player above: the matched
+      // gameCharacterCards entry (Tier A, canonical) first; if this party member has never had
+      // their sheet opened/saved in Game Mode yet, no entry exists there — fall back to the base
+      // Character Editor record (extensions.hoshitoStats), same source and pattern
+      // buildCharacterContext already uses for legacy rpgStats above. Without this fallback, a
+      // freshly-added party member is invisible to combat-init until someone opens their sheet
+      // once, even though the client already shows their data via the same fallback chain.
+      const partyCardEntry = findGameCharacterCardByName(gameCharCards, pc.name);
+      let partyHoshito = partyCardEntry?.hoshitoStats as HoshitoCharacterStats | undefined;
+      if (!partyHoshito && chars && pc.characterId) {
+        try {
+          const charRow = await chars.getById(pc.characterId);
+          const charData = charRow ? (typeof charRow.data === "string" ? JSON.parse(charRow.data) : charRow.data) : null;
+          partyHoshito = charData?.extensions?.hoshitoStats as HoshitoCharacterStats | undefined;
+        } catch {
+          // ignore — party member simply won't get a Hoshito context block this turn
+        }
+      }
+      const partyCounters = pc.hoshitoCounters as HoshitoCounters | undefined;
+      ctx += formatHoshitoLiveContextBlock(`${pc.name}'s Hoshito Character`, partyHoshito, partyCounters);
     }
   }
   return ctx;
@@ -955,7 +1004,7 @@ export async function encounterRoutes(app: FastifyInstance) {
       } else {
         chatMeta = (chat.metadata as Record<string, unknown> | null) ?? null;
       }
-      const gameStateCtx = await buildGameStateContext(gsStorage, chatId, personaName, chatMeta);
+      const gameStateCtx = await buildGameStateContext(gsStorage, chatId, personaName, chatMeta, chars);
       const spellbookCtx = await loadSpellbookContext(spellbookId);
 
       // Get recent chat messages for history
@@ -1209,7 +1258,7 @@ export async function encounterRoutes(app: FastifyInstance) {
       } else {
         chatMeta = (chat.metadata as Record<string, unknown> | null) ?? null;
       }
-      const gameStateCtx = await buildGameStateContext(gsStorage, chatId, personaName, chatMeta);
+      const gameStateCtx = await buildGameStateContext(gsStorage, chatId, personaName, chatMeta, chars);
       const spellbookCtx = await loadSpellbookContext(spellbookId ?? null);
 
       const chatMessages = await chats.listMessages(chatId);
