@@ -746,6 +746,11 @@ export function ChatArea() {
             backstory: parsed.extensions?.backstory ?? "",
             appearance: parsed.extensions?.appearance ?? "",
             tags: parsed.tags ?? [],
+            hoshitoStats:
+              (parsed.extensions?.hoshitoStats as
+                | import("@marinara-engine/shared").HoshitoCharacterStats
+                | null
+                | undefined) ?? null,
           },
         ];
       } catch {
