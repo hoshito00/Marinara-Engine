@@ -1159,7 +1159,7 @@ const GameHoshitoCombatUI = lazy(async () => {
 });
 
 import { Modal } from "../ui/Modal";
-import type { Chat, SessionSummary, Combatant, Message, GameCombatStateSnapshot, HoshitoCharacterStats, HoshitoCombatState, HoshitoCombatant, HoshitoDefaultActions, HoshitoPlayerAction, HoshitoEncounterInitRequest, HoshitoEncounterActionRequest, HoshitoEncounterActionResponse } from "@marinara-engine/shared";
+import type { Chat, SessionSummary, Combatant, Message, GameCombatStateSnapshot, HoshitoCharacterStats, HoshitoCounters, HoshitoCombatState, HoshitoCombatant, HoshitoDefaultActions, HoshitoPlayerAction, HoshitoEncounterInitRequest, HoshitoEncounterActionRequest, HoshitoEncounterActionResponse, PresentCharacter } from "@marinara-engine/shared";
 import { HOSHITO_DEFAULT_ACTIONS } from "@marinara-engine/shared";
 import type { CharacterMap, PersonaInfo } from "../chat/chat-area.types";
 
@@ -1961,6 +1961,9 @@ interface GameSurfaceProps {
     avatarCrop?: AvatarCropValue | null;
     nameColor?: string;
     dialogueColor?: string;
+    /** Hoshito ruleset base "build" data configured in Character Editor — seed source
+     *  the first time this character enters Game Mode with no gameCharacterCards entry yet. */
+    hoshitoStats?: HoshitoCharacterStats | null;
   }>;
   personaInfo?: PersonaInfo;
   chatBackground?: string | null;
@@ -7186,9 +7189,12 @@ function GameSurfaceComponent({
             attributes: Array<{ name: string; value: number }>;
             hp: { value: number; max: number };
             pools?: import("@marinara-engine/shared").RPGStatPool[];
+            enabled?: boolean;
           };
         };
         hoshitoStats?: HoshitoCharacterStats | null;
+        /** Tier B live counters (Verve, Story Points) — versioned per snapshot, unlike hoshitoStats. */
+        hoshitoCounters?: import("@marinara-engine/shared").HoshitoCounters | null;
       }
     > = {};
 
@@ -7210,6 +7216,11 @@ function GameSurfaceComponent({
       const name = c?.name ?? npc?.name ?? "";
       if (!name) continue;
       const gc = findGameCard(name);
+      // Tier A Hoshito sheet: prefer the in-session gameCharacterCards entry (the character's
+      // canonical, editable-in-Game-Mode sheet); fall back to the base Character Editor data
+      // (parsed.extensions.hoshitoStats, via ChatArea's gameCharacters) the first time this
+      // character enters Game Mode with no gameCharacterCards entry yet.
+      const baseHoshitoStats = (gc?.hoshitoStats as HoshitoCharacterStats | null | undefined) ?? c?.hoshitoStats ?? null;
       cards[charId] = {
         title: name,
         subtitle: npc?.location || undefined,
@@ -7230,10 +7241,12 @@ function GameSurfaceComponent({
                     attributes: Array<{ name: string; value: number }>;
                     hp: { value: number; max: number };
                     pools?: import("@marinara-engine/shared").RPGStatPool[];
+                    enabled?: boolean;
                   }
                 | undefined,
             }
           : undefined,
+        hoshitoStats: baseHoshitoStats,
       };
     }
 
@@ -7255,6 +7268,7 @@ function GameSurfaceComponent({
             : existing?.stats,
         customFields: pc.customFields || existing?.customFields,
         gameCard: existing?.gameCard,
+        hoshitoCounters: pc.hoshitoCounters ?? existing?.hoshitoCounters ?? null,
       };
     }
 
@@ -7263,6 +7277,15 @@ function GameSurfaceComponent({
       const configPersonaId = (config?.personaId as string | undefined) ?? null;
       const personaId = configPersonaId ? `persona:${configPersonaId}` : "persona:active";
       const gc = findGameCard(personaInfo.name);
+      // Tier A: gameCharacterCards entry is canonical; fall back to Persona Editor's base data,
+      // then to the old playerStats.hoshitoStats location for chats that predate this pipeline
+      // (see migration note — the auto-sync effect below writes a gameCharacterCards entry for
+      // this going forward, but reads should degrade gracefully in the meantime).
+      const playerHoshitoStats =
+        (gc?.hoshitoStats as HoshitoCharacterStats | null | undefined) ??
+        personaInfo.hoshitoStats ??
+        gameSnapshot?.playerStats?.hoshitoStats ??
+        null;
       cards[personaId] = {
         title: personaInfo.name,
         subtitle: "Player Character",
@@ -7298,11 +7321,17 @@ function GameSurfaceComponent({
               weaknesses: (gc.weaknesses as string[]) || [],
               extra: (gc.extra as Record<string, string>) || {},
               rpgStats: gc.rpgStats as
-                | { attributes: Array<{ name: string; value: number }>; hp: { value: number; max: number } }
+                | {
+                    attributes: Array<{ name: string; value: number }>;
+                    hp: { value: number; max: number };
+                    pools?: import("@marinara-engine/shared").RPGStatPool[];
+                    enabled?: boolean;
+                  }
                 | undefined,
             }
           : undefined,
-        hoshitoStats: gameSnapshot?.playerStats?.hoshitoStats ?? null,
+        hoshitoStats: playerHoshitoStats,
+        hoshitoCounters: gameSnapshot?.playerStats?.hoshitoCounters ?? null,
       };
     } else {
       // No persona selected — default player card
@@ -7332,6 +7361,7 @@ function GameSurfaceComponent({
           location: item.location,
         })),
         hoshitoStats: gameSnapshot?.playerStats?.hoshitoStats ?? null,
+        hoshitoCounters: gameSnapshot?.playerStats?.hoshitoCounters ?? null,
       };
     }
 
@@ -7340,9 +7370,11 @@ function GameSurfaceComponent({
 
   const handleSaveCharacterSheet = useCallback(
     async (
+      charId: string,
       cardTitle: string,
       gameCard: GameCharacterSheetGameCard | undefined,
       hoshitoStats?: HoshitoCharacterStats,
+      hoshitoCounters?: HoshitoCounters,
     ) => {
       if (!activeChatId) return;
 
@@ -7383,26 +7415,42 @@ function GameSurfaceComponent({
                       max: Math.max(1, Number(gameCard.rpgStats.hp.max) || 1),
                     },
                     pools: normalizeRpgStatPools(gameCard.rpgStats),
+                    // Undefined/true = active, matching the same convention as HoshitoCharacterStats.enabled.
+                    enabled: gameCard.rpgStats.enabled !== false,
                   },
                 }
               : {}),
           }
         : null;
 
+      // Tier A Hoshito sheet: unified storage for player AND party members lives on this same
+      // gameCharacterCards entry (matched by name), alongside the legacy rpgStats/abilities/etc.
+      // A pure-Hoshito character has no legacy gameCard content at all, so sanitizedGameCard alone
+      // would be null and — with the old logic — this branch would delete the entry outright,
+      // wiping the very place hoshitoStats now needs to live. Build the final entry from whichever
+      // of the two (legacy fields / hoshitoStats) are actually present this save.
+      const sanitizedEntry: Record<string, unknown> | null =
+        sanitizedGameCard || hoshitoStats
+          ? {
+              ...(sanitizedGameCard ?? { name: normalizedTitle }),
+              ...(hoshitoStats ? { hoshitoStats } : {}),
+            }
+          : null;
+
       const updatedCards = [...currentCards];
       let shouldUpdateCards = false;
-      if (sanitizedGameCard) {
+      if (sanitizedEntry) {
         shouldUpdateCards = true;
         if (currentIndex >= 0) {
-          updatedCards[currentIndex] = sanitizedGameCard;
+          updatedCards[currentIndex] = sanitizedEntry;
         } else {
-          updatedCards.push(sanitizedGameCard);
+          updatedCards.push(sanitizedEntry);
         }
       } else if (currentIndex >= 0) {
         shouldUpdateCards = true;
         updatedCards.splice(currentIndex, 1);
-      } else if (!hoshitoStats) {
-        // No card to create/update/delete, and no hoshitoStats — nothing to do
+      } else if (!hoshitoCounters) {
+        // No card to create/update/delete, and no Tier B counters either — nothing to do
         return;
       }
 
@@ -7410,34 +7458,81 @@ function GameSurfaceComponent({
         if (shouldUpdateCards) {
           await updateChatMetadata.mutateAsync({ id: activeChatId, gameCharacterCards: updatedCards });
         }
-        // Persist Hoshito character stats to player stats if provided (player sheet save)
-        if (hoshitoStats) {
+        // Tier B: Verve/Story Points are the only Hoshito data that's versioned per snapshot.
+        // Route to the player's playerStats.hoshitoCounters or to the matching party member's
+        // presentCharacters[].hoshitoCounters, based on which card was actually open — never both,
+        // and never unconditionally to the player regardless of which sheet was being edited.
+        if (hoshitoCounters) {
+          const isPlayerCard = charId.startsWith("persona:");
           const currentGameState = useGameStateStore.getState().current;
           const matchingState = currentGameState?.chatId === activeChatId ? currentGameState : null;
-          const updatedPlayerStats = { ...(matchingState?.playerStats ?? {}), hoshitoStats };
-          // Update the store — create a minimal game state if none exists yet for this chat
-          useGameStateStore.getState().setGameState(
-            matchingState
-              ? { ...matchingState, playerStats: updatedPlayerStats as typeof matchingState.playerStats }
-              : {
-                  id: "",
-                  chatId: activeChatId,
-                  messageId: "",
-                  swipeIndex: 0,
-                  date: null,
-                  time: null,
-                  location: null,
-                  weather: null,
-                  temperature: null,
-                  presentCharacters: [],
-                  recentEvents: [],
-                  playerStats: updatedPlayerStats as import("@marinara-engine/shared").PlayerStats,
-                  personaStats: null,
-                  createdAt: "",
-                },
-          );
-          // Always patch the server regardless of whether a prior state existed
-          api.patch(`/chats/${activeChatId}/game-state`, { playerStats: updatedPlayerStats, manual: true }).catch(() => {});
+
+          if (isPlayerCard) {
+            const updatedPlayerStats = { ...(matchingState?.playerStats ?? {}), hoshitoCounters };
+            useGameStateStore.getState().setGameState(
+              matchingState
+                ? { ...matchingState, playerStats: updatedPlayerStats as typeof matchingState.playerStats }
+                : {
+                    id: "",
+                    chatId: activeChatId,
+                    messageId: "",
+                    swipeIndex: 0,
+                    date: null,
+                    time: null,
+                    location: null,
+                    weather: null,
+                    temperature: null,
+                    presentCharacters: [],
+                    recentEvents: [],
+                    playerStats: updatedPlayerStats as import("@marinara-engine/shared").PlayerStats,
+                    personaStats: null,
+                    createdAt: "",
+                  },
+            );
+            api.patch(`/chats/${activeChatId}/game-state`, { playerStats: updatedPlayerStats, manual: true }).catch(() => {});
+          } else {
+            const existingPresent = matchingState?.presentCharacters ?? [];
+            const presentIndex = existingPresent.findIndex((pc) => pc.characterId === charId);
+            const updatedPresent: PresentCharacter[] =
+              presentIndex >= 0
+                ? existingPresent.map((pc, i) => (i === presentIndex ? { ...pc, hoshitoCounters } : pc))
+                : [
+                    ...existingPresent,
+                    {
+                      characterId: charId,
+                      name: normalizedTitle,
+                      emoji: "",
+                      mood: "",
+                      appearance: null,
+                      outfit: null,
+                      customFields: {},
+                      stats: [],
+                      thoughts: null,
+                      hoshitoCounters,
+                    },
+                  ];
+            useGameStateStore.getState().setGameState(
+              matchingState
+                ? { ...matchingState, presentCharacters: updatedPresent }
+                : {
+                    id: "",
+                    chatId: activeChatId,
+                    messageId: "",
+                    swipeIndex: 0,
+                    date: null,
+                    time: null,
+                    location: null,
+                    weather: null,
+                    temperature: null,
+                    presentCharacters: updatedPresent,
+                    recentEvents: [],
+                    playerStats: null,
+                    personaStats: null,
+                    createdAt: "",
+                  },
+            );
+            api.patch(`/chats/${activeChatId}/game-state`, { presentCharacters: updatedPresent, manual: true }).catch(() => {});
+          }
         }
         toast.success(`${normalizedTitle} sheet updated.`);
       } catch (error) {
@@ -10199,8 +10294,14 @@ function GameSurfaceComponent({
         <GameCharacterSheet
           card={partyCards[characterSheetCharId]}
           onClose={closeCharacterSheet}
-          onSave={(gameCard: GameCharacterSheetGameCard | undefined, hoshitoStats) =>
-            handleSaveCharacterSheet(partyCards[characterSheetCharId].title, gameCard, hoshitoStats)
+          onSave={(gameCard: GameCharacterSheetGameCard | undefined, hoshitoStats, hoshitoCounters) =>
+            handleSaveCharacterSheet(
+              characterSheetCharId,
+              partyCards[characterSheetCharId].title,
+              gameCard,
+              hoshitoStats,
+              hoshitoCounters,
+            )
           }
         />
       )}
@@ -10321,3 +10422,4 @@ function GameSurfaceComponent({
 }
 
 export const GameSurface = memo(GameSurfaceComponent);
+
