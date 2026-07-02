@@ -72,6 +72,25 @@ export interface PresentCharacter {
   stats: CharacterStat[];
   /** What the character is thinking */
   thoughts: string | null;
+  /**
+   * Hoshito ruleset live counters (Verve, Story Points) for this party member.
+   * Tier B — the only Hoshito data that is versioned per message/swipe and carried
+   * forward / rolled back with the rest of game state. The character's full sheet
+   * (Domains, Grades, Merits, etc.) lives in chatMeta.gameCharacterCards[].hoshitoStats
+   * instead, since it is not meant to fork/rewind like a live counter.
+   */
+  hoshitoCounters?: HoshitoCounters | null;
+}
+
+/**
+ * Hoshito ruleset live counters — the only part of a Hoshito sheet that is a genuine
+ * earned/spent counter needing snapshot-cloning/carry-forward treatment across turns.
+ * Everything else about a character's Hoshito sheet (Domains, Merits, Strand, etc.) is
+ * chat-scoped "build" data, not a per-message counter — see HoshitoCharacterStats.
+ */
+export interface HoshitoCounters {
+  verve: number;
+  storyPoints: number;
 }
 
 /** A numeric stat for a character. */
@@ -100,6 +119,14 @@ export interface PlayerStats {
    * Primary stats field for Hoshito sessions.
    */
   hoshitoStats?: HoshitoCharacterStats | null;
+  /**
+   * Hoshito ruleset live counters (Verve, Story Points) for the player.
+   * Tier B — see PresentCharacter.hoshitoCounters for the full explanation. The
+   * player's full sheet now lives in chatMeta.gameCharacterCards[].hoshitoStats;
+   * this field (and the legacy hoshitoStats above) exist for backward-compat reads
+   * of already-populated chats.
+   */
+  hoshitoCounters?: HoshitoCounters | null;
   /** @deprecated Use hoshitoStats. Classic D&D-style attributes — being phased out. */
   attributes: RPGAttributes | null;
   /** @deprecated Skills are not a distinct mechanic in Hoshito — use Attribute Grades and Sparks. */
