@@ -1307,6 +1307,23 @@ function isTrackerAvatarCrop(value: unknown): value is Record<string, unknown> {
   );
 }
 
+/**
+ * Hoshito ruleset Tier B live counters (Verve, Story Points). The Character Tracker agent
+ * narrates mood/appearance/thoughts each turn — it has no concept of these, so a freshly
+ * generated presentCharacters entry never carries them. Without carry-forward, every tracker
+ * pass would silently null out a party member's counters, same class of bug as the
+ * avatarPath/avatarCrop/portrait* UI fields already preserved below.
+ */
+function isValidHoshitoCounters(value: unknown): value is { verve: number; storyPoints: number } {
+  return (
+    isPlainRecord(value) &&
+    typeof value.verve === "number" &&
+    Number.isFinite(value.verve) &&
+    typeof value.storyPoints === "number" &&
+    Number.isFinite(value.storyPoints)
+  );
+}
+
 export function isManualTrackerCharacterId(value: unknown): boolean {
   return typeof value === "string" && value.trim().startsWith("manual-");
 }
@@ -1377,6 +1394,9 @@ export function preserveTrackerCharacterUiFields(
       Number.isFinite(previousPortraitZoom)
     ) {
       character.portraitZoom = previousPortraitZoom;
+    }
+    if (!isValidHoshitoCounters(character.hoshitoCounters) && isValidHoshitoCounters(previous?.hoshitoCounters)) {
+      character.hoshitoCounters = previous.hoshitoCounters;
     }
   }
 }
