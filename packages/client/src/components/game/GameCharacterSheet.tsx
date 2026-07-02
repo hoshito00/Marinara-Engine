@@ -27,6 +27,7 @@ import {
 import type {
   HoshitoAttribute,
   HoshitoCharacterStats,
+  HoshitoCounters,
   HoshitoDefaultActionType,
   HoshitoDefaultActions,
   HoshitoGrade,
@@ -67,6 +68,9 @@ export interface GameCharacterSheetGameCard {
     attributes: Array<{ name: string; value: number }>;
     hp: { value: number; max: number };
     pools?: RPGStatPool[];
+    /** Whether legacy RPG tracking is active for this character. Undefined/true = active, matching
+     *  the same convention as HoshitoCharacterStats.enabled. */
+    enabled?: boolean;
   };
 }
 
@@ -84,6 +88,8 @@ export interface CharacterSheetCard {
   gameCard?: GameCharacterSheetGameCard;
   /** Hoshito ruleset stats — primary source when the Hoshito system is active. */
   hoshitoStats?: HoshitoCharacterStats | null;
+  /** Tier B live counters (Verve, Story Points) — versioned per snapshot, unlike hoshitoStats. */
+  hoshitoCounters?: HoshitoCounters | null;
 }
 
 interface GameCharacterSheetProps {
@@ -92,6 +98,7 @@ interface GameCharacterSheetProps {
   onSave?: (
     gameCard: GameCharacterSheetGameCard | undefined,
     hoshitoStats?: HoshitoCharacterStats,
+    hoshitoCounters?: HoshitoCounters,
   ) => Promise<void> | void;
   onRegenerate?: () => Promise<void> | void;
   isRegenerating?: boolean;
@@ -191,7 +198,11 @@ function normalizeDraftAttributes(value: unknown) {
     .filter((e): e is { name: string; value: number } => !!e);
   return entries;
 }
-function createDraft(gameCard?: GameCharacterSheetGameCard, hoshitoStats?: HoshitoCharacterStats | null): GameCardDraft {
+function createDraft(
+  gameCard?: GameCharacterSheetGameCard,
+  hoshitoStats?: HoshitoCharacterStats | null,
+  hoshitoCounters?: HoshitoCounters | null,
+): GameCardDraft {
   const raw = gameCard as (Record<string, unknown> & { rpgStats?: Record<string, unknown> }) | undefined;
   const rawRpg =
     raw?.rpgStats && typeof raw.rpgStats === "object" && !Array.isArray(raw.rpgStats)
@@ -230,8 +241,8 @@ function createDraft(gameCard?: GameCharacterSheetGameCard, hoshitoStats?: Hoshi
       hoshitoStats?.domains && hoshitoStats.domains.length > 0
         ? hoshitoStats.domains
         : [blankDomain("Physical"), blankDomain("Mental"), blankDomain("Social")],
-    hoshitoVerve: hoshitoStats?.verve ?? 1,
-    hoshitoStoryPoints: hoshitoStats?.storyPoints ?? 0,
+    hoshitoVerve: hoshitoCounters?.verve ?? hoshitoStats?.verve ?? 1,
+    hoshitoStoryPoints: hoshitoCounters?.storyPoints ?? hoshitoStats?.storyPoints ?? 0,
     hoshitoMerits: hoshitoStats?.merits ?? [],
     hoshitoCoreMerits: hoshitoStats?.coreMerits ?? [],
   };
@@ -327,12 +338,13 @@ function normalizeHoshitoDraft(
     }))
     .filter((cm) => cm.description.length > 0);
   return {
+    // verve/storyPoints intentionally NOT overridden from draft here — they're Tier B live
+    // counters now (see handleSave's separate hoshitoCounters return value). This sheet blob
+    // just carries through whatever it last had, as a frozen/legacy fallback value.
     ...(existing ?? { level: 1, domains: [], verve: 1, storyPoints: 0 }),
     enabled: draft.hoshitoEnabled,
     level: Math.max(1, draft.hoshitoLevel),
     domains,
-    verve: Math.max(0, draft.hoshitoVerve),
-    storyPoints: Math.max(0, draft.hoshitoStoryPoints),
     merits,
     coreMerits,
   };
@@ -657,15 +669,17 @@ function DomainCard({
 // DerivedStatsPanel
 // ──────────────────────────────────────────────
 
-function DerivedStatsPanel({ s }: { s: HoshitoCharacterStats }) {
+function DerivedStatsPanel({ s, counters }: { s: HoshitoCharacterStats; counters?: HoshitoCounters | null }) {
   const { healthMax, staggerMax, apMax, verveMax } = computeDerived(s);
+  const verve = counters?.verve ?? s.verve;
+  const storyPoints = counters?.storyPoints ?? s.storyPoints;
   const cells: Array<{ label: string; value: string; colorClass: string }> = [
-    { label: "Health",    value: s.health  != null ? `${s.health}/${healthMax}`   : String(healthMax),  colorClass: "text-red-400"    },
-    { label: "Stagger",   value: s.stagger != null ? `${s.stagger}/${staggerMax}` : String(staggerMax), colorClass: "text-blue-400"   },
-    { label: "AP",        value: String(apMax),                                                          colorClass: "text-yellow-400" },
-    { label: "Coins",     value: String(s.coins ?? 3),                                                   colorClass: "text-amber-500"  },
-    { label: "Verve",     value: `${s.verve}/${verveMax}`,                                               colorClass: "text-violet-400" },
-    { label: "Story Pts", value: String(s.storyPoints),                                                  colorClass: "text-teal-400"   },
+    { label: "Health",       value: s.health  != null ? `${s.health}/${healthMax}`   : String(healthMax),  colorClass: "text-red-400"    },
+    { label: "Stagger",      value: s.stagger != null ? `${s.stagger}/${staggerMax}` : String(staggerMax), colorClass: "text-blue-400"   },
+    { label: "AP",           value: String(apMax),                                                          colorClass: "text-yellow-400" },
+    { label: "Combat Coins", value: String(s.coins ?? 3),                                                   colorClass: "text-amber-500"  },
+    { label: "Verve",        value: `${verve}/${verveMax}`,                                                 colorClass: "text-violet-400" },
+    { label: "Story Pts",    value: String(storyPoints),                                                    colorClass: "text-teal-400"   },
   ];
 
   return (
@@ -995,6 +1009,37 @@ function RpgAttributesView({ rpgStats }: { rpgStats: NonNullable<GameCharacterSh
   );
 }
 
+function RpgStatPoolsView({ pools }: { pools: RPGStatPool[] }) {
+  if (pools.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {pools.map((pool) => {
+        const poolMax = Math.max(1, Number(pool.max) || 1);
+        const poolValue = Math.max(0, Math.min(poolMax, Number(pool.value) || 0));
+        return (
+          <div key={pool.name}>
+            <div className="mb-0.5 flex items-center justify-between text-xs">
+              <span className="font-medium text-[var(--foreground)]/80">{pool.name}</span>
+              <span className="font-mono text-[var(--muted-foreground)]">
+                {poolValue}/{poolMax}
+              </span>
+            </div>
+            <div className="h-2.5 overflow-hidden rounded-full bg-[var(--marinara-chat-chrome-highlight-bg)] ring-1 ring-[var(--marinara-chat-chrome-panel-border)]">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${(poolValue / poolMax) * 100}%`,
+                  background: pool.color,
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ──────────────────────────────────────────────
 // Tab definitions
 // ──────────────────────────────────────────────
@@ -1020,11 +1065,12 @@ export function GameCharacterSheet({
   useHoshitoStyles();
 
   const hs = card.hoshitoStats ?? null;
+  const hoshitoCounters = card.hoshitoCounters ?? null;
 
   // ── Upstream draft/edit state ──
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving,  setIsSaving]  = useState(false);
-  const [draft, setDraft] = useState<GameCardDraft>(() => createDraft(card.gameCard, hs));
+  const [draft, setDraft] = useState<GameCardDraft>(() => createDraft(card.gameCard, hs, hoshitoCounters));
 
   // ── Hoshito-specific state ──
   const [activeTab,    setActiveTab]    = useState<Tab>("sheet");
@@ -1056,7 +1102,7 @@ export function GameCharacterSheet({
     setIsEditing(false);
     setIsSaving(false);
     const h = card.hoshitoStats ?? null;
-    setDraft(createDraft(card.gameCard, h));
+    setDraft(createDraft(card.gameCard, h, card.hoshitoCounters ?? null));
     setActiveTab("sheet");
     setEditingSlot(null);
     setDefaultActions(h?.defaultActions ?? HOSHITO_DEFAULT_ACTIONS);
@@ -1338,7 +1384,17 @@ export function GameCharacterSheet({
       const hoshitoToSave = hoshitoBase
         ? { ...hoshitoBase, defaultActions, actionNameLibrary: nameLibrary }
         : undefined;
-      await onSave(gameCardToSave, hoshitoToSave);
+      // Tier B: Verve/Story Points are live counters, saved separately from the Tier A sheet blob
+      // above so they can be routed (and carried forward/rolled back) independently.
+      const hoshitoCountersToSave: HoshitoCounters | undefined = hoshitoToSave
+        ? {
+            verve: isEditing ? Math.max(0, draft.hoshitoVerve) : (hoshitoCounters?.verve ?? hs?.verve ?? 0),
+            storyPoints: isEditing
+              ? Math.max(0, draft.hoshitoStoryPoints)
+              : (hoshitoCounters?.storyPoints ?? hs?.storyPoints ?? 0),
+          }
+        : undefined;
+      await onSave(gameCardToSave, hoshitoToSave, hoshitoCountersToSave);
       onClose();
     } catch {
       /* ignore */
@@ -2120,7 +2176,7 @@ export function GameCharacterSheet({
                   {/* Derived stats */}
                   <div>
                     <p className="mb-2 text-[0.6rem] font-semibold uppercase tracking-widest text-neutral-600">Derived Stats</p>
-                    <DerivedStatsPanel s={hs} />
+                    <DerivedStatsPanel s={hs} counters={hoshitoCounters} />
                   </div>
 
                   {/* Resistance profile */}
@@ -2152,14 +2208,6 @@ export function GameCharacterSheet({
                     </>
                   )}
 
-                  {/* Legacy RPG Attributes */}
-                  {card.gameCard?.rpgStats && (
-                    <>
-                      <div className="border-t border-white/[0.06]" />
-                      <RpgAttributesView rpgStats={card.gameCard.rpgStats} />
-                    </>
-                  )}
-
                   {/* Upstream stats / inventory / customFields */}
                   {card.stats && card.stats.length > 0 && (
                     <>
@@ -2186,33 +2234,6 @@ export function GameCharacterSheet({
                       </div>
                     </>
                   )}
-                </div>
-              )}
-              {hasRpgPools && (
-                <div className="space-y-2">
-                  {previewRpgPools.map((pool) => {
-                    const poolMax = Math.max(1, Number(pool.max) || 1);
-                    const poolValue = Math.max(0, Math.min(poolMax, Number(pool.value) || 0));
-                    return (
-                      <div key={pool.name}>
-                        <div className="mb-0.5 flex items-center justify-between text-xs">
-                          <span className="font-medium text-[var(--foreground)]/80">{pool.name}</span>
-                          <span className="font-mono text-[var(--muted-foreground)]">
-                            {poolValue}/{poolMax}
-                          </span>
-                        </div>
-                        <div className="h-2.5 overflow-hidden rounded-full bg-[var(--marinara-chat-chrome-highlight-bg)] ring-1 ring-[var(--marinara-chat-chrome-panel-border)]">
-                          <div
-                            className="h-full rounded-full transition-all"
-                            style={{
-                              width: `${(poolValue / poolMax) * 100}%`,
-                              background: pool.color,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
                 </div>
               )}
 
@@ -2310,7 +2331,7 @@ export function GameCharacterSheet({
                         };
                         setIsSaving(true);
                         try {
-                          await onSave(card.gameCard, blank);
+                          await onSave(card.gameCard, blank, { verve: 1, storyPoints: 0 });
                           onClose();
                         } finally {
                           setIsSaving(false);
@@ -2323,8 +2344,9 @@ export function GameCharacterSheet({
                   </div>
                   {/* Show legacy RPG attrs if present */}
                   {card.gameCard?.rpgStats && (
-                    <div className="mt-4">
+                    <div className="mt-4 space-y-3">
                       <RpgAttributesView rpgStats={card.gameCard.rpgStats} />
+                      {hasRpgPools && <RpgStatPoolsView pools={previewRpgPools} />}
                     </div>
                   )}
                 </div>
@@ -2342,8 +2364,9 @@ export function GameCharacterSheet({
                     </p>
                   </div>
                   {card.gameCard?.rpgStats && (
-                    <div className="mt-4">
+                    <div className="mt-4 space-y-3">
                       <RpgAttributesView rpgStats={card.gameCard.rpgStats} />
+                      {hasRpgPools && <RpgStatPoolsView pools={previewRpgPools} />}
                     </div>
                   )}
                 </div>
