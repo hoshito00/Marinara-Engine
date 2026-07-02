@@ -2392,7 +2392,16 @@ function PersonaStatsTab({
           label={<span className="font-medium">Enable Hoshito Stats</span>}
           description="Grades, Sparks, and derived combat stats are injected into the prompt and tracked by the GM agent."
           checked={hoshitoStats.enabled}
-          onChange={(checked) => updateHoshito({ enabled: checked })}
+          onChange={(checked) => {
+            if (checked && rpgStats.enabled) {
+              toast.info("RPG Attributes disabled — Hoshito and RPG Attributes are mutually exclusive.");
+            }
+            save({
+              ...parsed,
+              hoshitoStats: { ...hoshitoStats, enabled: checked },
+              ...(checked ? { rpgStats: { ...rpgStats, enabled: false } } : {}),
+            });
+          }}
           labelPosition="start"
           className="justify-between rounded-xl border border-[var(--border)] bg-[var(--card)] p-4"
           labelClassName="text-sm"
@@ -3088,7 +3097,16 @@ function PersonaStatsTab({
           label={<span className="font-medium">Enable RPG Attributes</span>}
           description="Attributes are injected into the prompt and tracked via Persona Stats in the game state."
           checked={rpgStats.enabled}
-          onChange={(checked) => updateRpg({ enabled: checked })}
+          onChange={(checked) => {
+            if (checked && hoshitoStats.enabled) {
+              toast.info("Hoshito Stats disabled — Hoshito and RPG Attributes are mutually exclusive.");
+            }
+            save({
+              ...parsed,
+              rpgStats: { ...rpgStats, enabled: checked },
+              ...(checked ? { hoshitoStats: { ...hoshitoStats, enabled: false } } : {}),
+            });
+          }}
           labelPosition="start"
           className="justify-between rounded-xl border border-[var(--border)] bg-[var(--card)] p-4"
           labelClassName="text-sm"
