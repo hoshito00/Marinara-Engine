@@ -2873,6 +2873,8 @@ function StatsTab({
 }) {
   const stats: RPGStatsConfig = (formData.extensions.rpgStats as RPGStatsConfig) ?? DEFAULT_RPG_STATS;
   const pools = normalizeRpgStatPools(stats);
+  const hoshitoStats: HoshitoCharacterStats =
+    (formData.extensions.hoshitoStats as HoshitoCharacterStats | undefined) ?? DEFAULT_HOSHITO_STATS;
 
   const update = (patch: Partial<RPGStatsConfig>) => {
     updateExtension("rpgStats", { ...stats, ...patch });
@@ -2916,7 +2918,13 @@ function StatsTab({
         label={<span className="font-medium">Enable RPG Stats</span>}
         description="Stats will be injected into the prompt and tracked by the Character Tracker agent."
         checked={stats.enabled}
-        onChange={(checked) => update({ enabled: checked })}
+        onChange={(checked) => {
+          if (checked && (hoshitoStats.enabled ?? false)) {
+            toast.info("Hoshito Stats disabled — Hoshito and RPG Stats are mutually exclusive.");
+            updateExtension("hoshitoStats", { ...hoshitoStats, enabled: false });
+          }
+          update({ enabled: checked });
+        }}
         labelPosition="start"
         className="justify-between rounded-xl border border-[var(--border)] bg-[var(--card)] p-4"
         labelClassName="text-sm"
@@ -3114,6 +3122,7 @@ function HoshitoStatsTab({
   const hoshitoStats: HoshitoCharacterStats =
     (formData.extensions.hoshitoStats as HoshitoCharacterStats | undefined) ?? DEFAULT_HOSHITO_STATS;
   const cfg = hoshitoStats.derivedStatConfig ?? DEFAULT_DERIVED_STAT_CONFIG;
+  const rpgStats: RPGStatsConfig = (formData.extensions.rpgStats as RPGStatsConfig) ?? DEFAULT_RPG_STATS;
 
   const updateHoshito = (patch: Partial<HoshitoCharacterStats>) => {
     updateExtension("hoshitoStats", { ...hoshitoStats, ...patch });
@@ -3267,7 +3276,13 @@ function HoshitoStatsTab({
         label={<span className="font-medium">Enable Hoshito Stats</span>}
         description="Grades, Sparks, and derived combat stats are injected into the prompt and tracked by the GM agent."
         checked={hoshitoStats.enabled ?? false}
-        onChange={(checked) => updateHoshito({ enabled: checked })}
+        onChange={(checked) => {
+          if (checked && rpgStats.enabled) {
+            toast.info("RPG Stats disabled — Hoshito and RPG Stats are mutually exclusive.");
+            updateExtension("rpgStats", { ...rpgStats, enabled: false });
+          }
+          updateHoshito({ enabled: checked });
+        }}
         labelPosition="start"
         className="justify-between rounded-xl border border-[var(--border)] bg-[var(--card)] p-4"
         labelClassName="text-sm"
